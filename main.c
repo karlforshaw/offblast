@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdint.h>
 #include <assert.h>
@@ -142,25 +143,25 @@ int main (int argc, char** argv) {
             }
         }
 
-
-        // DEBUG
+        // XXX DEBUG
         for (int j=0;j<numItems;j++) {
             printf("%s\n", matchingFileNames[j]);
         }
         printf("total items %d\n", numItems);
+        // XXX
 
-        // Hash it for the sig
         uint32_t contentSignature = 0;
         lmmh_x86_32(matchingFileNames, numItems*256, 33, &contentSignature);
         printf("got sig %u\n", contentSignature);
 
+        // XXX you are here, create a db of paths with their last contents hash
 
         matchingFileNames = NULL;
         free(fileNameBlock);
         closedir(dir);
     }
 
-    return 0;
+    //return 0;
 
     const char *userName = NULL;
     {
@@ -223,10 +224,15 @@ int main (int argc, char** argv) {
         return 1;
     }
 
-    // Let's try and render hello world then
+
+
     SDL_Surface* textSurface;
     SDL_Color textColor = {0,0,0};
-    textSurface = TTF_RenderText_Blended(font, "Let's Play Some Games!", textColor);
+
+    char *welcomeMsg;
+    asprintf(&welcomeMsg, "Hey %s, let's play!", userName);
+    textSurface = TTF_RenderText_Blended(font, welcomeMsg, textColor);
+    free(welcomeMsg);
 
     if (!textSurface) {
         printf("Font render failed, %s\n", TTF_GetError());
