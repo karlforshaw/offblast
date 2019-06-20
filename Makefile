@@ -2,8 +2,7 @@ CFLAGS = -Wall
 CFLAGS += $(shell sdl2-config --cflags) 
 CFLAGS += $(shell pkg-config --cflags json-c)
 
-LIBS = $(shell pkg-config --libs json-c)
-LIBS += $(shell sdl2-config --libs) -lSDL2_ttf 
+LIBS += $(shell pkg-config --libs json-c SDL2_ttf libmurmurhash)
 
 PROG = offblast
 

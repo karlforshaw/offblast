@@ -1,11 +1,15 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <dirent.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <errno.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <json-c/json.h>
+#include <murmurhash.h>
 
 #define SCALING 2.0
 
@@ -36,6 +40,8 @@ int main (int argc, char** argv) {
         }
     }
 
+
+
     // Get a list of romsdirs 
     FILE *configFile = fopen(strcat(configPath, "/config.json"), "r");
     fseek(configFile, 0, SEEK_END);
@@ -59,19 +65,125 @@ int main (int argc, char** argv) {
     json_object_object_get_ex(configObj, "paths", &paths);
 
     assert(paths);
-    
-    json_object *workingPathEntry = NULL;
-    json_object *workingPath = NULL;
 
     size_t nPaths = json_object_array_length(paths);
 
     for (int i=0; i<nPaths; i++) {
-        workingPathEntry = json_object_array_get_idx(paths, i);
-        json_object_object_get_ex(workingPathEntry, "path", &workingPath);
-        printf("Path %d: %s\n", i, json_object_get_string(workingPath));
+
+        json_object *workingPathNode = NULL;
+        json_object *workingPathStringNode = NULL;
+        json_object *workingPathExtensionNode = NULL;
+
+        const char *thePath = NULL;
+        const char *theExtension = NULL;
+
+        workingPathNode = json_object_array_get_idx(paths, i);
+        json_object_object_get_ex(workingPathNode, "path",
+                &workingPathStringNode);
+        json_object_object_get_ex(workingPathNode, "extension",
+                &workingPathExtensionNode);
+
+        thePath = json_object_get_string(workingPathStringNode);
+        theExtension = json_object_get_string(workingPathExtensionNode);
+
+        printf("Running Path for %s: %s\n", theExtension, thePath);
+
+        DIR *dir = opendir(thePath);
+        if (dir == NULL) {
+            printf("Path %s failed to open\n", thePath);
+            break;
+        }
+
+        unsigned int nEntriesToAlloc = 10;
+        unsigned int nAllocated = nEntriesToAlloc;
+
+        void *fileNameBlock = calloc(nEntriesToAlloc, 256);
+        char (*matchingFileNames)[256] = fileNameBlock;
+
+        int numItems = 0;
+        struct dirent *currentEntry;
+
+        while ((currentEntry = readdir(dir)) != NULL) {
+
+            char *ext = strrchr(currentEntry->d_name, '.');
+
+            if (ext && strcmp(ext, theExtension) == 0){
+
+                memcpy(matchingFileNames + numItems, 
+                        currentEntry->d_name, 
+                        strlen(currentEntry->d_name));
+
+                numItems++;
+                if (numItems == nAllocated) {
+                    printf("Allocating more memory..");
+
+                    unsigned int bytesToAllocate = nEntriesToAlloc * 256;
+                    nAllocated += nEntriesToAlloc;
+
+                    void *newBlock = realloc(fileNameBlock, 
+                            nAllocated * 256);
+
+                    if (newBlock == NULL) {
+                        printf("failed to reallocate enough ram\n");
+                        return 0;
+                    }
+
+                    fileNameBlock = newBlock;
+                    matchingFileNames = fileNameBlock;
+
+                    memset(
+                            matchingFileNames+numItems, 
+                            0x0,
+                            bytesToAllocate);
+
+                    // TODO DEBUG THIS!
+
+                }
+            }
+        }
+
+
+        // DEBUG
+        for (int j=0;j<numItems;j++) {
+            printf("%s\n", matchingFileNames[j]);
+        }
+        printf("total items %d\n", numItems);
+
+        // Hash it for the sig
+        uint32_t contentSignature = 0;
+        lmmh_x86_32(matchingFileNames, numItems*256, 33, &contentSignature);
+        printf("got sig %u\n", contentSignature);
+
+
+        matchingFileNames = NULL;
+        free(fileNameBlock);
+        closedir(dir);
     }
 
+    return 0;
 
+    const char *userName = NULL;
+    {
+        json_object *usersObject = NULL;
+        json_object_object_get_ex(configObj, "users", &usersObject);
+
+        if (usersObject == NULL) {
+            userName = "Anonymous";
+        }
+        else {
+            json_object *tmp = json_object_array_get_idx(usersObject, 0);
+            assert(tmp);
+            userName = json_object_get_string(tmp);
+        }
+    }
+
+    printf("got user name %s\n", userName);
+
+
+
+    //
+
+    
 
 
 
