@@ -88,6 +88,7 @@ int main (int argc, char** argv) {
     assert(paths);
 
     size_t nPaths = json_object_array_length(paths);
+    // TODO consider moving closer to the usage
 
     char* pathInfoDbPath;
     asprintf(&pathInfoDbPath, "%s/pathinfo.bin", configPath);
@@ -147,7 +148,9 @@ int main (int argc, char** argv) {
 
     fseek(configFile, 0, SEEK_SET);
 
-    size_t pathInfoSize = sizeof(PathInfoFile) + (nPaths * sizeof(PathInfo));
+    size_t pathInfoSize = 
+        FIELD_SIZEOF(PathInfoFile, nEntries) + (nPaths * sizeof(PathInfo));
+
     PathInfoFile *pathInfoFile = calloc(1, pathInfoSize); 
     pathInfoFile->nEntries = nPaths;
 
@@ -172,6 +175,7 @@ int main (int argc, char** argv) {
         printf("Running Path for %s: %s\n", theExtension, thePath);
 
         DIR *dir = opendir(thePath);
+        // TODO NFS shares when unavailable just lock this up!
         if (dir == NULL) {
             printf("Path %s failed to open\n", thePath);
             break;
@@ -198,7 +202,6 @@ int main (int argc, char** argv) {
 
                 numItems++;
                 if (numItems == nAllocated) {
-                    //printf("Allocating more memory..\n");
 
                     unsigned int bytesToAllocate = nEntriesToAlloc * 256;
                     nAllocated += nEntriesToAlloc;
@@ -219,20 +222,9 @@ int main (int argc, char** argv) {
                             0x0,
                             bytesToAllocate);
 
-                    // TODO DEBUG THIS!
-
                 }
             }
         }
-
-        // XXX DEBUG
-        /*
-        for (int j=0;j<numItems;j++) {
-            printf("%s\n", matchingFileNames[j]);
-        }
-        printf("total items %d\n", numItems);
-        */
-        // XXX
 
         uint32_t contentSignature = 0;
         uint32_t pathSignature = 0;
@@ -294,7 +286,7 @@ int main (int argc, char** argv) {
 
 
 
-    //
+    // XXX START SDL HERE
 
     
 
