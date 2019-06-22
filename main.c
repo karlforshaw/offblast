@@ -245,6 +245,12 @@ int main (int argc, char** argv) {
                         != contentSignature) 
                 {
                     printf("Contents of directory %s have changed!\n", thePath);
+                    // XXX you are here, start creating localdb entries 
+                    // for our games
+                    // we're gonna walk through each file name and hash the 
+                    // first few megabytes of it to see if it's in the database
+                    // already - if it's not then we create it (and later on
+                    // we scrape for it)
                 }
                 else {
                     printf("Contents unchanged for: %s\n", thePath);

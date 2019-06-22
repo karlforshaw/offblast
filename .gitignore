@@ -1,3 +1,4 @@
 core
 *.o
 offblast
+Session.vim
