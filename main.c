@@ -1,4 +1,8 @@
 #define _GNU_SOURCE
+#define SCALING 2.0
+
+#define FIELD_SIZEOF(t, f) (sizeof(((t*)0)->f))
+
 #include <stdio.h>
 #include <stdint.h>
 #include <assert.h>
@@ -12,7 +16,18 @@
 #include <json-c/json.h>
 #include <murmurhash.h>
 
-#define SCALING 2.0
+
+typedef struct PathInfo {
+    uint32_t idHash;
+    uint32_t contentsHash;
+} PathInfo;
+
+typedef struct PathInfoFile {
+    uint32_t nEntries;
+    PathInfo entries[];
+} PathInfoFile;
+
+
 
 int main (int argc, char** argv) {
 
@@ -23,7 +38,9 @@ int main (int argc, char** argv) {
     char *homePath = getenv("HOME");
     assert(homePath);
 
-    char *configPath = strcat(homePath, "/.offblast");
+    char *configPath;
+    asprintf(&configPath, "%s/.offblast", homePath);
+
     int madeConfigDir;
     madeConfigDir = mkdir(configPath, S_IRWXU);
     
@@ -43,8 +60,10 @@ int main (int argc, char** argv) {
 
 
 
-    // Get a list of romsdirs 
-    FILE *configFile = fopen(strcat(configPath, "/config.json"), "r");
+    char *configFilePath;
+    asprintf(&configFilePath, "%s/config.json", configPath);
+    FILE *configFile = fopen(configFilePath, "r");
+
     fseek(configFile, 0, SEEK_END);
     long configSize = ftell(configFile);
     fseek(configFile, 0, SEEK_SET);
@@ -52,6 +71,7 @@ int main (int argc, char** argv) {
     char *configText = calloc(1, configSize + 1);
     fread(configText, 1, configSize, configFile);
     fclose(configFile);
+
 
     json_tokener *tokener = json_tokener_new();
     json_object *configObj = NULL;
@@ -68,6 +88,68 @@ int main (int argc, char** argv) {
     assert(paths);
 
     size_t nPaths = json_object_array_length(paths);
+
+    char* pathInfoDbPath;
+    asprintf(&pathInfoDbPath, "%s/pathinfo.bin", configPath);
+
+    uint32_t nPathsInDbFile = 0;
+
+    PathInfoFile *pathInfoFromDisk = 
+        calloc(1, FIELD_SIZEOF(PathInfoFile, nEntries)); 
+
+    FILE *pathInfoFd = fopen(pathInfoDbPath, "r+b");
+    if (!pathInfoFd) {
+        if (errno == ENOENT) {
+            pathInfoFd = fopen(pathInfoDbPath, "w+b");
+            if (!pathInfoFd) {
+                perror("trying to open pathinfo.bin\n");
+                return errno;
+            }
+        }
+        else {
+            perror("trying to open pathinfo.bin\n");
+            return errno;
+        }
+    }
+
+    if(fread(pathInfoFromDisk, 
+                FIELD_SIZEOF(PathInfoFile, nEntries), 1, pathInfoFd)) 
+    {
+        nPathsInDbFile = pathInfoFromDisk->nEntries;
+        printf("there are %u paths known in the db\n", 
+                nPathsInDbFile);
+
+        size_t tmpNewSize = 
+            FIELD_SIZEOF(PathInfoFile, nEntries) + 
+            (nPathsInDbFile * sizeof(PathInfo));
+
+        PathInfoFile *tmpBlock = realloc(pathInfoFromDisk, tmpNewSize);
+        if (!tmpBlock) {
+            printf("cannot allocate enough ram for pathinfo db\n");
+            return 1;
+        }
+        else {
+            pathInfoFromDisk = tmpBlock;
+            uint32_t itemsRead = 0;
+            itemsRead = fread(&pathInfoFromDisk->entries, 
+                    sizeof(PathInfo), nPathsInDbFile, pathInfoFd); 
+
+            if (itemsRead < pathInfoFromDisk->nEntries) {
+                printf("possible corruption in pathinfo file");
+                return 1;
+            }
+
+        }
+    }
+    else {
+        printf("according to this theres nothing\n");
+    }
+
+    fseek(configFile, 0, SEEK_SET);
+
+    size_t pathInfoSize = sizeof(PathInfoFile) + (nPaths * sizeof(PathInfo));
+    PathInfoFile *pathInfoFile = calloc(1, pathInfoSize); 
+    pathInfoFile->nEntries = nPaths;
 
     for (int i=0; i<nPaths; i++) {
 
@@ -116,7 +198,7 @@ int main (int argc, char** argv) {
 
                 numItems++;
                 if (numItems == nAllocated) {
-                    printf("Allocating more memory..");
+                    //printf("Allocating more memory..\n");
 
                     unsigned int bytesToAllocate = nEntriesToAlloc * 256;
                     nAllocated += nEntriesToAlloc;
@@ -144,24 +226,54 @@ int main (int argc, char** argv) {
         }
 
         // XXX DEBUG
+        /*
         for (int j=0;j<numItems;j++) {
             printf("%s\n", matchingFileNames[j]);
         }
         printf("total items %d\n", numItems);
+        */
         // XXX
 
         uint32_t contentSignature = 0;
+        uint32_t pathSignature = 0;
+        lmmh_x86_32(thePath, strlen(thePath), 33, &pathSignature);
         lmmh_x86_32(matchingFileNames, numItems*256, 33, &contentSignature);
-        printf("got sig %u\n", contentSignature);
 
-        // XXX you are here, create a db of paths with their last contents hash
+        printf("got sig: idHash:%u contentsHash:%u\n", pathSignature, 
+                contentSignature);
+
+        pathInfoFile->entries[i].idHash = pathSignature;
+        pathInfoFile->entries[i].contentsHash = contentSignature;
+
+        // Has this changed from what we have on disk?
+        if (pathInfoFromDisk->nEntries > 0) {
+            for (uint32_t i=0; i<pathInfoFromDisk->nEntries; i++) {
+                if (pathInfoFromDisk->entries[i].idHash == pathSignature
+                        && pathInfoFromDisk->entries[i].contentsHash 
+                        != contentSignature) 
+                {
+                    printf("Contents of directory %s have changed!\n", thePath);
+                }
+                else {
+                    printf("Contents unchanged for: %s\n", thePath);
+                }
+            }
+        }
 
         matchingFileNames = NULL;
         free(fileNameBlock);
         closedir(dir);
     }
 
-    //return 0;
+    if (!fwrite(pathInfoFile, pathInfoSize, sizeof(char), pathInfoFd)) {
+        printf("Couldn't write to pathinfo.bin\n");
+        return 1;
+    }
+
+    fclose(pathInfoFd);
+
+
+    return 0;
 
     const char *userName = NULL;
     {
