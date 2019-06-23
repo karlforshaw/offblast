@@ -5,12 +5,16 @@ CFLAGS += $(shell pkg-config --cflags json-c)
 LIBS += $(shell pkg-config --libs json-c SDL2_ttf libmurmurhash)
 
 PROG = offblast
+OBJS = main.o offblastDbFile.o
 
-${PROG}: main.o
-	gcc -o ${PROG} main.o ${LIBS} 
+${PROG}: ${OBJS}
+	gcc -g -o ${PROG} ${OBJS} ${LIBS} 
 
-main.o: main.c
-	gcc -c ${CFLAGS} main.c
+main.o: main.c offblast.h
+	gcc -g -c ${CFLAGS} main.c
+
+offblastDbFile.o: offblastDbFile.c offblast.h
+	gcc -g -c  offblastDbFile.c
 
 clean:
 	rm -f ./*.o

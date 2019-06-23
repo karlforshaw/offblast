@@ -1,8 +1,6 @@
 #define _GNU_SOURCE
 #define SCALING 2.0
 
-#define FIELD_SIZEOF(t, f) (sizeof(((t*)0)->f))
-
 #include <stdio.h>
 #include <stdint.h>
 #include <assert.h>
@@ -16,6 +14,8 @@
 #include <json-c/json.h>
 #include <murmurhash.h>
 
+#include "offblast.h"
+#include "offblastDbFile.h"
 
 typedef struct PathInfo {
     uint32_t idHash;
@@ -27,12 +27,22 @@ typedef struct PathInfoFile {
     PathInfo entries[];
 } PathInfoFile;
 
+typedef struct LaunchTarget {
+    uint32_t signature;
+    char fileName[256];
+    char path[PATH_MAX];
+} LaunchTarget;
+
+typedef struct LaunchTargetFile {
+    uint32_t nEntries;
+    LaunchTarget targets[];
+} LaunchTargetFile;
+
 
 
 int main (int argc, char** argv) {
 
     printf("\nStarting up OffBlast with %d args.\n\n", argc);
-
 
 
     char *homePath = getenv("HOME");
@@ -87,71 +97,40 @@ int main (int argc, char** argv) {
 
     assert(paths);
 
-    size_t nPaths = json_object_array_length(paths);
-    // TODO consider moving closer to the usage
 
-    char* pathInfoDbPath;
+    char *pathInfoDbPath;
     asprintf(&pathInfoDbPath, "%s/pathinfo.bin", configPath);
-
+    PathInfoFile *pathInfoFromDisk = NULL;
     uint32_t nPathsInDbFile = 0;
 
-    PathInfoFile *pathInfoFromDisk = 
-        calloc(1, FIELD_SIZEOF(PathInfoFile, nEntries)); 
-
-    FILE *pathInfoFd = fopen(pathInfoDbPath, "r+b");
-    if (!pathInfoFd) {
-        if (errno == ENOENT) {
-            pathInfoFd = fopen(pathInfoDbPath, "w+b");
-            if (!pathInfoFd) {
-                perror("trying to open pathinfo.bin\n");
-                return errno;
-            }
-        }
-        else {
-            perror("trying to open pathinfo.bin\n");
-            return errno;
-        }
-    }
-
-    if(fread(pathInfoFromDisk, 
-                FIELD_SIZEOF(PathInfoFile, nEntries), 1, pathInfoFd)) 
+    FILE *pathInfoFd; 
+    if (!(pathInfoFd = initialize_db_file(pathInfoDbPath, (void**)&pathInfoFromDisk, 
+            sizeof(PathInfo), &nPathsInDbFile)))
     {
-        nPathsInDbFile = pathInfoFromDisk->nEntries;
-        printf("there are %u paths known in the db\n", 
-                nPathsInDbFile);
-
-        size_t tmpNewSize = 
-            FIELD_SIZEOF(PathInfoFile, nEntries) + 
-            (nPathsInDbFile * sizeof(PathInfo));
-
-        PathInfoFile *tmpBlock = realloc(pathInfoFromDisk, tmpNewSize);
-        if (!tmpBlock) {
-            printf("cannot allocate enough ram for pathinfo db\n");
-            return 1;
-        }
-        else {
-            pathInfoFromDisk = tmpBlock;
-            uint32_t itemsRead = 0;
-            itemsRead = fread(&pathInfoFromDisk->entries, 
-                    sizeof(PathInfo), nPathsInDbFile, pathInfoFd); 
-
-            if (itemsRead < pathInfoFromDisk->nEntries) {
-                printf("possible corruption in pathinfo file");
-                return 1;
-            }
-
-        }
-    }
-    else {
-        printf("according to this theres nothing\n");
+        printf("ERROR: couldn't initialize pathInfoDB file");
+        return 1;
     }
 
-    fseek(configFile, 0, SEEK_SET);
 
-    size_t pathInfoSize = 
+    char *launchTargetDbPath;
+    asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
+    LaunchTargetFile *launchTargetsFromDisk = NULL;
+    uint32_t nTargetsInDbFile = 0;
+    FILE *launchTargetFd;
+    if (!(launchTargetFd = initialize_db_file(launchTargetDbPath, (void**)&launchTargetsFromDisk, 
+            sizeof(LaunchTarget), &nTargetsInDbFile)))
+    {
+        printf("ERROR: couldn't initialize LaunchTargets DB file");
+        return 1;
+    }
+
+
+
+    size_t nPaths = json_object_array_length(paths);
+    size_t newPathInfoSize = 
         FIELD_SIZEOF(PathInfoFile, nEntries) + (nPaths * sizeof(PathInfo));
 
-    PathInfoFile *pathInfoFile = calloc(1, pathInfoSize); 
+    PathInfoFile *pathInfoFile = calloc(1, newPathInfoSize); 
     pathInfoFile->nEntries = nPaths;
 
     for (int i=0; i<nPaths; i++) {
@@ -237,25 +216,59 @@ int main (int argc, char** argv) {
         pathInfoFile->entries[i].idHash = pathSignature;
         pathInfoFile->entries[i].contentsHash = contentSignature;
 
-        // Has this changed from what we have on disk?
-        if (pathInfoFromDisk->nEntries > 0) {
+        uint32_t rescrapeRequired = (pathInfoFromDisk == NULL);
+
+        if (pathInfoFromDisk != NULL) {
             for (uint32_t i=0; i<pathInfoFromDisk->nEntries; i++) {
                 if (pathInfoFromDisk->entries[i].idHash == pathSignature
                         && pathInfoFromDisk->entries[i].contentsHash 
                         != contentSignature) 
                 {
                     printf("Contents of directory %s have changed!\n", thePath);
-                    // XXX you are here, start creating localdb entries 
-                    // for our games
-                    // we're gonna walk through each file name and hash the 
-                    // first few megabytes of it to see if it's in the database
-                    // already - if it's not then we create it (and later on
-                    // we scrape for it)
+                    rescrapeRequired = 1;
                 }
-                else {
+                else if (pathInfoFromDisk->entries[i].idHash == pathSignature)
+                {
                     printf("Contents unchanged for: %s\n", thePath);
                 }
             }
+        }
+
+        if (rescrapeRequired) {
+            void *romData = calloc(1, ROM_PEEK_SIZE);
+
+            for (uint32_t j=0;j<numItems; j++) {
+
+                char *romPathTrimmed; 
+                asprintf(&romPathTrimmed, "%s/%s", 
+                        thePath,
+                        matchingFileNames[j]);
+
+                uint32_t romSignature;
+                FILE *romFd = fopen(romPathTrimmed, "rb");
+                if (! romFd) {
+                    printf("cannot open from rom\n");
+                }
+
+                if (!fread(romData, ROM_PEEK_SIZE, 1, romFd)) {
+                    printf("cannot read from rom\n");
+                }
+                else {
+                    lmmh_x86_32(romData, ROM_PEEK_SIZE, 33, &romSignature);
+                    memset(romData, 0x0, ROM_PEEK_SIZE);
+                    printf("signature is %u\n", romSignature);
+                }
+
+                memset(romData, 0x0, ROM_PEEK_SIZE);
+                free(romPathTrimmed);
+                fclose(romFd);
+
+                // Now we have the signature we can add it to our DB
+                // XXX here
+
+            }; 
+
+            free(romData);
         }
 
         matchingFileNames = NULL;
@@ -263,11 +276,11 @@ int main (int argc, char** argv) {
         closedir(dir);
     }
 
-    if (!fwrite(pathInfoFile, pathInfoSize, sizeof(char), pathInfoFd)) {
+    fseek(pathInfoFd, 0, SEEK_SET);
+    if (!fwrite(pathInfoFile, newPathInfoSize, sizeof(char), pathInfoFd)) {
         printf("Couldn't write to pathinfo.bin\n");
         return 1;
     }
-
     fclose(pathInfoFd);
 
 

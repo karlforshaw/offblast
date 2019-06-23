@@ -1,0 +1,19 @@
+// POST PARAMS
+game_type	0
+game	final+fantasy+vii
+platform	78
+distribution	0
+category	0
+date_type	0
+date_1	
+date_2	
+date_year	0
+contents_type	0
+contents	0
+region_type	0
+region	0
+company_type	0
+company_text	
+company	
+sort	0
+min_scores	0
