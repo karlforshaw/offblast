@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <dirent.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
@@ -17,26 +18,7 @@
 #include "offblast.h"
 #include "offblastDbFile.h"
 
-typedef struct PathInfo {
-    uint32_t idHash;
-    uint32_t contentsHash;
-} PathInfo;
-
-typedef struct PathInfoFile {
-    uint32_t nEntries;
-    PathInfo entries[];
-} PathInfoFile;
-
-typedef struct LaunchTarget {
-    uint32_t signature;
-    char fileName[256];
-    char path[PATH_MAX];
-} LaunchTarget;
-
-typedef struct LaunchTargetFile {
-    uint32_t nEntries;
-    LaunchTarget targets[];
-} LaunchTargetFile;
+// TODO each of these now needs a offblastDBHeader
 
 
 
@@ -100,39 +82,44 @@ int main (int argc, char** argv) {
 
     char *pathInfoDbPath;
     asprintf(&pathInfoDbPath, "%s/pathinfo.bin", configPath);
-    PathInfoFile *pathInfoFromDisk = NULL;
-    uint32_t nPathsInDbFile = 0;
-
-    FILE *pathInfoFd; 
-    if (!(pathInfoFd = initialize_db_file(pathInfoDbPath, (void**)&pathInfoFromDisk, 
-            sizeof(PathInfo), &nPathsInDbFile)))
-    {
-        printf("ERROR: couldn't initialize pathInfoDB file");
+    struct OffblastDbFile pathDb = {0};
+    if (!init_db_file(pathInfoDbPath, &pathDb, sizeof(PathInfo))) {
+        printf("couldn't initialize path db, exiting\n");
         return 1;
     }
-
+    PathInfoFile *pathInfoFile = (PathInfoFile*) pathDb.memory;
 
     char *launchTargetDbPath;
     asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
-    LaunchTargetFile *launchTargetsFromDisk = NULL;
-    uint32_t nTargetsInDbFile = 0;
-    FILE *launchTargetFd;
-    if (!(launchTargetFd = initialize_db_file(launchTargetDbPath, (void**)&launchTargetsFromDisk, 
-            sizeof(LaunchTarget), &nTargetsInDbFile)))
+    OffblastDbFile launchTargetDb = {0};
+    if (!init_db_file(launchTargetDbPath, &launchTargetDb, 
+                sizeof(LaunchTarget))) 
     {
-        printf("ERROR: couldn't initialize LaunchTargets DB file");
+        printf("couldn't initialize path db, exiting\n");
         return 1;
     }
+    LaunchTargetFile *launchTargetFile = 
+        (LaunchTargetFile*) launchTargetDb.memory;
 
 
+    // XXX DEBUG for each game in the db, check to see if find_index_slow works
+    for (int i = 0; i < launchTargetFile->nEntries; i++) {
+        printf("found game\t%d\t%u\n", i, launchTargetFile->entries[i].signature);
+        printf("%s\n", launchTargetFile->entries[i].fileName);
+        printf("%s\n", launchTargetFile->entries[i].path);
+
+        int foundIndex = find_index_of_slow(
+                launchTargetFile->entries[i].signature,
+                launchTargetFile->nEntries, 
+                sizeof(LaunchTarget), 
+                (void*)launchTargetFile->entries);
+
+        printf("Game %u found at index: %d\n\n", 
+                launchTargetFile->entries[i].signature,
+                foundIndex);
+    }
 
     size_t nPaths = json_object_array_length(paths);
-    size_t newPathInfoSize = 
-        FIELD_SIZEOF(PathInfoFile, nEntries) + (nPaths * sizeof(PathInfo));
-
-    PathInfoFile *pathInfoFile = calloc(1, newPathInfoSize); 
-    pathInfoFile->nEntries = nPaths;
-
     for (int i=0; i<nPaths; i++) {
 
         json_object *workingPathNode = NULL;
@@ -210,28 +197,42 @@ int main (int argc, char** argv) {
         lmmh_x86_32(thePath, strlen(thePath), 33, &pathSignature);
         lmmh_x86_32(matchingFileNames, numItems*256, 33, &contentSignature);
 
-        printf("got sig: idHash:%u contentsHash:%u\n", pathSignature, 
+        printf("got sig: signature:%u contentsHash:%u\n", pathSignature, 
                 contentSignature);
 
-        pathInfoFile->entries[i].idHash = pathSignature;
-        pathInfoFile->entries[i].contentsHash = contentSignature;
+        uint32_t rescrapeRequired = (pathInfoFile->nEntries == 0);
 
-        uint32_t rescrapeRequired = (pathInfoFromDisk == NULL);
-
-        if (pathInfoFromDisk != NULL) {
-            for (uint32_t i=0; i<pathInfoFromDisk->nEntries; i++) {
-                if (pathInfoFromDisk->entries[i].idHash == pathSignature
-                        && pathInfoFromDisk->entries[i].contentsHash 
-                        != contentSignature) 
-                {
-                    printf("Contents of directory %s have changed!\n", thePath);
-                    rescrapeRequired = 1;
-                }
-                else if (pathInfoFromDisk->entries[i].idHash == pathSignature)
-                {
-                    printf("Contents unchanged for: %s\n", thePath);
-                }
+        // This goes through everything we have in the file now
+        // We need something to detect whether it's in the file
+        uint32_t isInFile = 0;
+        for (uint32_t i=0; i < pathInfoFile->nEntries; i++) {
+            if (pathInfoFile->entries[i].signature == pathSignature
+                    && pathInfoFile->entries[i].contentsHash 
+                    != contentSignature) 
+            {
+                printf("Contents of directory %s have changed!\n", thePath);
+                isInFile =1;
+                rescrapeRequired = 1;
+                break;
             }
+            else if (pathInfoFile->entries[i].signature == pathSignature)
+            {
+                printf("Contents unchanged for: %s\n", thePath);
+                isInFile = 1;
+                break;
+            }
+        }
+
+        if (!isInFile) {
+            printf("%s isn't in the db, adding..\n", thePath);
+            // TODO do we have the allocation to add it?
+            pathInfoFile->entries[pathInfoFile->nEntries].signature = 
+                pathSignature;
+            pathInfoFile->entries[pathInfoFile->nEntries].contentsHash = 
+                contentSignature;
+            pathInfoFile->nEntries++;
+
+            rescrapeRequired = 1;
         }
 
         if (rescrapeRequired) {
@@ -260,12 +261,41 @@ int main (int argc, char** argv) {
                 }
 
                 memset(romData, 0x0, ROM_PEEK_SIZE);
-                free(romPathTrimmed);
                 fclose(romFd);
 
                 // Now we have the signature we can add it to our DB
                 // XXX here
+                uint32_t indexOfEntry = find_index_of_slow(
+                        romSignature,
+                        launchTargetFile->nEntries,
+                        sizeof(LaunchTarget),
+                        (void*)launchTargetFile->entries);
 
+                if (indexOfEntry > -1) {
+                    printf("this target is already in the db\n");
+                }
+                else {
+                    // TODO check we have the space for it
+
+                    LaunchTarget *newEntry = 
+                        &launchTargetFile->entries[launchTargetFile->nEntries];
+
+                    printf("writing new game to %p\n", newEntry);
+
+                    newEntry->signature = romSignature;
+
+                    memcpy(&newEntry->fileName, 
+                            &matchingFileNames[j], 
+                            strlen(matchingFileNames[j]));
+
+                    memcpy(&newEntry->path, 
+                            romPathTrimmed,
+                            strlen(romPathTrimmed));
+                    
+                    launchTargetFile->nEntries++;
+                }
+
+                free(romPathTrimmed);
             }; 
 
             free(romData);
@@ -276,12 +306,8 @@ int main (int argc, char** argv) {
         closedir(dir);
     }
 
-    fseek(pathInfoFd, 0, SEEK_SET);
-    if (!fwrite(pathInfoFile, newPathInfoSize, sizeof(char), pathInfoFd)) {
-        printf("Couldn't write to pathinfo.bin\n");
-        return 1;
-    }
-    fclose(pathInfoFd);
+    close(pathDb.fd);
+    close(launchTargetDb.fd);
 
 
     return 0;

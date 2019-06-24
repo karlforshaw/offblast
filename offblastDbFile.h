@@ -1,12 +1,48 @@
 #include <stdint.h>
+#include <linux/limits.h>
 
-typedef struct OffblastDbFileCommon {
+typedef struct OffblastDbFileFormat {
     uint32_t nEntries;
-    char entries[];
-} OffblastDbFileCommon;
+    void *entries;
+} OffblastDbFileFormat;
 
-FILE *initialize_db_file(
-        char *path,
-        void **dest,
-        uint32_t itemSize,
-        uint32_t *nItems);
+typedef struct OffblastDbFile {
+    int fd;
+    size_t nBytesAllocated;
+    OffblastDbFileFormat *memory;
+} OffblastDbFile;
+
+typedef struct PathInfo {
+    uint32_t signature;
+    uint32_t contentsHash;
+} PathInfo;
+
+typedef struct PathInfoFile {
+    uint32_t nEntries;
+    PathInfo entries[];
+} PathInfoFile;
+
+typedef struct LaunchTarget {
+    uint32_t signature;
+    char fileName[256];
+    char path[PATH_MAX];
+} LaunchTarget;
+
+typedef struct LaunchTargetFile {
+    uint32_t nEntries;
+    LaunchTarget entries[];
+} LaunchTargetFile;
+
+
+int init_db_file(char *, OffblastDbFile *dbFileStruct, 
+        size_t itemSize);
+
+// TODO implement
+int num_remaining_items(OffblastDbFile *dbFileStruct,
+        size_t itemSize);
+
+int find_index_of_slow(
+        uint32_t signature,
+        uint32_t numEntries, 
+        size_t entrySize, 
+        char* list);
