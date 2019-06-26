@@ -10,10 +10,10 @@ OBJS = main.o offblastDbFile.o
 ${PROG}: ${OBJS}
 	gcc -g -o ${PROG} ${OBJS} ${LIBS} 
 
-main.o: main.c offblast.h
+main.o: main.c offblast.h offblastDbFile.h
 	gcc -g -c ${CFLAGS} main.c
 
-offblastDbFile.o: offblastDbFile.c offblast.h
+offblastDbFile.o: offblastDbFile.c offblast.h offblastDbFile.h
 	gcc -g -c  offblastDbFile.c
 
 clean:

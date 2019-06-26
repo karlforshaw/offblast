@@ -26,6 +26,7 @@ typedef struct LaunchTarget {
     uint32_t signature;
     char fileName[256];
     char path[PATH_MAX];
+    char platform[256];
 } LaunchTarget;
 
 typedef struct LaunchTargetFile {

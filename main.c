@@ -125,18 +125,23 @@ int main (int argc, char** argv) {
         json_object *workingPathNode = NULL;
         json_object *workingPathStringNode = NULL;
         json_object *workingPathExtensionNode = NULL;
+        json_object *workingPathPlatformNode = NULL;
 
         const char *thePath = NULL;
         const char *theExtension = NULL;
+        const char *thePlatform = NULL;
 
         workingPathNode = json_object_array_get_idx(paths, i);
         json_object_object_get_ex(workingPathNode, "path",
                 &workingPathStringNode);
         json_object_object_get_ex(workingPathNode, "extension",
                 &workingPathExtensionNode);
+        json_object_object_get_ex(workingPathNode, "platform",
+                &workingPathPlatformNode);
 
         thePath = json_object_get_string(workingPathStringNode);
         theExtension = json_object_get_string(workingPathExtensionNode);
+        thePlatform = json_object_get_string(workingPathPlatformNode);
 
         printf("Running Path for %s: %s\n", theExtension, thePath);
 
@@ -291,6 +296,10 @@ int main (int argc, char** argv) {
                     memcpy(&newEntry->path, 
                             romPathTrimmed,
                             strlen(romPathTrimmed));
+
+                    memcpy(&newEntry->platform, 
+                            thePlatform,
+                            strlen(thePlatform));
                     
                     launchTargetFile->nEntries++;
                 }
