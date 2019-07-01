@@ -1,8 +1,8 @@
 CFLAGS = -Wall
 CFLAGS += $(shell sdl2-config --cflags) 
-CFLAGS += $(shell pkg-config --cflags json-c)
+CFLAGS += $(shell pkg-config --cflags json-c libcurl gumbo)
 
-LIBS += $(shell pkg-config --libs json-c SDL2_ttf libmurmurhash)
+LIBS += $(shell pkg-config --libs json-c SDL2_ttf libmurmurhash libcurl gumbo)
 
 PROG = offblast
 OBJS = main.o offblastDbFile.o
