@@ -20,6 +20,7 @@
 #include "offblast.h"
 #include "offblastDbFile.h"
 
+
 typedef struct HtmlBuffer {
     size_t size;
     char *contents;
@@ -46,53 +47,6 @@ size_t downloadCallback(char *ptr, size_t size, size_t nmemb, void* userData) {
 }
 
 
-
-typedef struct OffblastGameFaqsSearchResult {
-    char name[256];
-    char link[256];
-} OffblastGameFaqsSearchResult;
-
-
-
-int findTitle(const GumboNode* node, OffblastGameFaqsSearchResult *result) {
-
-    if (node->type != GUMBO_NODE_ELEMENT) {
-        //return 0;
-    }
-
-    const GumboVector *children = &node->v.element.children;
-
-    GumboAttribute *classAttr;
-    if ((classAttr = gumbo_get_attribute(&node->v.element.attributes, "class"))
-            && strstr(classAttr->value, "sr_title") != NULL)
-    {
-
-        printf("found %s %d kids\n", classAttr->value, children->length);
-        GumboNode *anchorTag = children->data[0];
-
-        if (anchorTag->v.element.tag != GUMBO_TAG_A) {
-            printf("weird.. inner taf isn't a link it's %u\n",
-                    anchorTag->type);
-        }
-        else {
-            GumboNode *anchorText = anchorTag->v.element.children.data[0];
-            printf("found: %s\n", anchorText->v.text.text);
-            memcpy(&result->name, anchorText->v.text.text,
-                    strlen(anchorText->v.text.text));
-
-            return 1;
-        }
-    }
-    else {
-        for(int i=0; i < children->length; ++i) {
-            if((findTitle((GumboNode*)children->data[i], result))) {
-                return 1;
-            }
-        }
-    }
-
-    return 0;
-}
 
 int main (int argc, char** argv) {
 
@@ -135,7 +89,7 @@ int main (int argc, char** argv) {
     theBuffer.contents = calloc(1, sizeof(char));
 
     curl_easy_setopt(curl, CURLOPT_URL,
-            "https://gamefaqs.gamespot.com/search_advanced");
+            "");
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1u);
     curl_easy_setopt(curl, CURLOPT_POST, 1u);
     const char *postData = "game=final+fantasy+vii&platform=78";
@@ -144,28 +98,6 @@ int main (int argc, char** argv) {
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &theBuffer);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, downloadCallback);
     curl_easy_perform(curl);
-
-    // See if we can get the title out of it
-    // so I want to get into the body and then check div\s until I find
-    // the first sr_row
-    /*
-     *  
-<div class="sr_row">
-		<div class="sr_cell sr_platform">PS</div>
-		<div class="sr_cell sr_title">
-            <a class="log_search" data-row="1" data-col="1" data-pid="197341" href="/ps/197341-final-fantasy-vii">Final Fantasy VII</a>
-        </div>
-
-		<div class="sr_cell sr_release">1997</div>
-        </div>
-     *  
-     */
-
-    GumboOutput *htmlParsed = gumbo_parse_with_options(
-            &kGumboDefaultOptions, theBuffer.contents, theBuffer.size);
-
-    OffblastGameFaqsSearchResult result = {0};
-    findTitle(htmlParsed->root, &result);
 
 
     free(theBuffer.contents);
