@@ -15,36 +15,9 @@
 #include <json-c/json.h>
 #include <murmurhash.h>
 #include <curl/curl.h>
-#include <gumbo.h>
 
 #include "offblast.h"
 #include "offblastDbFile.h"
-
-
-typedef struct HtmlBuffer {
-    size_t size;
-    char *contents;
-} HtmlBuffer;
-
-size_t downloadCallback(char *ptr, size_t size, size_t nmemb, void* userData) {
-
-    HtmlBuffer *theBuffer = userData; 
-    size_t offset = theBuffer->size;
-    size_t totalBytes = (nmemb * size);
-    size_t newSize = offset + totalBytes;
-
-    char *newAlloc = realloc(theBuffer->contents, newSize);
-
-    if (!newAlloc) {
-        printf("Problem reallocating for HTML");
-        return 0;
-    }
-
-    theBuffer->contents = newAlloc;
-    memcpy(theBuffer->contents + offset, ptr, totalBytes);
-    theBuffer->size = newSize;
-    return totalBytes;
-}
 
 
 
@@ -76,33 +49,13 @@ int main (int argc, char** argv) {
         }
     }
 
-
+/*
     CURL *curl = curl_easy_init();
     if (!curl) {
         printf("couldn't init curl\n");
         return 1;
     }
-
-    // XXX DEBUG
-    HtmlBuffer theBuffer;
-    theBuffer.size = 0;
-    theBuffer.contents = calloc(1, sizeof(char));
-
-    curl_easy_setopt(curl, CURLOPT_URL,
-            "");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1u);
-    curl_easy_setopt(curl, CURLOPT_POST, 1u);
-    const char *postData = "game=final+fantasy+vii&platform=78";
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, strlen(postData));
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postData);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &theBuffer);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, downloadCallback);
-    curl_easy_perform(curl);
-
-
-    free(theBuffer.contents);
-    return 0;
-    // XXX DEBUG END
+*/
 
 
     char *configFilePath;
@@ -370,9 +323,6 @@ int main (int argc, char** argv) {
 
     close(pathDb.fd);
     close(launchTargetDb.fd);
-
-    // TODO move this elsewhere (in some shutdown method)
-    curl_easy_cleanup(curl);
 
     return 0;
 
