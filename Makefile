@@ -20,3 +20,7 @@ clean:
 	rm -f ./*.o
 	rm -f ${PROG}
 
+install:
+	mkdir -p ~/.offblast
+	cp -i config-dist.json ~/.offblast/config.json
+

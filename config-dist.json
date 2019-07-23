@@ -1,0 +1,20 @@
+{
+    "launchers": [{
+        "psx": "cat %ROM%"
+    }],
+    "paths": [{
+        "path": "/home/user/Games/sony_playstation/",
+        "extension": ".7z",
+        "launcher": "psx",
+        "platform": "sony_playstation"
+    },{
+        "path": "/home/user/roms/psx",
+        "extension": ".7z",
+        "launcher": "psx",
+        "platform": "sony_playstation"
+    }],
+    "users": [
+        "Mr Wolf"
+    ],
+    "opengamedb": "/home/user/opengamedb"
+}
