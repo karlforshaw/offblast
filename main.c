@@ -85,6 +85,16 @@ int main (int argc, char** argv) {
 
     assert(paths);
 
+    json_object *configForOpenGameDb;
+    json_object_object_get_ex(configObj, "opengamedb", 
+            &configForOpenGameDb);
+
+    assert(configForOpenGameDb);
+    const char *openGameDbPath = 
+        json_object_get_string(configForOpenGameDb);
+
+    printf("Found OpenGameDb at %s\n", openGameDbPath);
+
 
     char *pathInfoDbPath;
     asprintf(&pathInfoDbPath, "%s/pathinfo.bin", configPath);
@@ -94,6 +104,7 @@ int main (int argc, char** argv) {
         return 1;
     }
     PathInfoFile *pathInfoFile = (PathInfoFile*) pathDb.memory;
+    free(pathInfoDbPath);
 
     char *launchTargetDbPath;
     asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
@@ -106,10 +117,13 @@ int main (int argc, char** argv) {
     }
     LaunchTargetFile *launchTargetFile = 
         (LaunchTargetFile*) launchTargetDb.memory;
+    free(launchTargetDbPath);
 
 
+#if 0
     // XXX DEBUG for each game in the db, check to see if find_index_slow works
     for (int i = 0; i < launchTargetFile->nEntries; i++) {
+        printf("Reading from local game db\n");
         printf("found game\t%d\t%u\n", i, launchTargetFile->entries[i].signature);
         printf("%s\n", launchTargetFile->entries[i].fileName);
         printf("%s\n", launchTargetFile->entries[i].path);
@@ -123,7 +137,10 @@ int main (int argc, char** argv) {
         printf("Game %u found at index: %d\n\n", 
                 launchTargetFile->entries[i].signature,
                 foundIndex);
-    }
+    } // XXX DEBUG ONLY CODE
+#endif 
+
+
 
     size_t nPaths = json_object_array_length(paths);
     for (int i=0; i<nPaths; i++) {
@@ -150,6 +167,32 @@ int main (int argc, char** argv) {
         thePlatform = json_object_get_string(workingPathPlatformNode);
 
         printf("Running Path for %s: %s\n", theExtension, thePath);
+
+        /*
+         * Got some stuff to change here, first we need to make
+         * sure we have a local db for the platform, if not we create
+         * one from our openGameDb directory.
+         *
+         * We could force a refresh here too probably using a runtime arg
+         */
+
+        // now we've got the platform we can populate a local database if
+        // one doesn't already exist
+        char *openGameDbPlatformPath;
+        asprintf(&openGameDbPlatformPath, "%s/%s.csv", openGameDbPath, 
+                thePlatform);
+        printf("Looking for file %s\n", openGameDbPlatformPath);
+
+        FILE *openGameDbFile = fopen(openGameDbPlatformPath, "r");
+        if (openGameDbFile == NULL) {
+            printf("looks like theres no opengamedb for the platform\n");
+            free(openGameDbPlatformPath);
+            break;
+        }
+        free(openGameDbPlatformPath);
+        
+
+        // TODO close
 
         DIR *dir = opendir(thePath);
         // TODO NFS shares when unavailable just lock this up!
