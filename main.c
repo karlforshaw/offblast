@@ -37,6 +37,7 @@ int main (int argc, char** argv) {
     
     if (madeConfigDir == 0) {
         printf("Created offblast directory\n");
+        // TODO create a config file too
     }
     else {
         switch (errno) {
@@ -61,6 +62,11 @@ int main (int argc, char** argv) {
     char *configFilePath;
     asprintf(&configFilePath, "%s/config.json", configPath);
     FILE *configFile = fopen(configFilePath, "r");
+
+    if (configFile == NULL) {
+        printf("Config file config.json is missing, exiting..\n");
+        return 1;
+    }
 
     fseek(configFile, 0, SEEK_END);
     long configSize = ftell(configFile);
