@@ -58,7 +58,6 @@ int main (int argc, char** argv) {
     }
 */
 
-
     char *configFilePath;
     asprintf(&configFilePath, "%s/config.json", configPath);
     FILE *configFile = fopen(configFilePath, "r");
@@ -196,6 +195,24 @@ int main (int argc, char** argv) {
             break;
         }
         free(openGameDbPlatformPath);
+
+        char *csvLine = NULL;
+        size_t csvLineLength = 0;
+        size_t csvBytesRead = 0;
+        uint32_t onRow = 0;
+
+        while ((csvBytesRead = 
+                    getline(&csvLine, &csvLineLength, openGameDbFile)) != -1) 
+        {
+            if (onRow > 0) {
+                printf("%s\n", csvLine);
+            }
+
+            onRow++;
+        }
+        free(csvLine);
+        fclose(openGameDbFile);
+
         
 
         // TODO close
@@ -342,7 +359,7 @@ int main (int argc, char** argv) {
 
                     printf("writing new game to %p\n", newEntry);
 
-                    newEntry->signature = romSignature;
+                    newEntry->romSignature = romSignature;
 
                     memcpy(&newEntry->fileName, 
                             &matchingFileNames[j], 
