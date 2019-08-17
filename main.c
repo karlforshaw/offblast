@@ -20,6 +20,51 @@
 #include "offblastDbFile.h"
 
 
+char *getCsvField(char *line, int fieldNo);
+
+char *getCsvField(char *line, int fieldNo) 
+{
+    char *cursor = line;
+    char *fieldStart = NULL;
+    char *fieldEnd = NULL;
+    char *fieldString = NULL;
+    int inQuotes = 0;
+
+    for (uint32_t i = 0; i < fieldNo; ++i) {
+
+        fieldStart = cursor;
+        fieldEnd = cursor;
+        inQuotes = 0;
+
+        while (cursor != NULL) {
+
+            if (*cursor == '"') {
+                inQuotes++;
+            }
+            else if (*cursor == ',' && !(inQuotes & 1)) {
+                fieldEnd = cursor - 1;
+                /*printf("%d is the length of the field\n", 
+                        (fieldEnd - fieldStart));*/
+
+                cursor++;
+                break;
+            }
+
+            cursor++;
+        }
+    }
+
+    if (*fieldStart == '"') fieldStart++;
+    if (*fieldEnd == '"') fieldEnd--;
+
+    if (fieldEnd - fieldStart > 0) {
+        fieldString = calloc(1, fieldEnd - fieldStart + 1);
+        memcpy(fieldString, fieldStart, fieldEnd - fieldStart +1);
+    }
+
+    return fieldString;
+}
+
 
 int main (int argc, char** argv) {
 
@@ -205,7 +250,13 @@ int main (int argc, char** argv) {
                     getline(&csvLine, &csvLineLength, openGameDbFile)) != -1) 
         {
             if (onRow > 0) {
-                printf("%s\n", csvLine);
+                //printf("%s\n", csvLine);
+                char *gameName = getCsvField(csvLine, 1);
+                char *gameDate = getCsvField(csvLine, 2);
+                printf("csv: %s\t%s\n", gameName, gameDate);
+
+                free(gameName);
+                free(gameDate);
             }
 
             onRow++;
