@@ -43,9 +43,6 @@ char *getCsvField(char *line, int fieldNo)
             }
             else if (*cursor == ',' && !(inQuotes & 1)) {
                 fieldEnd = cursor - 1;
-                /*printf("%d is the length of the field\n", 
-                        (fieldEnd - fieldStart));*/
-
                 cursor++;
                 break;
             }
@@ -57,10 +54,10 @@ char *getCsvField(char *line, int fieldNo)
     if (*fieldStart == '"') fieldStart++;
     if (*fieldEnd == '"') fieldEnd--;
 
-    if (fieldEnd - fieldStart > 0) {
-        fieldString = calloc(1, fieldEnd - fieldStart + 1);
-        memcpy(fieldString, fieldStart, fieldEnd - fieldStart +1);
-    }
+    uint32_t fieldLength = (fieldEnd - fieldStart) + 1;
+
+    fieldString = calloc(1, fieldLength + sizeof(char));
+    memcpy(fieldString, fieldStart, fieldLength);
 
     return fieldString;
 }
@@ -218,55 +215,70 @@ int main (int argc, char** argv) {
 
         printf("Running Path for %s: %s\n", theExtension, thePath);
 
-        /*
-         * Got some stuff to change here, first we need to make
-         * sure we have a local db for the platform, if not we create
-         * one from our openGameDb directory.
-         *
-         * We could force a refresh here too probably using a runtime arg
-         */
-
-        // now we've got the platform we can populate a local database if
-        // one doesn't already exist
-        char *openGameDbPlatformPath;
-        asprintf(&openGameDbPlatformPath, "%s/%s.csv", openGameDbPath, 
-                thePlatform);
-        printf("Looking for file %s\n", openGameDbPlatformPath);
-
-        FILE *openGameDbFile = fopen(openGameDbPlatformPath, "r");
-        if (openGameDbFile == NULL) {
-            printf("looks like theres no opengamedb for the platform\n");
-            free(openGameDbPlatformPath);
-            break;
-        }
-        free(openGameDbPlatformPath);
-
-        char *csvLine = NULL;
-        size_t csvLineLength = 0;
-        size_t csvBytesRead = 0;
-        uint32_t onRow = 0;
-
-        while ((csvBytesRead = 
-                    getline(&csvLine, &csvLineLength, openGameDbFile)) != -1) 
-        {
-            if (onRow > 0) {
-                //printf("%s\n", csvLine);
-                char *gameName = getCsvField(csvLine, 1);
-                char *gameDate = getCsvField(csvLine, 2);
-                printf("csv: %s\t%s\n", gameName, gameDate);
-
-                free(gameName);
-                free(gameDate);
+        uint32_t platformScraped = 0;
+        for(uint32_t i=0; i < launchTargetFile->nEntries; ++i) {
+            if (strcmp(launchTargetFile->entries[i].platform, 
+                        thePlatform) == 0) 
+            {
+                printf("%s already scraped.\n", thePlatform);
+                platformScraped = 1;
+                break;
             }
-
-            onRow++;
         }
-        free(csvLine);
-        fclose(openGameDbFile);
 
-        
+        if (!platformScraped) {
 
-        // TODO close
+            char *openGameDbPlatformPath;
+            asprintf(&openGameDbPlatformPath, "%s/%s.csv", openGameDbPath, 
+                    thePlatform);
+            printf("Looking for file %s\n", openGameDbPlatformPath);
+
+            FILE *openGameDbFile = fopen(openGameDbPlatformPath, "r");
+            if (openGameDbFile == NULL) {
+                printf("looks like theres no opengamedb for the platform\n");
+                free(openGameDbPlatformPath);
+                break;
+            }
+            free(openGameDbPlatformPath);
+
+            char *csvLine = NULL;
+            size_t csvLineLength = 0;
+            size_t csvBytesRead = 0;
+            uint32_t onRow = 0;
+
+            while ((csvBytesRead = 
+                        getline(&csvLine, &csvLineLength, openGameDbFile)) != -1) 
+            {
+                if (onRow > 0) {
+                    char *gameName = getCsvField(csvLine, 1);
+                    uint32_t targetSignature = 0;
+
+                    lmmh_x86_32(gameName, strlen(gameName), 33, 
+                            &targetSignature);
+
+                    char *gameDate = getCsvField(csvLine, 2);
+
+                    // TODO if we don't already have it
+                    printf("\n%u\n%s\n%s\n", targetSignature, gameName, 
+                            gameDate);
+
+#if 0
+                    LaunchTarget *newEntry = 
+                        &launchTargetFile->entries[launchTargetFile->nEntries];
+#endif
+
+                    free(gameName);
+                    free(gameDate);
+                }
+
+                onRow++;
+            }
+            free(csvLine);
+            fclose(openGameDbFile);
+        }
+
+return 1;
+
 
         DIR *dir = opendir(thePath);
         // TODO NFS shares when unavailable just lock this up!
