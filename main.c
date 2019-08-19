@@ -250,25 +250,62 @@ int main (int argc, char** argv) {
                         getline(&csvLine, &csvLineLength, openGameDbFile)) != -1) 
             {
                 if (onRow > 0) {
+
                     char *gameName = getCsvField(csvLine, 1);
+                    char *gameSeed;
+
+                    asprintf(&gameSeed, "%s_%s", thePlatform, gameName);
+
                     uint32_t targetSignature = 0;
 
-                    lmmh_x86_32(gameName, strlen(gameName), 33, 
+                    lmmh_x86_32(gameSeed, strlen(gameSeed), 33, 
                             &targetSignature);
 
-                    char *gameDate = getCsvField(csvLine, 2);
+                    uint32_t indexOfEntry = -1;
 
-                    // TODO if we don't already have it
-                    printf("\n%u\n%s\n%s\n", targetSignature, gameName, 
-                            gameDate);
+                    for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
+                        if (launchTargetFile->entries[i].targetSignature == 
+                                targetSignature) {
+                            indexOfEntry = i;
+                        }
+                    }
 
-#if 0
-                    LaunchTarget *newEntry = 
-                        &launchTargetFile->entries[launchTargetFile->nEntries];
-#endif
+                    if (indexOfEntry == -1) {
 
+                        char *gameDate = getCsvField(csvLine, 2);
+                        printf("\n%s\n%u\n%s\n%s\n", gameSeed, 
+                                targetSignature, 
+                                gameName, 
+                                gameDate);
+
+                        LaunchTarget *newEntry = 
+                            &launchTargetFile->entries[launchTargetFile->nEntries];
+                        printf("writing new game to %p\n", newEntry);
+
+                        newEntry->targetSignature = targetSignature;
+
+                        memcpy(&newEntry->name, 
+                                gameName, 
+                                strlen(gameName));
+
+                        memcpy(&newEntry->platform, 
+                                thePlatform,
+                                strlen(thePlatform));
+
+                        launchTargetFile->nEntries++;
+
+                        free(gameDate);
+
+                    }
+                    else {
+                        printf("%d index found, We already have %u:%s\n", 
+                                indexOfEntry,
+                                targetSignature, 
+                                gameSeed);
+                    }
+
+                    free(gameSeed);
                     free(gameName);
-                    free(gameDate);
                 }
 
                 onRow++;
@@ -404,13 +441,8 @@ return 1;
                 fclose(romFd);
 
                 // Now we have the signature we can add it to our DB
-                // XXX here
-                uint32_t indexOfEntry = find_index_of_slow(
-                        romSignature,
-                        launchTargetFile->nEntries,
-                        sizeof(LaunchTarget),
-                        (void*)launchTargetFile->entries);
-
+                // XXX here removed the search call
+                uint32_t indexOfEntry = -1;
                 if (indexOfEntry > -1) {
                     printf("this target is already in the db\n");
                 }

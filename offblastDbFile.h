@@ -43,9 +43,3 @@ int init_db_file(char *, OffblastDbFile *dbFileStruct,
 // TODO implement
 int num_remaining_items(OffblastDbFile *dbFileStruct,
         size_t itemSize);
-
-int find_index_of_slow(
-        uint32_t signature,
-        uint32_t numEntries, 
-        size_t entrySize, 
-        char* list);

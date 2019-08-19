@@ -58,23 +58,3 @@ int init_db_file(char *path, OffblastDbFile *dbFileStruct,
     return 1;
 }
 
-int find_index_of_slow(
-        uint32_t signature,
-        uint32_t numEntries, 
-        size_t entrySize, 
-        char* list) 
-{
-    int foundIndex = -1;
-
-    for(uint32_t i=0; i < numEntries; i++) {
-
-        uint32_t currentEntry = *((uint32_t*) (list+i*entrySize));
-
-        if (currentEntry == signature) {
-            foundIndex = i;
-            break;
-        }
-    }
-
-    return foundIndex;
-}
