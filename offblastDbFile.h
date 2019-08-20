@@ -43,3 +43,12 @@ int init_db_file(char *, OffblastDbFile *dbFileStruct,
 // TODO implement
 int num_remaining_items(OffblastDbFile *dbFileStruct,
         size_t itemSize);
+
+int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file, 
+        uint32_t targetSignature);
+
+int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file, 
+        uint32_t targetSignature);
+
+int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, 
+        char *search);

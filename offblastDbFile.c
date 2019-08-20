@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <string.h>
 
 #include "offblast.h"
 #include "offblastDbFile.h"
@@ -58,3 +59,60 @@ int init_db_file(char *path, OffblastDbFile *dbFileStruct,
     return 1;
 }
 
+int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file, 
+        uint32_t targetSignature) 
+{
+    uint32_t foundIndex = -1;
+    for (uint32_t i = 0; i < file->nEntries; i++) {
+        if (file->entries[i].targetSignature == 
+                targetSignature) {
+            foundIndex = i;
+        }
+    }
+    return foundIndex;
+}
+
+int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file, 
+        uint32_t romSignature) 
+{
+    uint32_t foundIndex = -1;
+    for (uint32_t i = 0; i < file->nEntries; i++) {
+        if (file->entries[i].romSignature == 
+                romSignature) {
+            foundIndex = i;
+        }
+    }
+    return foundIndex;
+}
+
+int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, 
+        char *search)
+{
+    uint32_t foundIndex = -1;
+    char *bestMatch = NULL;
+
+    printf("\nLooking for: %s\n--------------\n", search);
+
+    for (uint32_t i = 0; i < file->nEntries; i++) {
+        char *result = strstr(search, file->entries[i].name);
+
+        if (result != NULL) {
+            printf("Match: %s\n", 
+                    file->entries[i].name);
+
+            if (bestMatch == NULL || strlen(result) > strlen(bestMatch)){ 
+                foundIndex = i;
+                bestMatch = file->entries[i].name;
+            }
+        }
+    }
+
+    if (foundIndex == -1) {
+        printf("NOT FOUND\n\n");
+    }
+    else {
+        printf("best match: %s - index %u\n\n", bestMatch, foundIndex);
+    }
+
+    return foundIndex;
+}

@@ -167,23 +167,18 @@ int main (int argc, char** argv) {
     free(launchTargetDbPath);
 
 
-#if 0
-    // XXX DEBUG for each game in the db, check to see if find_index_slow works
+#if 1
+    // XXX DEBUG Dump out all launch targets
     for (int i = 0; i < launchTargetFile->nEntries; i++) {
         printf("Reading from local game db\n");
-        printf("found game\t%d\t%u\n", i, launchTargetFile->entries[i].signature);
+        printf("found game\t%d\t%u\n", 
+                i, launchTargetFile->entries[i].targetSignature); 
+
+        printf("%s\n", launchTargetFile->entries[i].name);
         printf("%s\n", launchTargetFile->entries[i].fileName);
         printf("%s\n", launchTargetFile->entries[i].path);
+        printf("--\n\n");
 
-        int foundIndex = find_index_of_slow(
-                launchTargetFile->entries[i].signature,
-                launchTargetFile->nEntries, 
-                sizeof(LaunchTarget), 
-                (void*)launchTargetFile->entries);
-
-        printf("Game %u found at index: %d\n\n", 
-                launchTargetFile->entries[i].signature,
-                foundIndex);
     } // XXX DEBUG ONLY CODE
 #endif 
 
@@ -261,14 +256,8 @@ int main (int argc, char** argv) {
                     lmmh_x86_32(gameSeed, strlen(gameSeed), 33, 
                             &targetSignature);
 
-                    uint32_t indexOfEntry = -1;
-
-                    for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
-                        if (launchTargetFile->entries[i].targetSignature == 
-                                targetSignature) {
-                            indexOfEntry = i;
-                        }
-                    }
+                    int32_t indexOfEntry = launchTargetIndexByTargetSignature(
+                            launchTargetFile, targetSignature);
 
                     if (indexOfEntry == -1) {
 
@@ -292,6 +281,7 @@ int main (int argc, char** argv) {
                                 thePlatform,
                                 strlen(thePlatform));
 
+                        // TODO check we have the space for it
                         launchTargetFile->nEntries++;
 
                         free(gameDate);
@@ -313,8 +303,6 @@ int main (int argc, char** argv) {
             free(csvLine);
             fclose(openGameDbFile);
         }
-
-return 1;
 
 
         DIR *dir = opendir(thePath);
@@ -422,6 +410,8 @@ return 1;
                         thePath,
                         matchingFileNames[j]);
 
+                // TODO check it's not disc 2 or 3 etc
+
                 uint32_t romSignature;
                 FILE *romFd = fopen(romPathTrimmed, "rb");
                 if (! romFd) {
@@ -441,34 +431,35 @@ return 1;
                 fclose(romFd);
 
                 // Now we have the signature we can add it to our DB
-                // XXX here removed the search call
-                uint32_t indexOfEntry = -1;
+                int32_t indexOfEntry = launchTargetIndexByRomSignature(
+                        launchTargetFile, romSignature);
+
                 if (indexOfEntry > -1) {
                     printf("this target is already in the db\n");
                 }
                 else {
-                    // TODO check we have the space for it
 
-                    LaunchTarget *newEntry = 
-                        &launchTargetFile->entries[launchTargetFile->nEntries];
+                    indexOfEntry = launchTargetIndexByNameMatch(
+                            launchTargetFile, matchingFileNames[j]);
 
-                    printf("writing new game to %p\n", newEntry);
+                    printf("found by name at index %d\n", indexOfEntry);
 
-                    newEntry->romSignature = romSignature;
+                    if (indexOfEntry > -1) {
 
-                    memcpy(&newEntry->fileName, 
-                            &matchingFileNames[j], 
-                            strlen(matchingFileNames[j]));
+                        LaunchTarget *theTarget = 
+                            &launchTargetFile->entries[indexOfEntry];
 
-                    memcpy(&newEntry->path, 
-                            romPathTrimmed,
-                            strlen(romPathTrimmed));
+                        theTarget->romSignature = romSignature;
 
-                    memcpy(&newEntry->platform, 
-                            thePlatform,
-                            strlen(thePlatform));
+                        memcpy(&theTarget->fileName, 
+                                &matchingFileNames[j], 
+                                strlen(matchingFileNames[j]));
+
+                        memcpy(&theTarget->path, 
+                                romPathTrimmed,
+                                strlen(romPathTrimmed));
                     
-                    launchTargetFile->nEntries++;
+                    }
                 }
 
                 free(romPathTrimmed);
