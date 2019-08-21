@@ -572,10 +572,13 @@ int main (int argc, char** argv) {
     SDL_QueryTexture(textTexture, NULL, NULL, &destRect.w, &destRect.h);
 
     int running = 1;
+    uint32_t mainCursor = 0;
+
     while (running) {
 
         int winWidth = 0;
         int winHeight = 0;
+
 
         SDL_GetWindowSize(window, &winWidth, &winHeight);
 
@@ -594,6 +597,18 @@ int main (int argc, char** argv) {
                     running = 0;
                     break;
                 }
+                else if (keyEvent->keysym.scancode == SDL_SCANCODE_DOWN) {
+                    mainCursor++;
+                    if (mainCursor > launchTargetFile->nEntries) {
+                        mainCursor = launchTargetFile->nEntries;
+                    }
+                }
+                else if (keyEvent->keysym.scancode == SDL_SCANCODE_UP) {
+                    mainCursor--;
+                    if (mainCursor < 0) {
+                        mainCursor = 0;
+                    }
+                }
                 else {
                     printf("key up %d\n", keyEvent->keysym.scancode);
                 }
@@ -611,8 +626,15 @@ int main (int argc, char** argv) {
 
             SDL_Color textColor = {0,0,0};
 
-            if (strlen(theTarget->fileName) == 0) {
+            if (i == mainCursor) {
+                textColor.r = 0;
+                textColor.g = 0;
+                textColor.b = 255;
+            }
+            else if (strlen(theTarget->fileName) == 0) {
                 textColor.r = 255;
+                textColor.g = 0;
+                textColor.b = 0;
             }
 
             SDL_Surface *targetSurface = TTF_RenderText_Blended(
