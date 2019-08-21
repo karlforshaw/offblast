@@ -1,6 +1,9 @@
 #define _GNU_SOURCE
 #define SCALING 2.0
 
+#define LARGE_FONT_SIZE 30
+#define SMALL_FONT_SIZE 12
+
 #include <stdio.h>
 #include <stdint.h>
 #include <assert.h>
@@ -241,8 +244,8 @@ int main (int argc, char** argv) {
             size_t csvBytesRead = 0;
             uint32_t onRow = 0;
 
-            while ((csvBytesRead = 
-                        getline(&csvLine, &csvLineLength, openGameDbFile)) != -1) 
+            while ((csvBytesRead = getline(
+                            &csvLine, &csvLineLength, openGameDbFile)) != -1) 
             {
                 if (onRow > 0) {
 
@@ -476,7 +479,7 @@ int main (int argc, char** argv) {
     close(pathDb.fd);
     close(launchTargetDb.fd);
 
-    return 0;
+
 
     const char *userName = NULL;
     {
@@ -533,8 +536,15 @@ int main (int argc, char** argv) {
     SDL_SetRenderDrawColor(renderer, 0xFD, 0xF9, 0xFA, 0xFF);
 
     TTF_Font *font;
-    font = TTF_OpenFont("fonts/Roboto-Regular.ttf", 30*SCALING);
+    font = TTF_OpenFont("fonts/Roboto-Regular.ttf", LARGE_FONT_SIZE*SCALING);
     if (!font) {
+        printf("Font initialization Failed, %s\n", TTF_GetError());
+        return 1;
+    }
+
+    TTF_Font *smallFont;
+    smallFont = TTF_OpenFont("fonts/Roboto-Regular.ttf", SMALL_FONT_SIZE*SCALING);
+    if (!smallFont) {
         printf("Font initialization Failed, %s\n", TTF_GetError());
         return 1;
     }
@@ -557,7 +567,8 @@ int main (int argc, char** argv) {
     SDL_Texture* textTexture = SDL_CreateTextureFromSurface(renderer, textSurface);
     SDL_FreeSurface(textSurface);
 
-    SDL_Rect destRect = {30*SCALING, 30*SCALING, 0, 0};
+    SDL_Rect destRect = {LARGE_FONT_SIZE*SCALING, LARGE_FONT_SIZE*SCALING, 
+        0, 0};
     SDL_QueryTexture(textTexture, NULL, NULL, &destRect.w, &destRect.h);
 
     int running = 1;
@@ -592,6 +603,45 @@ int main (int argc, char** argv) {
 
         // TODO check running again?
         SDL_RenderClear(renderer);
+
+
+        for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
+
+            LaunchTarget *theTarget = &launchTargetFile->entries[i];
+
+            SDL_Color textColor = {0,0,0};
+
+            if (strlen(theTarget->fileName) == 0) {
+                textColor.r = 255;
+            }
+
+            SDL_Surface *targetSurface = TTF_RenderText_Blended(
+                    smallFont,
+                    theTarget->name,
+                    textColor);
+
+            if (!targetSurface) {
+                printf("Font render failed, %s\n", TTF_GetError());
+                return 1;
+            }
+
+            SDL_Texture* targetTexture = SDL_CreateTextureFromSurface(
+                    renderer, targetSurface);
+
+            SDL_FreeSurface(targetSurface);
+
+            SDL_Rect targetRect = {
+                SMALL_FONT_SIZE*SCALING,
+                i * SMALL_FONT_SIZE*SCALING,
+                0, 0};
+
+            SDL_QueryTexture(targetTexture, NULL, NULL, &targetRect.w, &targetRect.h);
+            SDL_RenderCopy(renderer, targetTexture, NULL, &targetRect);
+
+            SDL_DestroyTexture(targetTexture);
+
+        }
+
 
         // Draw the title bar
         destRect.x = (winWidth / 2) - (destRect.w / 2);
