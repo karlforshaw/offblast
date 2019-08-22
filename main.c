@@ -36,6 +36,14 @@ double easeOutCirc(double t, double b, double c, double d)
     return change;
 };
 
+
+double easeInOutCirc (double t, double b, double c, double d) {
+	t /= d/2.0;
+	if (t < 1.0) return -c/2.0 * (sqrt(1.0 - t*t) - 1.0) + b;
+	t -= 2.0;
+	return c/2.0 * (sqrt(1.0 - t*t) + 1.0) + b;
+};
+
 char *getCsvField(char *line, int fieldNo);
 
 char *getCsvField(char *line, int fieldNo) 
@@ -717,24 +725,21 @@ int main (int argc, char** argv) {
         }
 #endif
 
-        // XXX animation test
+        // TODO animation test
         if (animating == 0) {
             theAnimation.startTick = SDL_GetTicks();
-            theAnimation.durationMs = 666;
+            theAnimation.durationMs = 300;
             animating = 1;
-            printf("anstart: %u, andur:%u\n", theAnimation.startTick, theAnimation.durationMs);
         }
-
 
         SDL_SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0xFF);
 
         SDL_Rect mainRowRects[NUM_COLS];
         for (uint32_t i = 0; i < NUM_COLS; i++) {
 
-            // TODO stop using get ticks all the time? and stick it on the stack
             mainRowRects[i].x = pad + i * (boxWidth + pad);
 
-            double change = easeOutCirc(
+            double change = easeInOutCirc(
                 (double)SDL_GetTicks() - theAnimation.startTick,
                 0.0,
                 (double)boxWidth + pad,
