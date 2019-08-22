@@ -1,8 +1,12 @@
 #define _GNU_SOURCE
 #define SCALING 2.0
+#define PHI 1.618033988749895
 
 #define LARGE_FONT_SIZE 30
 #define SMALL_FONT_SIZE 12
+#define NUM_COLS 10
+
+
 
 #include <stdio.h>
 #include <stdint.h>
@@ -18,10 +22,19 @@
 #include <json-c/json.h>
 #include <murmurhash.h>
 #include <curl/curl.h>
+#include <math.h>
 
 #include "offblast.h"
 #include "offblastDbFile.h"
 
+
+double easeOutCirc(double t, double b, double c, double d) 
+{
+	t /= d;
+	t--;
+	double change = c * sqrt(1.0f - t*t) + b;
+    return change;
+};
 
 char *getCsvField(char *line, int fieldNo);
 
@@ -533,7 +546,6 @@ int main (int argc, char** argv) {
     SDL_Renderer* renderer;
 
     renderer = SDL_CreateRenderer(window, -1, 0);
-    SDL_SetRenderDrawColor(renderer, 0xFD, 0xF9, 0xFA, 0xFF);
 
     TTF_Font *font;
     font = TTF_OpenFont("fonts/Roboto-Regular.ttf", LARGE_FONT_SIZE*SCALING);
@@ -572,15 +584,31 @@ int main (int argc, char** argv) {
     SDL_QueryTexture(textTexture, NULL, NULL, &destRect.w, &destRect.h);
 
     int running = 1;
-    uint32_t mainCursor = 0;
+    uint32_t lastTick = SDL_GetTicks();
+    uint32_t renderFrequency = 1000/60;
+
+    uint32_t yCursor = 0;
+    uint32_t xCursor = 0;
+    uint32_t rows = 1;
+
+    uint32_t animating = 0;
+    struct animation {
+        uint32_t startTick;
+        uint32_t durationMs;
+    } theAnimation;
 
     while (running) {
 
         int winWidth = 0;
         int winHeight = 0;
 
-
         SDL_GetWindowSize(window, &winWidth, &winHeight);
+        uint32_t theFold = winHeight - (winHeight * 1/PHI);
+        uint32_t boxWidth = winWidth / 5;
+        uint32_t pad = (uint32_t)(boxWidth - boxWidth * 1/PHI);
+        pad = pad * 1/PHI;
+        pad = pad * 1/PHI;
+        pad = pad * 1/PHI;
 
         SDL_Event event;
 
@@ -597,16 +625,40 @@ int main (int argc, char** argv) {
                     running = 0;
                     break;
                 }
-                else if (keyEvent->keysym.scancode == SDL_SCANCODE_DOWN) {
-                    mainCursor++;
-                    if (mainCursor > launchTargetFile->nEntries) {
-                        mainCursor = launchTargetFile->nEntries;
+                else if (
+                        keyEvent->keysym.scancode == SDL_SCANCODE_DOWN ||
+                        keyEvent->keysym.scancode == SDL_SCANCODE_J) 
+                {
+                    yCursor++;
+                    if (yCursor > rows) {
+                        yCursor = rows;
                     }
                 }
-                else if (keyEvent->keysym.scancode == SDL_SCANCODE_UP) {
-                    mainCursor--;
-                    if (mainCursor < 0) {
-                        mainCursor = 0;
+                else if (
+                        keyEvent->keysym.scancode == SDL_SCANCODE_UP ||
+                        keyEvent->keysym.scancode == SDL_SCANCODE_K) 
+                {
+                    yCursor--;
+                    if (yCursor < 0) {
+                        yCursor = 0;
+                    }
+                }
+                else if (
+                        keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
+                        keyEvent->keysym.scancode == SDL_SCANCODE_L) 
+                {
+                    xCursor++;
+                    if (xCursor > NUM_COLS) {
+                        xCursor = NUM_COLS;
+                    }
+                }
+                else if (
+                        keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
+                        keyEvent->keysym.scancode == SDL_SCANCODE_H) 
+                {
+                    xCursor--;
+                    if (xCursor < 0) {
+                        xCursor = 0;
                     }
                 }
                 else {
@@ -616,17 +668,18 @@ int main (int argc, char** argv) {
 
         }
 
-        // TODO check running again?
+        SDL_SetRenderDrawColor(renderer, 0xFD, 0xF9, 0xFA, 0xFF);
         SDL_RenderClear(renderer);
 
 
+#if 0
         for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
 
             LaunchTarget *theTarget = &launchTargetFile->entries[i];
 
             SDL_Color textColor = {0,0,0};
 
-            if (i == mainCursor) {
+            if (i == yCursor) {
                 textColor.r = 0;
                 textColor.g = 0;
                 textColor.b = 255;
@@ -654,25 +707,97 @@ int main (int argc, char** argv) {
 
             SDL_Rect targetRect = {
                 SMALL_FONT_SIZE*SCALING,
-                i * SMALL_FONT_SIZE*SCALING,
+                theFold + (i * SMALL_FONT_SIZE*SCALING),
                 0, 0};
 
             SDL_QueryTexture(targetTexture, NULL, NULL, &targetRect.w, &targetRect.h);
             SDL_RenderCopy(renderer, targetTexture, NULL, &targetRect);
-
             SDL_DestroyTexture(targetTexture);
 
         }
+#endif
+
+        // XXX animation test
+        if (animating == 0) {
+            theAnimation.startTick = SDL_GetTicks();
+            theAnimation.durationMs = 666;
+            animating = 1;
+            printf("anstart: %u, andur:%u\n", theAnimation.startTick, theAnimation.durationMs);
+        }
 
 
-        // Draw the title bar
+        SDL_SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0xFF);
+
+        SDL_Rect mainRowRects[NUM_COLS];
+        for (uint32_t i = 0; i < NUM_COLS; i++) {
+
+            // TODO stop using get ticks all the time? and stick it on the stack
+            mainRowRects[i].x = pad + i * (boxWidth + pad);
+
+            double change = easeOutCirc(
+                (double)SDL_GetTicks() - theAnimation.startTick,
+                0.0,
+                (double)boxWidth + pad,
+                (double)theAnimation.durationMs
+            );
+
+            mainRowRects[i].x -= (uint32_t) change;
+
+            mainRowRects[i].y = theFold;
+            mainRowRects[i].w = boxWidth;
+            mainRowRects[i].h = 500;
+        }
+
+        if (animating && SDL_GetTicks() > 
+                theAnimation.startTick + theAnimation.durationMs) 
+        {
+            animating = 0;
+        }
+
+        SDL_RenderFillRects(renderer, &mainRowRects[0], NUM_COLS);
+
+
+        // DEBUG FPS INFO
+        uint32_t frameTime = SDL_GetTicks() - lastTick;
+        char *fpsString;
+        asprintf(&fpsString, "Frame Time: %u", frameTime);
+
+        SDL_Surface *fpsSurface = TTF_RenderText_Blended(
+                smallFont,
+                fpsString,
+                textColor);
+
+        free(fpsString);
+
+        if (!fpsSurface) {
+            printf("Font render failed, %s\n", TTF_GetError());
+            return 1;
+        }
+
+        SDL_Texture* fpsTexture = SDL_CreateTextureFromSurface(
+                renderer, fpsSurface);
+
+        SDL_FreeSurface(fpsSurface);
+
+        SDL_Rect fpsRect = {
+            SMALL_FONT_SIZE*SCALING,
+            SMALL_FONT_SIZE*SCALING,
+            0, 0};
+
+        SDL_QueryTexture(fpsTexture, NULL, NULL, &fpsRect.w, &fpsRect.h);
+        SDL_RenderCopy(renderer, fpsTexture, NULL, &fpsRect);
+        SDL_DestroyTexture(fpsTexture);
         destRect.x = (winWidth / 2) - (destRect.w / 2);
+
         SDL_RenderCopy(renderer, textTexture, NULL, &destRect);
 
         SDL_RenderPresent(renderer);
 
-        // TODO deduct the ms it took to loop so far
-        SDL_Delay(16);
+        if (SDL_GetTicks() - lastTick < renderFrequency) {
+            SDL_Delay(renderFrequency - (SDL_GetTicks() - lastTick));
+        }
+
+        lastTick = SDL_GetTicks();
     }
 
     SDL_DestroyWindow(window);

@@ -8,7 +8,7 @@ PROG = offblast
 OBJS = main.o offblastDbFile.o
 
 ${PROG}: ${OBJS}
-	gcc -g -o ${PROG} ${OBJS} ${LIBS} 
+	gcc -g -o ${PROG} ${OBJS} -lm ${LIBS} 
 
 main.o: main.c offblast.h offblastDbFile.h
 	gcc -g -c ${CFLAGS} main.c
