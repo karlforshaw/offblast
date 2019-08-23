@@ -4,8 +4,8 @@
 
 #define LARGE_FONT_SIZE 30
 #define SMALL_FONT_SIZE 12
-#define NUM_COLS 10
-
+#define COLS_ON_SCREEN 5
+#define COLS_TOTAL 10 
 
 
 #include <stdio.h>
@@ -28,64 +28,50 @@
 #include "offblastDbFile.h"
 
 
-double easeOutCirc(double t, double b, double c, double d) 
-{
-	t /= d;
-	t--;
-	double change = c * sqrt(1.0f - t*t) + b;
-    return change;
-};
+typedef struct SizeInfo {
+        int32_t winWidth;
+        int32_t winHeight;
+        int32_t winFold;
+        int32_t boxWidth;
+        int32_t boxPad;
+} SizeInfo;
+
+typedef struct UiTile{
+    struct LaunchTarget *target;
+    struct UiTile *next; 
+    struct UiTile *previous; 
+    int32_t xPos;
+} UiTile;
+
+typedef struct UiRow {
+    uint32_t length;
+    struct UiTile *cursor;
+    struct UiTile *tiles;
+} UiRow;
 
 
-double easeInOutCirc (double t, double b, double c, double d) {
-	t /= d/2.0;
-	if (t < 1.0) return -c/2.0 * (sqrt(1.0 - t*t) - 1.0) + b;
-	t -= 2.0;
-	return c/2.0 * (sqrt(1.0 - t*t) + 1.0) + b;
-};
+typedef struct Animation {
+    uint32_t animating;
+    uint32_t direction;
+    uint32_t startTick;
+    uint32_t durationMs;
+} Animation;
 
-char *getCsvField(char *line, int fieldNo);
 
-char *getCsvField(char *line, int fieldNo) 
-{
-    char *cursor = line;
-    char *fieldStart = NULL;
-    char *fieldEnd = NULL;
-    char *fieldString = NULL;
-    int inQuotes = 0;
-
-    for (uint32_t i = 0; i < fieldNo; ++i) {
-
-        fieldStart = cursor;
-        fieldEnd = cursor;
-        inQuotes = 0;
-
-        while (cursor != NULL) {
-
-            if (*cursor == '"') {
-                inQuotes++;
-            }
-            else if (*cursor == ',' && !(inQuotes & 1)) {
-                fieldEnd = cursor - 1;
-                cursor++;
-                break;
-            }
-
-            cursor++;
-        }
+void changeColumn(Animation *theAnimation, uint32_t direction) {
+    if (theAnimation->animating == 0) 
+    {
+        theAnimation->startTick = SDL_GetTicks();
+        theAnimation->direction = direction;
+        theAnimation->durationMs = 200;
+        theAnimation->animating = 1;
     }
-
-    if (*fieldStart == '"') fieldStart++;
-    if (*fieldEnd == '"') fieldEnd--;
-
-    uint32_t fieldLength = (fieldEnd - fieldStart) + 1;
-
-    fieldString = calloc(1, fieldLength + sizeof(char));
-    memcpy(fieldString, fieldStart, fieldLength);
-
-    return fieldString;
 }
 
+uint32_t needsReRender(SDL_Window *window, SizeInfo *sizeInfo);
+double easeOutCirc(double t, double b, double c, double d);
+double easeInOutCirc (double t, double b, double c, double d);
+char *getCsvField(char *line, int fieldNo);
 
 int main (int argc, char** argv) {
 
@@ -191,7 +177,7 @@ int main (int argc, char** argv) {
     free(launchTargetDbPath);
 
 
-#if 1
+#if 0
     // XXX DEBUG Dump out all launch targets
     for (int i = 0; i < launchTargetFile->nEntries; i++) {
         printf("Reading from local game db\n");
@@ -595,28 +581,47 @@ int main (int argc, char** argv) {
     uint32_t lastTick = SDL_GetTicks();
     uint32_t renderFrequency = 1000/60;
 
-    uint32_t yCursor = 0;
-    uint32_t xCursor = 0;
     uint32_t rows = 1;
+    uint32_t yCursor = 0;
+    
+    Animation theAnimation = {};
 
-    uint32_t animating = 0;
-    struct animation {
-        uint32_t startTick;
-        uint32_t durationMs;
-    } theAnimation;
+    // Set up 
+    UiRow mainRow = {};
+    mainRow.length = 9;
+    mainRow.tiles = calloc(mainRow.length, sizeof(UiTile));
+    mainRow.cursor = &mainRow.tiles[0];
+
+    SizeInfo sizeInfo = {};
+    needsReRender(window, &sizeInfo);
+
+    for (uint32_t i = 0; i < mainRow.length; i++) {
+
+        mainRow.tiles[i].target = &launchTargetFile->entries[i];
+
+        if (i+1 == mainRow.length) {
+            mainRow.tiles[i].next = &mainRow.tiles[0]; 
+        }
+        else {
+            mainRow.tiles[i].next = &mainRow.tiles[i+1]; 
+        }
+
+        if (i == 0) {
+            mainRow.tiles[i].previous = &mainRow.tiles[mainRow.length -1];
+        }
+        else {
+            mainRow.tiles[i].previous = &mainRow.tiles[i-1];
+        }
+
+    }
+
 
     while (running) {
 
-        int winWidth = 0;
-        int winHeight = 0;
-
-        SDL_GetWindowSize(window, &winWidth, &winHeight);
-        uint32_t theFold = winHeight - (winHeight * 1/PHI);
-        uint32_t boxWidth = winWidth / 5;
-        uint32_t pad = (uint32_t)(boxWidth - boxWidth * 1/PHI);
-        pad = pad * 1/PHI;
-        pad = pad * 1/PHI;
-        pad = pad * 1/PHI;
+        // TODO duplicating code here - consider making a funciton for this
+        if (needsReRender(window, &sizeInfo) == 1) {
+            // TODO something
+        }
 
         SDL_Event event;
 
@@ -655,19 +660,13 @@ int main (int argc, char** argv) {
                         keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_L) 
                 {
-                    xCursor++;
-                    if (xCursor > NUM_COLS) {
-                        xCursor = NUM_COLS;
-                    }
+                    changeColumn(&theAnimation, 1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_H) 
                 {
-                    xCursor--;
-                    if (xCursor < 0) {
-                        xCursor = 0;
-                    }
+                    changeColumn(&theAnimation, 0);
                 }
                 else {
                     printf("key up %d\n", keyEvent->keysym.scancode);
@@ -680,24 +679,41 @@ int main (int argc, char** argv) {
         SDL_RenderClear(renderer);
 
 
-#if 0
-        for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
+        SDL_SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0xFF);
 
-            LaunchTarget *theTarget = &launchTargetFile->entries[i];
 
-            SDL_Color textColor = {0,0,0};
+        SDL_Rect mainRowRects[COLS_TOTAL];
+        UiTile *tileToRender = mainRow.cursor;
+        for (uint32_t i = 0; i < COLS_TOTAL; i++) {
 
-            if (i == yCursor) {
-                textColor.r = 0;
-                textColor.g = 0;
-                textColor.b = 255;
+            mainRowRects[i].x = 
+                sizeInfo.boxPad + i * (sizeInfo.boxWidth + sizeInfo.boxPad);
+
+
+            if (theAnimation.animating != 0) {
+                double change = easeInOutCirc(
+                        (double)SDL_GetTicks() - theAnimation.startTick,
+                        0.0,
+                        (double)sizeInfo.boxWidth + sizeInfo.boxPad,
+                        (double)theAnimation.durationMs
+                        );
+
+                if (theAnimation.direction > 0) {
+                    change = -change;
+                }
+
+                mainRowRects[i].x += change;
             }
-            else if (strlen(theTarget->fileName) == 0) {
-                textColor.r = 255;
-                textColor.g = 0;
-                textColor.b = 0;
-            }
 
+            mainRowRects[i].y = sizeInfo.winFold;
+            mainRowRects[i].w = sizeInfo.boxWidth;
+            mainRowRects[i].h = 500;
+            SDL_RenderFillRect(renderer, &mainRowRects[i]);
+
+            LaunchTarget *theTarget = tileToRender->target;
+            printf("%u: %s\n", i, theTarget->name);
+
+            SDL_Color textColor = {0,255,0};
             SDL_Surface *targetSurface = TTF_RenderText_Blended(
                     smallFont,
                     theTarget->name,
@@ -714,52 +730,30 @@ int main (int argc, char** argv) {
             SDL_FreeSurface(targetSurface);
 
             SDL_Rect targetRect = {
-                SMALL_FONT_SIZE*SCALING,
-                theFold + (i * SMALL_FONT_SIZE*SCALING),
+                mainRowRects[i].x,
+                mainRowRects[i].y,
                 0, 0};
 
             SDL_QueryTexture(targetTexture, NULL, NULL, &targetRect.w, &targetRect.h);
             SDL_RenderCopy(renderer, targetTexture, NULL, &targetRect);
             SDL_DestroyTexture(targetTexture);
-
-        }
-#endif
-
-        // TODO animation test
-        if (animating == 0) {
-            theAnimation.startTick = SDL_GetTicks();
-            theAnimation.durationMs = 300;
-            animating = 1;
+            tileToRender = tileToRender->next;
         }
 
-        SDL_SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0xFF);
 
-        SDL_Rect mainRowRects[NUM_COLS];
-        for (uint32_t i = 0; i < NUM_COLS; i++) {
-
-            mainRowRects[i].x = pad + i * (boxWidth + pad);
-
-            double change = easeInOutCirc(
-                (double)SDL_GetTicks() - theAnimation.startTick,
-                0.0,
-                (double)boxWidth + pad,
-                (double)theAnimation.durationMs
-            );
-
-            mainRowRects[i].x -= (uint32_t) change;
-
-            mainRowRects[i].y = theFold;
-            mainRowRects[i].w = boxWidth;
-            mainRowRects[i].h = 500;
-        }
-
-        if (animating && SDL_GetTicks() > 
+        if (theAnimation.animating && SDL_GetTicks() > 
                 theAnimation.startTick + theAnimation.durationMs) 
         {
-            animating = 0;
+            theAnimation.animating = 0;
+
+            if (theAnimation.direction == 1) {
+                mainRow.cursor = mainRow.cursor->next;
+            }
+            else {
+                mainRow.cursor = mainRow.cursor->previous;
+            }
         }
 
-        SDL_RenderFillRects(renderer, &mainRowRects[0], NUM_COLS);
 
 
         // DEBUG FPS INFO
@@ -792,7 +786,7 @@ int main (int argc, char** argv) {
         SDL_QueryTexture(fpsTexture, NULL, NULL, &fpsRect.w, &fpsRect.h);
         SDL_RenderCopy(renderer, fpsTexture, NULL, &fpsRect);
         SDL_DestroyTexture(fpsTexture);
-        destRect.x = (winWidth / 2) - (destRect.w / 2);
+        destRect.x = (sizeInfo.winWidth / 2) - (destRect.w / 2);
 
         SDL_RenderCopy(renderer, textTexture, NULL, &destRect);
 
@@ -809,4 +803,85 @@ int main (int argc, char** argv) {
     SDL_Quit();
 
     return 0;
+}
+
+double easeOutCirc(double t, double b, double c, double d) 
+{
+	t /= d;
+	t--;
+	double change = c * sqrt(1.0f - t*t) + b;
+    return change;
+};
+
+
+double easeInOutCirc (double t, double b, double c, double d) {
+	t /= d/2.0;
+	if (t < 1.0) return -c/2.0 * (sqrt(1.0 - t*t) - 1.0) + b;
+	t -= 2.0;
+	return c/2.0 * (sqrt(1.0 - t*t) + 1.0) + b;
+};
+
+char *getCsvField(char *line, int fieldNo) 
+{
+    char *cursor = line;
+    char *fieldStart = NULL;
+    char *fieldEnd = NULL;
+    char *fieldString = NULL;
+    int inQuotes = 0;
+
+    for (uint32_t i = 0; i < fieldNo; ++i) {
+
+        fieldStart = cursor;
+        fieldEnd = cursor;
+        inQuotes = 0;
+
+        while (cursor != NULL) {
+
+            if (*cursor == '"') {
+                inQuotes++;
+            }
+            else if (*cursor == ',' && !(inQuotes & 1)) {
+                fieldEnd = cursor - 1;
+                cursor++;
+                break;
+            }
+
+            cursor++;
+        }
+    }
+
+    if (*fieldStart == '"') fieldStart++;
+    if (*fieldEnd == '"') fieldEnd--;
+
+    uint32_t fieldLength = (fieldEnd - fieldStart) + 1;
+
+    fieldString = calloc(1, fieldLength + sizeof(char));
+    memcpy(fieldString, fieldStart, fieldLength);
+
+    return fieldString;
+}
+
+uint32_t needsReRender(SDL_Window *window, SizeInfo *sizeInfo) 
+{
+    int32_t newWidth, newHeight;
+    uint32_t updated = 0;
+
+    SDL_GetWindowSize(window, &newWidth, &newHeight);
+
+    if (newWidth != sizeInfo->winWidth || newHeight != sizeInfo->winHeight) {
+        printf("rerendering needed\n");
+        sizeInfo->winWidth = newWidth;
+        sizeInfo->winHeight= newHeight;
+        sizeInfo->winFold = newHeight - (newHeight * 1/PHI);
+        sizeInfo->boxWidth = newWidth / COLS_ON_SCREEN;
+
+        sizeInfo->boxPad = sizeInfo->boxWidth - sizeInfo->boxWidth * 1/PHI;
+        sizeInfo->boxPad = sizeInfo->boxPad * 1/PHI;
+        sizeInfo->boxPad = sizeInfo->boxPad * 1/PHI;
+        sizeInfo->boxPad = sizeInfo->boxPad * 1/PHI;
+
+        updated = 1;
+    }
+
+    return updated;
 }
