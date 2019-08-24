@@ -58,20 +58,13 @@ typedef struct Animation {
 } Animation;
 
 
-void changeColumn(Animation *theAnimation, uint32_t direction) {
-    if (theAnimation->animating == 0) 
-    {
-        theAnimation->startTick = SDL_GetTicks();
-        theAnimation->direction = direction;
-        theAnimation->durationMs = 200;
-        theAnimation->animating = 1;
-    }
-}
 
 uint32_t needsReRender(SDL_Window *window, SizeInfo *sizeInfo);
 double easeOutCirc(double t, double b, double c, double d);
 double easeInOutCirc (double t, double b, double c, double d);
 char *getCsvField(char *line, int fieldNo);
+void changeColumn(Animation *theAnimation, uint32_t direction);
+UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
 
 int main (int argc, char** argv) {
 
@@ -683,8 +676,12 @@ int main (int argc, char** argv) {
 
 
         SDL_Rect mainRowRects[COLS_TOTAL];
-        UiTile *tileToRender = mainRow.cursor;
-        for (uint32_t i = 0; i < COLS_TOTAL; i++) {
+
+        // TODO wind this back 5
+        UiTile *tileToRender = 
+            rewindTiles(mainRow.cursor, COLS_ON_SCREEN);
+
+        for (int32_t i = -COLS_ON_SCREEN; i < COLS_TOTAL; i++) {
 
             mainRowRects[i].x = 
                 sizeInfo.boxPad + i * (sizeInfo.boxWidth + sizeInfo.boxPad);
@@ -711,7 +708,7 @@ int main (int argc, char** argv) {
             SDL_RenderFillRect(renderer, &mainRowRects[i]);
 
             LaunchTarget *theTarget = tileToRender->target;
-            printf("%u: %s\n", i, theTarget->name);
+            printf("%d: %s\n", i, theTarget->name);
 
             SDL_Color textColor = {0,255,0};
             SDL_Surface *targetSurface = TTF_RenderText_Blended(
@@ -884,4 +881,26 @@ uint32_t needsReRender(SDL_Window *window, SizeInfo *sizeInfo)
     }
 
     return updated;
+}
+
+void changeColumn(Animation *theAnimation, uint32_t direction) {
+    if (theAnimation->animating == 0) 
+    {
+        theAnimation->startTick = SDL_GetTicks();
+        theAnimation->direction = direction;
+        theAnimation->durationMs = 200;
+        theAnimation->animating = 1;
+    }
+}
+
+
+UiTile *rewindTiles(UiTile *fromTile, uint32_t depth) {
+
+    if (depth == 0) {
+        return fromTile;
+    }
+    else {
+        fromTile = fromTile->previous;
+        return rewindTiles(fromTile, --depth);
+    }
 }
