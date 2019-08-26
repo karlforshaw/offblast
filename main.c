@@ -55,7 +55,8 @@ typedef struct Animation {
     uint32_t direction;
     uint32_t startTick;
     uint32_t durationMs;
-    void (*callBack)();
+    void *callbackArgs;
+    void (* callback)(struct Animation*);
 } Animation;
 
 
@@ -67,13 +68,20 @@ char *getCsvField(char *line, int fieldNo);
 void changeColumn(Animation *theAnimation, uint32_t direction);
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
 
-void horizontalMoveDone(UiRow *row, Animation *context) {
+void horizontalMoveDone(struct Animation *context) {
+
+    UiRow *row = context->callbackArgs;
+
     if (context->direction == 1) {
         row->cursor = row->cursor->next;
     }
     else {
         row->cursor = row->cursor->previous;
     }
+}
+
+void titleFaded(struct Animation *context) {
+
 }
 
 int main (int argc, char** argv) {
@@ -587,10 +595,11 @@ int main (int argc, char** argv) {
     uint32_t rows = 1;
     uint32_t yCursor = 0;
     
-    Animation theAnimation = {};
+    Animation *theAnimation = calloc(1, sizeof(Animation));
 
     // Set up 
     UiRow mainRow = {};
+    theAnimation->callbackArgs = &mainRow;
     mainRow.length = 9;
     mainRow.tiles = calloc(mainRow.length, sizeof(UiTile));
     mainRow.cursor = &mainRow.tiles[0];
@@ -662,13 +671,13 @@ int main (int argc, char** argv) {
                         keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_L) 
                 {
-                    changeColumn(&theAnimation, 1);
+                    changeColumn(theAnimation, 1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_H) 
                 {
-                    changeColumn(&theAnimation, 0);
+                    changeColumn(theAnimation, 0);
                 }
                 else {
                     printf("key up %d\n", keyEvent->keysym.scancode);
@@ -695,14 +704,14 @@ int main (int argc, char** argv) {
                 sizeInfo.boxPad + i * (sizeInfo.boxWidth + sizeInfo.boxPad);
 
 
-            if (theAnimation.animating != 0) {
+            if (theAnimation->animating != 0) {
                 double change = easeInOutCirc(
-                        (double)SDL_GetTicks() - theAnimation.startTick,
+                        (double)SDL_GetTicks() - theAnimation->startTick,
                         0.0,
                         (double)sizeInfo.boxWidth + sizeInfo.boxPad,
-                        (double)theAnimation.durationMs);
+                        (double)theAnimation->durationMs);
 
-                if (theAnimation.direction > 0) {
+                if (theAnimation->direction > 0) {
                     change = -change;
                 }
 
@@ -746,11 +755,11 @@ int main (int argc, char** argv) {
 
 
         // TODO run this in a callback function
-        if (theAnimation.animating && SDL_GetTicks() > 
-                theAnimation.startTick + theAnimation.durationMs) 
+        if (theAnimation->animating && SDL_GetTicks() > 
+                theAnimation->startTick + theAnimation->durationMs) 
         {
-            theAnimation.animating = 0;
-            theAnimation.callBack(&mainRow, &theAnimation);
+            theAnimation->animating = 0;
+            theAnimation->callback(theAnimation);
         }
 
 
@@ -797,6 +806,8 @@ int main (int argc, char** argv) {
 
         lastTick = SDL_GetTicks();
     }
+
+    free(theAnimation);
 
     SDL_DestroyWindow(window);
     SDL_Quit();
@@ -892,7 +903,7 @@ void changeColumn(Animation *theAnimation, uint32_t direction) {
         theAnimation->direction = direction;
         theAnimation->durationMs = 1200;
         theAnimation->animating = 1;
-        theAnimation->callBack = &horizontalMoveDone;
+        theAnimation->callback = &horizontalMoveDone;
     }
 }
 
