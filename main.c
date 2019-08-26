@@ -855,7 +855,7 @@ int main (int argc, char** argv) {
         asprintf(&fpsString, "Frame Time: %u", frameTime);
         SDL_Color fpsColor = {255,255,255,255};
 
-        SDL_Surface *fpsSurface = TTF_RenderText_Blended(
+        SDL_Surface *fpsSurface = TTF_RenderText_Solid(
                 smallFont,
                 fpsString,
                 fpsColor);
