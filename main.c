@@ -2,9 +2,9 @@
 #define SCALING 2.0
 #define PHI 1.618033988749895
 
-#define LARGE_FONT_SIZE 39
 #define SMALL_FONT_SIZE 12
 #define COLS_ON_SCREEN 5
+#define NAVIGATION_MOVE_DURATION 250 
 #define COLS_TOTAL 10 
 
 
@@ -74,6 +74,7 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui);
 double easeOutCirc(double t, double b, double c, double d);
 double easeInOutCirc (double t, double b, double c, double d);
 char *getCsvField(char *line, int fieldNo);
+double goldenRatioLarge(double in, uint32_t exponent);
 
 void changeColumn(
         Animation *theAnimation, 
@@ -117,7 +118,7 @@ void titleFaded(struct Animation *context) {
 
         context->startTick = SDL_GetTicks();
         context->direction = 1;
-        context->durationMs = 600;
+        context->durationMs = NAVIGATION_MOVE_DURATION / 2;
         context->animating = 1;
         context->callback = &titleFaded;
     }
@@ -453,7 +454,9 @@ int main (int argc, char** argv) {
 
         if (!isInFile) {
             printf("%s isn't in the db, adding..\n", thePath);
+
             // TODO do we have the allocation to add it?
+            //
             pathInfoFile->entries[pathInfoFile->nEntries].signature = 
                 pathSignature;
             pathInfoFile->entries[pathInfoFile->nEntries].contentsHash = 
@@ -591,13 +594,15 @@ int main (int argc, char** argv) {
     }
 
     OffblastUi *ui = calloc(1, sizeof(OffblastUi));
+    needsReRender(window, ui);
 
     ui->renderer = SDL_CreateRenderer(window, -1, 
             SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
             );
 
+
     ui->titleFont = TTF_OpenFont(
-            "fonts/Roboto-Regular.ttf", LARGE_FONT_SIZE*SCALING);
+            "fonts/Roboto-Regular.ttf", goldenRatioLarge(ui->winWidth, 6));
 
     if (!ui->titleFont) {
         printf("Title font initialization Failed, %s\n", TTF_GetError());
@@ -614,7 +619,6 @@ int main (int argc, char** argv) {
     Animation *theAnimation = calloc(1, sizeof(Animation));
     Animation *titleAnimation = calloc(1, sizeof(Animation));
 
-    //char *title = calloc(OFFBLAST_NAME_MAX, sizeof(char));
     TitleFadedCallbackArgs *titleFadedArgs = 
         calloc(1, sizeof(TitleFadedCallbackArgs));
 
@@ -638,7 +642,6 @@ int main (int argc, char** argv) {
     mainRow.tiles = calloc(mainRow.length, sizeof(UiTile));
     mainRow.cursor = &mainRow.tiles[0];
 
-    needsReRender(window, ui);
 
     for (uint32_t i = 0; i < mainRow.length; i++) {
 
@@ -757,8 +760,7 @@ int main (int argc, char** argv) {
         SDL_QueryTexture(ui->titleTexture, NULL, NULL, &titleRect.w, &titleRect.h);
 
         titleRect.x = ui->winMargin;
-        // TODO write a function for this
-        titleRect.y = ui->winHeight * (1/PHI * 1/PHI * 1/PHI * 1/PHI * 1/PHI);
+        titleRect.y = goldenRatioLarge((double) ui->winHeight, 5);
 
         SDL_RenderCopy(ui->renderer, ui->titleTexture, NULL, &titleRect);
 
@@ -775,7 +777,6 @@ int main (int argc, char** argv) {
         for (int32_t i = -COLS_ON_SCREEN; i < COLS_TOTAL; i++) {
 
             mainRowRects[i].x = 
-                //ui->boxPad + i * (ui->boxWidth + ui->boxPad);
                 ui->winMargin + i * (ui->boxWidth + ui->boxPad);
 
 
@@ -791,6 +792,7 @@ int main (int argc, char** argv) {
                 }
 
                 mainRowRects[i].x += change;
+
             }
 
             mainRowRects[i].y = ui->winFold;
@@ -798,8 +800,9 @@ int main (int argc, char** argv) {
             mainRowRects[i].h = 500;
             SDL_RenderFillRect(ui->renderer, &mainRowRects[i]);
 
-            LaunchTarget *theTarget = tileToRender->target;
+            //LaunchTarget *theTarget = tileToRender->target;
 
+            /*
             SDL_Color textColor = {0,255,0};
             SDL_Surface *targetSurface = TTF_RenderText_Blended(
                     smallFont,
@@ -825,6 +828,7 @@ int main (int argc, char** argv) {
                     &targetRect.w, &targetRect.h);
             SDL_RenderCopy(ui->renderer, targetTexture, NULL, &targetRect);
             SDL_DestroyTexture(targetTexture);
+            */
             tileToRender = tileToRender->next;
         }
 
@@ -966,14 +970,10 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
         ui->winWidth = newWidth;
         ui->winHeight= newHeight;
         ui->winFold = newHeight * 0.5;
-        ui->winMargin = newWidth * (1/PHI * 1/PHI * 1/PHI * 1/PHI * 1/PHI);
+        ui->winMargin = goldenRatioLarge((double) newWidth, 5);
 
         ui->boxWidth = newWidth / COLS_ON_SCREEN;
-
-        ui->boxPad = ui->boxWidth - ui->boxWidth * 1/PHI;
-        ui->boxPad = ui->boxPad * 1/PHI;
-        ui->boxPad = ui->boxPad * 1/PHI;
-        ui->boxPad = ui->boxPad * 1/PHI;
+        ui->boxPad = goldenRatioLarge((double) ui->winWidth, 9);
 
         updated = 1;
     }
@@ -990,13 +990,13 @@ void changeColumn(
     {
         theAnimation->startTick = SDL_GetTicks();
         theAnimation->direction = direction;
-        theAnimation->durationMs = 666;
+        theAnimation->durationMs = NAVIGATION_MOVE_DURATION;
         theAnimation->animating = 1;
         theAnimation->callback = &horizontalMoveDone;
 
         titleAnimation->startTick = SDL_GetTicks();
         titleAnimation->direction = 0;
-        titleAnimation->durationMs = 333;
+        titleAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
         titleAnimation->animating = 1;
         titleAnimation->callback = &titleFaded;
     }
@@ -1033,4 +1033,13 @@ SDL_Texture *createTitleTexture(
     SDL_FreeSurface(titleSurface);
     
     return texture;
+}
+
+double goldenRatioLarge(double in, uint32_t exponent) {
+    if (exponent == 0) {
+        return in;
+    }
+    else {
+        return goldenRatioLarge(1/PHI * in, --exponent); 
+    }
 }
