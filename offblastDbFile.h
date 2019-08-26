@@ -26,7 +26,11 @@ typedef struct PathInfoFile {
 typedef struct LaunchTarget {
     uint32_t targetSignature;
     uint32_t romSignature;
+
     char name[OFFBLAST_NAME_MAX];
+    char date[10];
+    uint32_t ranking;
+
     char fileName[256];
     char path[PATH_MAX];
     char platform[256];

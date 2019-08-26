@@ -7,6 +7,7 @@
 #define NAVIGATION_MOVE_DURATION 250 
 #define COLS_TOTAL 10 
 
+// TODO GRANDIA IS BEING DETECTED AS "D" DETECT BETTER!
 
 #include <stdio.h>
 #include <stdint.h>
@@ -33,9 +34,9 @@ typedef struct OffblastUi {
         int32_t winHeight;
         int32_t winFold;
         int32_t winMargin;
-        TTF_Font *titleFont; // TODO 
+        TTF_Font *titleFont;
         SDL_Texture *titleTexture;
-        SDL_Renderer *renderer; // TODO
+        SDL_Renderer *renderer;
         int32_t boxWidth;
         int32_t boxPad;
 } OffblastUi;
@@ -326,10 +327,15 @@ int main (int argc, char** argv) {
                     if (indexOfEntry == -1) {
 
                         char *gameDate = getCsvField(csvLine, 2);
-                        printf("\n%s\n%u\n%s\n%s\n", gameSeed, 
+                        char *scoreString = getCsvField(csvLine, 3);
+                        char *metaScoreString = getCsvField(csvLine, 4);
+
+                        printf("\n%s\n%u\n%s\n%s\ng: %s\n\nm: %s\n", 
+                                gameSeed, 
                                 targetSignature, 
                                 gameName, 
-                                gameDate);
+                                gameDate,
+                                scoreString, metaScoreString);
 
                         LaunchTarget *newEntry = 
                             &launchTargetFile->entries[launchTargetFile->nEntries];
@@ -344,6 +350,33 @@ int main (int argc, char** argv) {
                         memcpy(&newEntry->platform, 
                                 thePlatform,
                                 strlen(thePlatform));
+
+                        // TODO harden
+                        if (strlen(gameDate) != 10) {
+                            printf("INVALID DATE FORMAT\n");
+                        }
+                        else {
+                            memcpy(&newEntry->date, gameDate, 10);
+                        }
+
+                        float score = -1;
+                        if (strlen(scoreString) != 0) {
+                            score = atof(scoreString) * 2 * 10;
+                            printf("score converted from %s to %f\n", scoreString, score);
+                        }
+                        if (strlen(metaScoreString) != 0) {
+                            if (score == -1) {
+                                score = atof(metaScoreString);
+                                printf("using metascore of  %f\n", score);
+                            }
+                            else {
+                                score = (score + atof(metaScoreString)) / 2;
+                                printf("score average taken %f\n", score);
+                            }
+                        }
+
+                        // TODO round properly
+                        newEntry->ranking = (uint32_t) score;
 
                         // TODO check we have the space for it
                         launchTargetFile->nEntries++;
