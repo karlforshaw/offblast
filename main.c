@@ -743,6 +743,9 @@ int main (int argc, char** argv) {
             if (titleAnimation->direction == 0) {
                 change = 256 - change;
             }
+            else {
+                if (change == 0) change = 255;
+            }
 
             SDL_SetTextureAlphaMod(ui->titleTexture, change);
         }
