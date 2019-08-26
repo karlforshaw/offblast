@@ -799,36 +799,6 @@ int main (int argc, char** argv) {
             mainRowRects[i].w = ui->boxWidth;
             mainRowRects[i].h = 500;
             SDL_RenderFillRect(ui->renderer, &mainRowRects[i]);
-
-            //LaunchTarget *theTarget = tileToRender->target;
-
-            /*
-            SDL_Color textColor = {0,255,0};
-            SDL_Surface *targetSurface = TTF_RenderText_Blended(
-                    smallFont,
-                    theTarget->name,
-                    textColor);
-
-            if (!targetSurface) {
-                printf("Font render failed, %s\n", TTF_GetError());
-                return 1;
-            }
-
-            SDL_Texture* targetTexture = SDL_CreateTextureFromSurface(
-                    ui->renderer, targetSurface);
-
-            SDL_FreeSurface(targetSurface);
-
-            SDL_Rect targetRect = {
-                mainRowRects[i].x,
-                mainRowRects[i].y,
-                0, 0};
-
-            SDL_QueryTexture(targetTexture, NULL, NULL, 
-                    &targetRect.w, &targetRect.h);
-            SDL_RenderCopy(ui->renderer, targetTexture, NULL, &targetRect);
-            SDL_DestroyTexture(targetTexture);
-            */
             tileToRender = tileToRender->next;
         }
 
