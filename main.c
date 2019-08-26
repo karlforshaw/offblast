@@ -750,9 +750,13 @@ int main (int argc, char** argv) {
             SDL_CreateTextureFromSurface(renderer, titleSurface);
         SDL_FreeSurface(titleSurface);
 
-        SDL_Rect destRect = {LARGE_FONT_SIZE*SCALING, LARGE_FONT_SIZE*SCALING, 
+        SDL_Rect titleRect = {LARGE_FONT_SIZE*SCALING, LARGE_FONT_SIZE*SCALING, 
             0, 0};
-        SDL_QueryTexture(textTexture, NULL, NULL, &destRect.w, &destRect.h);
+        SDL_QueryTexture(textTexture, NULL, NULL, &titleRect.w, &titleRect.h);
+
+        titleRect.x = sizeInfo.winWidth - (sizeInfo.winWidth * 1/PHI);
+
+        SDL_RenderCopy(renderer, textTexture, NULL, &titleRect);
 
 
 
@@ -867,9 +871,7 @@ int main (int argc, char** argv) {
         SDL_QueryTexture(fpsTexture, NULL, NULL, &fpsRect.w, &fpsRect.h);
         SDL_RenderCopy(renderer, fpsTexture, NULL, &fpsRect);
         SDL_DestroyTexture(fpsTexture);
-        destRect.x = (sizeInfo.winWidth / 2) - (destRect.w / 2);
 
-        SDL_RenderCopy(renderer, textTexture, NULL, &destRect);
 
         SDL_RenderPresent(renderer);
 
