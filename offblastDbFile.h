@@ -22,10 +22,11 @@ typedef struct PathInfoFile {
     PathInfo entries[];
 } PathInfoFile;
 
+#define OFFBLAST_NAME_MAX 256
 typedef struct LaunchTarget {
     uint32_t targetSignature;
     uint32_t romSignature;
-    char name[256];
+    char name[OFFBLAST_NAME_MAX];
     char fileName[256];
     char path[PATH_MAX];
     char platform[256];

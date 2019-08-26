@@ -65,7 +65,10 @@ uint32_t needsReRender(SDL_Window *window, SizeInfo *sizeInfo);
 double easeOutCirc(double t, double b, double c, double d);
 double easeInOutCirc (double t, double b, double c, double d);
 char *getCsvField(char *line, int fieldNo);
-void changeColumn(Animation *theAnimation, uint32_t direction);
+void changeColumn(
+        Animation *theAnimation, 
+        Animation *titleAnimation, 
+        uint32_t direction);
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
 
 void horizontalMoveDone(struct Animation *context) {
@@ -80,8 +83,30 @@ void horizontalMoveDone(struct Animation *context) {
     }
 }
 
+typedef struct TitleFadedCallbackArgs {
+    char *destinationString;
+    char *sourceString;
+} TitleFadedCallbackArgs;
 void titleFaded(struct Animation *context) {
 
+    TitleFadedCallbackArgs *args = context->callbackArgs;
+
+    if (context->direction == 0) {
+
+        strncpy(
+                args->destinationString,
+                args->sourceString,
+                OFFBLAST_NAME_MAX);
+
+        context->startTick = SDL_GetTicks();
+        context->direction = 1;
+        context->durationMs = 600;
+        context->animating = 1;
+        context->callback = &titleFaded;
+    }
+    else {
+        context->animating = 0;
+    }
 }
 
 int main (int argc, char** argv) {
@@ -566,27 +591,20 @@ int main (int argc, char** argv) {
         return 1;
     }
 
+    Animation *theAnimation = calloc(1, sizeof(Animation));
+    Animation *titleAnimation = calloc(1, sizeof(Animation));
 
+    char *title = calloc(OFFBLAST_NAME_MAX, sizeof(char));
+    TitleFadedCallbackArgs *titleFadedArgs = 
+        calloc(1, sizeof(TitleFadedCallbackArgs));
 
-    SDL_Surface* textSurface;
-    SDL_Color textColor = {0,0,0};
+    titleFadedArgs->destinationString = title;
+    titleFadedArgs->sourceString = "hey";
 
-    char *welcomeMsg;
-    asprintf(&welcomeMsg, "Hey %s, let's play!", userName);
-    textSurface = TTF_RenderText_Blended(font, welcomeMsg, textColor);
-    free(welcomeMsg);
+    titleAnimation->callbackArgs = titleFadedArgs;
 
-    if (!textSurface) {
-        printf("Font render failed, %s\n", TTF_GetError());
-        return 1;
-    }
-
-    SDL_Texture* textTexture = SDL_CreateTextureFromSurface(renderer, textSurface);
-    SDL_FreeSurface(textSurface);
-
-    SDL_Rect destRect = {LARGE_FONT_SIZE*SCALING, LARGE_FONT_SIZE*SCALING, 
-        0, 0};
-    SDL_QueryTexture(textTexture, NULL, NULL, &destRect.w, &destRect.h);
+    // TODO move into or out of the loop?
+    SDL_Surface* titleSurface;
 
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
@@ -595,7 +613,6 @@ int main (int argc, char** argv) {
     uint32_t rows = 1;
     uint32_t yCursor = 0;
     
-    Animation *theAnimation = calloc(1, sizeof(Animation));
 
     // Set up 
     UiRow mainRow = {};
@@ -626,6 +643,12 @@ int main (int argc, char** argv) {
         }
 
     }
+
+    strncpy(
+            title,
+            mainRow.cursor->target->name,
+            OFFBLAST_NAME_MAX);
+
 
 
     while (running) {
@@ -671,13 +694,17 @@ int main (int argc, char** argv) {
                         keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_L) 
                 {
-                    changeColumn(theAnimation, 1);
+                    titleFadedArgs->sourceString 
+                        = mainRow.cursor->next->target->name;
+                    changeColumn(theAnimation, titleAnimation, 1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_H) 
                 {
-                    changeColumn(theAnimation, 0);
+                    titleFadedArgs->sourceString 
+                        = mainRow.cursor->previous->target->name;
+                    changeColumn(theAnimation, titleAnimation, 0);
                 }
                 else {
                     printf("key up %d\n", keyEvent->keysym.scancode);
@@ -688,10 +715,49 @@ int main (int argc, char** argv) {
 
         SDL_SetRenderDrawColor(renderer, 0xFD, 0xF9, 0xFA, 0xFF);
         SDL_RenderClear(renderer);
+        
 
 
+        // Title 
+        char *tempTitle = NULL;
+        SDL_Color titleColor = {0,0,0,255};
+
+        if (titleAnimation->animating == 1) {
+            int32_t change = easeInOutCirc(
+                        (double)SDL_GetTicks() - titleAnimation->startTick,
+                        1.0,
+                        255.0,
+                        (double)titleAnimation->durationMs);
+
+            if (titleAnimation->direction == 0) {
+                titleColor.a = 256 - (uint32_t) change;
+            }
+            else {
+                titleColor.a = (uint32_t) change;
+            }
+
+        }
+
+        asprintf(&tempTitle, "%s", title);
+        titleSurface= TTF_RenderText_Blended(font, tempTitle, titleColor);
+        free(tempTitle);
+        if (!titleSurface) {
+            printf("Font render failed, %s\n", TTF_GetError());
+            return 1;
+        }
+
+        SDL_Texture* textTexture = 
+            SDL_CreateTextureFromSurface(renderer, titleSurface);
+        SDL_FreeSurface(titleSurface);
+
+        SDL_Rect destRect = {LARGE_FONT_SIZE*SCALING, LARGE_FONT_SIZE*SCALING, 
+            0, 0};
+        SDL_QueryTexture(textTexture, NULL, NULL, &destRect.w, &destRect.h);
+
+
+
+        // Blocks
         SDL_SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0xFF);
-
 
         SDL_Rect mainRowRects[COLS_TOTAL];
 
@@ -761,6 +827,12 @@ int main (int argc, char** argv) {
             theAnimation->animating = 0;
             theAnimation->callback(theAnimation);
         }
+        else if (titleAnimation->animating && SDL_GetTicks() > 
+                titleAnimation->startTick + titleAnimation->durationMs) 
+        {
+            titleAnimation->animating = 0;
+            titleAnimation->callback(titleAnimation);
+        }
 
 
 
@@ -768,11 +840,12 @@ int main (int argc, char** argv) {
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "Frame Time: %u", frameTime);
+        SDL_Color fpsColor = {};
 
         SDL_Surface *fpsSurface = TTF_RenderText_Blended(
                 smallFont,
                 fpsString,
-                textColor);
+                fpsColor);
 
         free(fpsString);
 
@@ -896,14 +969,24 @@ uint32_t needsReRender(SDL_Window *window, SizeInfo *sizeInfo)
     return updated;
 }
 
-void changeColumn(Animation *theAnimation, uint32_t direction) {
-    if (theAnimation->animating == 0) 
+void changeColumn(
+        Animation *theAnimation, 
+        Animation *titleAnimation,
+        uint32_t direction) 
+{
+    if (theAnimation->animating == 0)  // TODO some kind of input lock
     {
         theAnimation->startTick = SDL_GetTicks();
         theAnimation->direction = direction;
         theAnimation->durationMs = 1200;
         theAnimation->animating = 1;
         theAnimation->callback = &horizontalMoveDone;
+
+        titleAnimation->startTick = SDL_GetTicks();
+        titleAnimation->direction = 0;
+        titleAnimation->durationMs = 600;
+        titleAnimation->animating = 1;
+        titleAnimation->callback = &titleFaded;
     }
 }
 
