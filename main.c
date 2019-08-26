@@ -2,7 +2,7 @@
 #define SCALING 2.0
 #define PHI 1.618033988749895
 
-#define LARGE_FONT_SIZE 30
+#define LARGE_FONT_SIZE 39
 #define SMALL_FONT_SIZE 12
 #define COLS_ON_SCREEN 5
 #define COLS_TOTAL 10 
@@ -755,6 +755,8 @@ int main (int argc, char** argv) {
         SDL_QueryTexture(textTexture, NULL, NULL, &titleRect.w, &titleRect.h);
 
         titleRect.x = sizeInfo.winWidth - (sizeInfo.winWidth * 1/PHI);
+        // TODO write a function for this
+        titleRect.y = sizeInfo.winHeight * (1/PHI * 1/PHI * 1/PHI * 1/PHI * 1/PHI);
 
         SDL_RenderCopy(renderer, textTexture, NULL, &titleRect);
 
