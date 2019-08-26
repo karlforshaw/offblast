@@ -28,13 +28,17 @@
 #include "offblastDbFile.h"
 
 
-typedef struct SizeInfo {
+typedef struct OffblastUi {
         int32_t winWidth;
         int32_t winHeight;
         int32_t winFold;
+        int32_t winMargin;
+        TTF_Font *titleFont; // TODO 
+        SDL_Texture *titleTexture;
+        SDL_Renderer *renderer; // TODO
         int32_t boxWidth;
         int32_t boxPad;
-} SizeInfo;
+} OffblastUi;
 
 typedef struct UiTile{
     struct LaunchTarget *target;
@@ -59,17 +63,29 @@ typedef struct Animation {
     void (* callback)(struct Animation*);
 } Animation;
 
+typedef struct TitleFadedCallbackArgs {
+    OffblastUi *ui;
+    char *newTitle;
+} TitleFadedCallbackArgs;
 
 
-uint32_t needsReRender(SDL_Window *window, SizeInfo *sizeInfo);
+
+uint32_t needsReRender(SDL_Window *window, OffblastUi *ui);
 double easeOutCirc(double t, double b, double c, double d);
 double easeInOutCirc (double t, double b, double c, double d);
 char *getCsvField(char *line, int fieldNo);
+
 void changeColumn(
         Animation *theAnimation, 
         Animation *titleAnimation, 
         uint32_t direction);
+
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
+
+SDL_Texture *createTitleTexture(
+        SDL_Renderer *renderer,
+        TTF_Font *titleFont,
+        char *titleString);
 
 void horizontalMoveDone(struct Animation *context) {
 
@@ -83,20 +99,21 @@ void horizontalMoveDone(struct Animation *context) {
     }
 }
 
-typedef struct TitleFadedCallbackArgs {
-    char *destinationString;
-    char *sourceString;
-} TitleFadedCallbackArgs;
 void titleFaded(struct Animation *context) {
 
     TitleFadedCallbackArgs *args = context->callbackArgs;
 
+
     if (context->direction == 0) {
 
-        strncpy(
-                args->destinationString,
-                args->sourceString,
-                OFFBLAST_NAME_MAX);
+        SDL_DestroyTexture(args->ui->titleTexture);
+
+        args->ui->titleTexture = createTitleTexture(
+                args->ui->renderer,
+                args->ui->titleFont,
+                args->newTitle);
+
+        assert(args->ui->titleTexture);
 
         context->startTick = SDL_GetTicks();
         context->direction = 1;
@@ -573,16 +590,17 @@ int main (int argc, char** argv) {
         return 1;
     }
 
-    SDL_Renderer* renderer;
+    OffblastUi *ui = calloc(1, sizeof(OffblastUi));
 
-    renderer = SDL_CreateRenderer(window, -1, 
+    ui->renderer = SDL_CreateRenderer(window, -1, 
             SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
             );
 
-    TTF_Font *font;
-    font = TTF_OpenFont("fonts/Roboto-Regular.ttf", LARGE_FONT_SIZE*SCALING);
-    if (!font) {
-        printf("Font initialization Failed, %s\n", TTF_GetError());
+    ui->titleFont = TTF_OpenFont(
+            "fonts/Roboto-Regular.ttf", LARGE_FONT_SIZE*SCALING);
+
+    if (!ui->titleFont) {
+        printf("Title font initialization Failed, %s\n", TTF_GetError());
         return 1;
     }
 
@@ -596,17 +614,14 @@ int main (int argc, char** argv) {
     Animation *theAnimation = calloc(1, sizeof(Animation));
     Animation *titleAnimation = calloc(1, sizeof(Animation));
 
-    char *title = calloc(OFFBLAST_NAME_MAX, sizeof(char));
+    //char *title = calloc(OFFBLAST_NAME_MAX, sizeof(char));
     TitleFadedCallbackArgs *titleFadedArgs = 
         calloc(1, sizeof(TitleFadedCallbackArgs));
 
-    titleFadedArgs->destinationString = title;
-    titleFadedArgs->sourceString = "hey";
+    titleFadedArgs->ui = ui;
+    titleFadedArgs->newTitle = "Loading";
 
     titleAnimation->callbackArgs = titleFadedArgs;
-
-    // TODO move into or out of the loop?
-    SDL_Surface* titleSurface;
 
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
@@ -616,15 +631,14 @@ int main (int argc, char** argv) {
     uint32_t yCursor = 0;
     
 
-    // Set up 
+    // Init Ui
     UiRow mainRow = {};
     theAnimation->callbackArgs = &mainRow;
     mainRow.length = 9;
     mainRow.tiles = calloc(mainRow.length, sizeof(UiTile));
     mainRow.cursor = &mainRow.tiles[0];
 
-    SizeInfo sizeInfo = {};
-    needsReRender(window, &sizeInfo);
+    needsReRender(window, ui);
 
     for (uint32_t i = 0; i < mainRow.length; i++) {
 
@@ -646,16 +660,15 @@ int main (int argc, char** argv) {
 
     }
 
-    strncpy(
-            title,
-            mainRow.cursor->target->name,
-            OFFBLAST_NAME_MAX);
-
+    ui->titleTexture = createTitleTexture(
+            ui->renderer,
+            ui->titleFont,
+            mainRow.cursor->target->name);
 
 
     while (running) {
 
-        if (needsReRender(window, &sizeInfo) == 1) {
+        if (needsReRender(window, ui) == 1) {
             // TODO something
         }
 
@@ -696,7 +709,7 @@ int main (int argc, char** argv) {
                         keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_L) 
                 {
-                    titleFadedArgs->sourceString 
+                    titleFadedArgs->newTitle 
                         = mainRow.cursor->next->target->name;
                     changeColumn(theAnimation, titleAnimation, 1);
                 }
@@ -704,7 +717,7 @@ int main (int argc, char** argv) {
                         keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_H) 
                 {
-                    titleFadedArgs->sourceString 
+                    titleFadedArgs->newTitle 
                         = mainRow.cursor->previous->target->name;
                     changeColumn(theAnimation, titleAnimation, 0);
                 }
@@ -715,58 +728,41 @@ int main (int argc, char** argv) {
 
         }
 
-        SDL_SetRenderDrawColor(renderer, 0xFD, 0xF9, 0xFA, 0xFF);
-        SDL_RenderClear(renderer);
+        SDL_SetRenderDrawColor(ui->renderer, 0x03, 0x03, 0x03, 0xFF);
+        SDL_RenderClear(ui->renderer);
         
 
-
         // Title 
-        char *tempTitle = NULL;
-        SDL_Color titleColor = {0,0,0,255};
-
         if (titleAnimation->animating == 1) {
-            int32_t change = easeInOutCirc(
+            uint8_t change = easeInOutCirc(
                         (double)SDL_GetTicks() - titleAnimation->startTick,
                         1.0,
                         255.0,
                         (double)titleAnimation->durationMs);
 
             if (titleAnimation->direction == 0) {
-                titleColor.a = 256 - (uint32_t) change;
-                titleColor.a = titleColor.a == 0 ? 1 : titleColor.a;
-            }
-            else {
-                titleColor.a = (uint32_t) change;
+                change = 256 - change;
             }
 
+            SDL_SetTextureAlphaMod(ui->titleTexture, change);
+        }
+        else {
+            SDL_SetTextureAlphaMod(ui->titleTexture, 255);
         }
 
-        asprintf(&tempTitle, "%s", title);
-        titleSurface= TTF_RenderText_Blended(font, tempTitle, titleColor);
-        free(tempTitle);
-        if (!titleSurface) {
-            printf("Font render failed, %s\n", TTF_GetError());
-            return 1;
-        }
+        SDL_Rect titleRect = {0, 0, 0, 0}; 
+        SDL_QueryTexture(ui->titleTexture, NULL, NULL, &titleRect.w, &titleRect.h);
 
-        SDL_Texture* textTexture = 
-            SDL_CreateTextureFromSurface(renderer, titleSurface);
-        SDL_FreeSurface(titleSurface);
-
-        SDL_Rect titleRect = {LARGE_FONT_SIZE*SCALING, LARGE_FONT_SIZE*SCALING, 
-            0, 0};
-        SDL_QueryTexture(textTexture, NULL, NULL, &titleRect.w, &titleRect.h);
-
-        titleRect.x = sizeInfo.winWidth - (sizeInfo.winWidth * 1/PHI);
+        titleRect.x = ui->winMargin;
         // TODO write a function for this
-        titleRect.y = sizeInfo.winHeight * (1/PHI * 1/PHI * 1/PHI * 1/PHI * 1/PHI);
+        titleRect.y = ui->winHeight * (1/PHI * 1/PHI * 1/PHI * 1/PHI * 1/PHI);
 
-        SDL_RenderCopy(renderer, textTexture, NULL, &titleRect);
+        SDL_RenderCopy(ui->renderer, ui->titleTexture, NULL, &titleRect);
 
 
 
         // Blocks
-        SDL_SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0xFF);
+        SDL_SetRenderDrawColor(ui->renderer, 0xFF, 0x00, 0x00, 0xFF);
 
         SDL_Rect mainRowRects[COLS_TOTAL];
 
@@ -776,14 +772,15 @@ int main (int argc, char** argv) {
         for (int32_t i = -COLS_ON_SCREEN; i < COLS_TOTAL; i++) {
 
             mainRowRects[i].x = 
-                sizeInfo.boxPad + i * (sizeInfo.boxWidth + sizeInfo.boxPad);
+                //ui->boxPad + i * (ui->boxWidth + ui->boxPad);
+                ui->winMargin + i * (ui->boxWidth + ui->boxPad);
 
 
             if (theAnimation->animating != 0) {
                 double change = easeInOutCirc(
                         (double)SDL_GetTicks() - theAnimation->startTick,
                         0.0,
-                        (double)sizeInfo.boxWidth + sizeInfo.boxPad,
+                        (double)ui->boxWidth + ui->boxPad,
                         (double)theAnimation->durationMs);
 
                 if (theAnimation->direction > 0) {
@@ -793,10 +790,10 @@ int main (int argc, char** argv) {
                 mainRowRects[i].x += change;
             }
 
-            mainRowRects[i].y = sizeInfo.winFold;
-            mainRowRects[i].w = sizeInfo.boxWidth;
+            mainRowRects[i].y = ui->winFold;
+            mainRowRects[i].w = ui->boxWidth;
             mainRowRects[i].h = 500;
-            SDL_RenderFillRect(renderer, &mainRowRects[i]);
+            SDL_RenderFillRect(ui->renderer, &mainRowRects[i]);
 
             LaunchTarget *theTarget = tileToRender->target;
 
@@ -812,7 +809,7 @@ int main (int argc, char** argv) {
             }
 
             SDL_Texture* targetTexture = SDL_CreateTextureFromSurface(
-                    renderer, targetSurface);
+                    ui->renderer, targetSurface);
 
             SDL_FreeSurface(targetSurface);
 
@@ -823,7 +820,7 @@ int main (int argc, char** argv) {
 
             SDL_QueryTexture(targetTexture, NULL, NULL, 
                     &targetRect.w, &targetRect.h);
-            SDL_RenderCopy(renderer, targetTexture, NULL, &targetRect);
+            SDL_RenderCopy(ui->renderer, targetTexture, NULL, &targetRect);
             SDL_DestroyTexture(targetTexture);
             tileToRender = tileToRender->next;
         }
@@ -849,7 +846,7 @@ int main (int argc, char** argv) {
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "Frame Time: %u", frameTime);
-        SDL_Color fpsColor = {};
+        SDL_Color fpsColor = {255,255,255,255};
 
         SDL_Surface *fpsSurface = TTF_RenderText_Blended(
                 smallFont,
@@ -864,7 +861,7 @@ int main (int argc, char** argv) {
         }
 
         SDL_Texture* fpsTexture = SDL_CreateTextureFromSurface(
-                renderer, fpsSurface);
+                ui->renderer, fpsSurface);
 
         SDL_FreeSurface(fpsSurface);
 
@@ -874,11 +871,11 @@ int main (int argc, char** argv) {
             0, 0};
 
         SDL_QueryTexture(fpsTexture, NULL, NULL, &fpsRect.w, &fpsRect.h);
-        SDL_RenderCopy(renderer, fpsTexture, NULL, &fpsRect);
+        SDL_RenderCopy(ui->renderer, fpsTexture, NULL, &fpsRect);
         SDL_DestroyTexture(fpsTexture);
 
 
-        SDL_RenderPresent(renderer);
+        SDL_RenderPresent(ui->renderer);
 
         if (SDL_GetTicks() - lastTick < renderFrequency) {
             SDL_Delay(renderFrequency - (SDL_GetTicks() - lastTick));
@@ -888,6 +885,8 @@ int main (int argc, char** argv) {
     }
 
     free(theAnimation);
+    free(titleAnimation);
+    free(ui);
 
     SDL_DestroyWindow(window);
     SDL_Quit();
@@ -951,24 +950,27 @@ char *getCsvField(char *line, int fieldNo)
     return fieldString;
 }
 
-uint32_t needsReRender(SDL_Window *window, SizeInfo *sizeInfo) 
+uint32_t needsReRender(SDL_Window *window, OffblastUi *ui) 
 {
     int32_t newWidth, newHeight;
     uint32_t updated = 0;
 
     SDL_GetWindowSize(window, &newWidth, &newHeight);
 
-    if (newWidth != sizeInfo->winWidth || newHeight != sizeInfo->winHeight) {
+    if (newWidth != ui->winWidth || newHeight != ui->winHeight) {
         printf("rerendering needed\n");
-        sizeInfo->winWidth = newWidth;
-        sizeInfo->winHeight= newHeight;
-        sizeInfo->winFold = newHeight - (newHeight * 1/PHI);
-        sizeInfo->boxWidth = newWidth / COLS_ON_SCREEN;
 
-        sizeInfo->boxPad = sizeInfo->boxWidth - sizeInfo->boxWidth * 1/PHI;
-        sizeInfo->boxPad = sizeInfo->boxPad * 1/PHI;
-        sizeInfo->boxPad = sizeInfo->boxPad * 1/PHI;
-        sizeInfo->boxPad = sizeInfo->boxPad * 1/PHI;
+        ui->winWidth = newWidth;
+        ui->winHeight= newHeight;
+        ui->winFold = newHeight * 0.5;
+        ui->winMargin = newWidth * (1/PHI * 1/PHI * 1/PHI * 1/PHI * 1/PHI);
+
+        ui->boxWidth = newWidth / COLS_ON_SCREEN;
+
+        ui->boxPad = ui->boxWidth - ui->boxWidth * 1/PHI;
+        ui->boxPad = ui->boxPad * 1/PHI;
+        ui->boxPad = ui->boxPad * 1/PHI;
+        ui->boxPad = ui->boxPad * 1/PHI;
 
         updated = 1;
     }
@@ -985,13 +987,13 @@ void changeColumn(
     {
         theAnimation->startTick = SDL_GetTicks();
         theAnimation->direction = direction;
-        theAnimation->durationMs = 1200;
+        theAnimation->durationMs = 666;
         theAnimation->animating = 1;
         theAnimation->callback = &horizontalMoveDone;
 
         titleAnimation->startTick = SDL_GetTicks();
         titleAnimation->direction = 0;
-        titleAnimation->durationMs = 600;
+        titleAnimation->durationMs = 333;
         titleAnimation->animating = 1;
         titleAnimation->callback = &titleFaded;
     }
@@ -1007,4 +1009,25 @@ UiTile *rewindTiles(UiTile *fromTile, uint32_t depth) {
         fromTile = fromTile->previous;
         return rewindTiles(fromTile, --depth);
     }
+}
+
+SDL_Texture *createTitleTexture(
+        SDL_Renderer *renderer,
+        TTF_Font *titleFont,
+        char *titleString) 
+{
+    SDL_Color titleColor = {255,255,255,255};
+    SDL_Surface *titleSurface = TTF_RenderText_Blended(titleFont, titleString, titleColor);
+
+    if (!titleSurface) {
+        printf("Font render failed, %s\n", TTF_GetError());
+        return NULL;
+    }
+
+    SDL_Texture* texture = 
+            SDL_CreateTextureFromSurface(renderer, titleSurface);
+
+    SDL_FreeSurface(titleSurface);
+    
+    return texture;
 }
