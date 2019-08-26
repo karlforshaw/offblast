@@ -575,7 +575,9 @@ int main (int argc, char** argv) {
 
     SDL_Renderer* renderer;
 
-    renderer = SDL_CreateRenderer(window, -1, 0);
+    renderer = SDL_CreateRenderer(window, -1, 
+            SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
+            );
 
     TTF_Font *font;
     font = TTF_OpenFont("fonts/Roboto-Regular.ttf", LARGE_FONT_SIZE*SCALING);
@@ -731,6 +733,7 @@ int main (int argc, char** argv) {
 
             if (titleAnimation->direction == 0) {
                 titleColor.a = 256 - (uint32_t) change;
+                titleColor.a = titleColor.a == 0 ? 1 : titleColor.a;
             }
             else {
                 titleColor.a = (uint32_t) change;
