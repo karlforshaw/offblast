@@ -55,6 +55,7 @@ typedef struct Animation {
     uint32_t direction;
     uint32_t startTick;
     uint32_t durationMs;
+    void (*callBack)();
 } Animation;
 
 
@@ -65,6 +66,15 @@ double easeInOutCirc (double t, double b, double c, double d);
 char *getCsvField(char *line, int fieldNo);
 void changeColumn(Animation *theAnimation, uint32_t direction);
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
+
+void horizontalMoveDone(UiRow *row, Animation *context) {
+    if (context->direction == 1) {
+        row->cursor = row->cursor->next;
+    }
+    else {
+        row->cursor = row->cursor->previous;
+    }
+}
 
 int main (int argc, char** argv) {
 
@@ -611,7 +621,6 @@ int main (int argc, char** argv) {
 
     while (running) {
 
-        // TODO duplicating code here - consider making a funciton for this
         if (needsReRender(window, &sizeInfo) == 1) {
             // TODO something
         }
@@ -677,7 +686,6 @@ int main (int argc, char** argv) {
 
         SDL_Rect mainRowRects[COLS_TOTAL];
 
-        // TODO wind this back 5
         UiTile *tileToRender = 
             rewindTiles(mainRow.cursor, COLS_ON_SCREEN);
 
@@ -692,8 +700,7 @@ int main (int argc, char** argv) {
                         (double)SDL_GetTicks() - theAnimation.startTick,
                         0.0,
                         (double)sizeInfo.boxWidth + sizeInfo.boxPad,
-                        (double)theAnimation.durationMs
-                        );
+                        (double)theAnimation.durationMs);
 
                 if (theAnimation.direction > 0) {
                     change = -change;
@@ -708,7 +715,6 @@ int main (int argc, char** argv) {
             SDL_RenderFillRect(renderer, &mainRowRects[i]);
 
             LaunchTarget *theTarget = tileToRender->target;
-            printf("%d: %s\n", i, theTarget->name);
 
             SDL_Color textColor = {0,255,0};
             SDL_Surface *targetSurface = TTF_RenderText_Blended(
@@ -731,24 +737,20 @@ int main (int argc, char** argv) {
                 mainRowRects[i].y,
                 0, 0};
 
-            SDL_QueryTexture(targetTexture, NULL, NULL, &targetRect.w, &targetRect.h);
+            SDL_QueryTexture(targetTexture, NULL, NULL, 
+                    &targetRect.w, &targetRect.h);
             SDL_RenderCopy(renderer, targetTexture, NULL, &targetRect);
             SDL_DestroyTexture(targetTexture);
             tileToRender = tileToRender->next;
         }
 
 
+        // TODO run this in a callback function
         if (theAnimation.animating && SDL_GetTicks() > 
                 theAnimation.startTick + theAnimation.durationMs) 
         {
             theAnimation.animating = 0;
-
-            if (theAnimation.direction == 1) {
-                mainRow.cursor = mainRow.cursor->next;
-            }
-            else {
-                mainRow.cursor = mainRow.cursor->previous;
-            }
+            theAnimation.callBack(&mainRow, &theAnimation);
         }
 
 
@@ -888,8 +890,9 @@ void changeColumn(Animation *theAnimation, uint32_t direction) {
     {
         theAnimation->startTick = SDL_GetTicks();
         theAnimation->direction = direction;
-        theAnimation->durationMs = 200;
+        theAnimation->durationMs = 1200;
         theAnimation->animating = 1;
+        theAnimation->callBack = &horizontalMoveDone;
     }
 }
 
