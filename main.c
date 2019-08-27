@@ -36,6 +36,8 @@ typedef struct OffblastUi {
         int32_t winMargin;
         int32_t boxWidth;
         int32_t boxPad;
+        int32_t descriptionWidth;
+        int32_t descriptionHeight;
         double titlePointSize;
         double infoPointSize;
         TTF_Font *titleFont;
@@ -73,6 +75,7 @@ typedef struct Animation {
 typedef struct InfoFadedCallbackArgs {
     OffblastUi *ui;
     LaunchTarget *newTarget;
+    OffblastBlobFile *descriptionFile;
 } InfoFadedCallbackArgs;
 
 
@@ -102,6 +105,12 @@ SDL_Texture *createInfoTexture(
         SDL_Renderer *renderer,
         TTF_Font *infoFont,
         LaunchTarget *target);
+
+SDL_Texture *createDescriptionTexture(
+        SDL_Renderer *renderer,
+        TTF_Font *infoFont,
+        char *description,
+        int32_t width, int32_t height); 
 
 
 
@@ -677,6 +686,7 @@ int main (int argc, char** argv) {
 
     infoFadedArgs->ui = ui;
     infoFadedArgs->newTarget = NULL;
+    infoFadedArgs->descriptionFile = descriptionFile;
 
     titleAnimation->callbackArgs = infoFadedArgs;
 
@@ -725,6 +735,16 @@ int main (int argc, char** argv) {
             ui->renderer,
             ui->infoFont,
             mainRow.cursor->target
+    );
+
+    OffblastBlob *descriptionBlob = (OffblastBlob*)
+        &descriptionFile->memory[mainRow.cursor->target->descriptionOffset];
+    ui->descriptionTexture = createDescriptionTexture(
+            ui->renderer,
+            ui->infoFont,
+            descriptionBlob->content,
+            ui->descriptionWidth,
+            ui->descriptionHeight
     );
 
     while (running) {
@@ -810,10 +830,12 @@ int main (int argc, char** argv) {
 
             SDL_SetTextureAlphaMod(ui->titleTexture, change);
             SDL_SetTextureAlphaMod(ui->infoTexture, change);
+            SDL_SetTextureAlphaMod(ui->descriptionTexture, change);
         }
         else {
             SDL_SetTextureAlphaMod(ui->titleTexture, 255);
             SDL_SetTextureAlphaMod(ui->infoTexture, 255);
+            SDL_SetTextureAlphaMod(ui->descriptionTexture, 255);
         }
 
         SDL_Rect titleRect = {0, 0, 0, 0}; 
@@ -824,15 +846,25 @@ int main (int argc, char** argv) {
         SDL_QueryTexture(ui->infoTexture, NULL, NULL, 
                 &infoRect.w, &infoRect.h);
 
+        SDL_Rect descRect = {0, 0, 0, 0}; 
+        SDL_QueryTexture(ui->descriptionTexture, NULL, NULL, 
+                &descRect.w, &descRect.h);
+
         titleRect.x = ui->winMargin;
         infoRect.x = ui->winMargin;
+        descRect.x = ui->winMargin;
+
         titleRect.y = goldenRatioLarge((double) ui->winHeight, 5);
         infoRect.y = (titleRect.y + 
             ui->titlePointSize + 
             goldenRatioLarge((double) ui->titlePointSize, 2));
+        descRect.y = (infoRect.y + 
+            ui->infoPointSize + 
+            goldenRatioLarge((double) ui->infoPointSize, 2));
 
         SDL_RenderCopy(ui->renderer, ui->titleTexture, NULL, &titleRect);
         SDL_RenderCopy(ui->renderer, ui->infoTexture, NULL, &infoRect);
+        SDL_RenderCopy(ui->renderer, ui->descriptionTexture, NULL, &descRect);
 
 
 
@@ -1015,6 +1047,12 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
         ui->boxWidth = newWidth / COLS_ON_SCREEN;
         ui->boxPad = goldenRatioLarge((double) ui->winWidth, 9);
 
+        ui->descriptionWidth = 
+            goldenRatioLarge((double) newWidth, 1) - ui->winMargin;
+
+        // TODO find a better limit
+        ui->descriptionHeight = 400;
+
         updated = 1;
     }
 
@@ -1103,6 +1141,8 @@ void infoFaded(struct Animation *context) {
     if (context->direction == 0) {
 
         SDL_DestroyTexture(args->ui->titleTexture);
+        SDL_DestroyTexture(args->ui->infoTexture);
+        SDL_DestroyTexture(args->ui->descriptionTexture);
 
         args->ui->titleTexture = createTitleTexture(
                 args->ui->renderer,
@@ -1114,8 +1154,19 @@ void infoFaded(struct Animation *context) {
                 args->ui->infoFont,
                 args->newTarget);
 
+        OffblastBlob *descriptionBlob = (OffblastBlob*)
+            &args->descriptionFile->memory[args->newTarget->descriptionOffset];
+
+        args->ui->descriptionTexture = createDescriptionTexture(
+                args->ui->renderer,
+                args->ui->infoFont,
+                descriptionBlob->content,
+                args->ui->descriptionWidth,
+                args->ui->descriptionHeight);
+
         assert(args->ui->titleTexture);
         assert(args->ui->infoTexture);
+        assert(args->ui->descriptionTexture);
 
         context->startTick = SDL_GetTicks();
         context->direction = 1;
@@ -1154,6 +1205,30 @@ SDL_Texture *createInfoTexture(
     free(tempString);
     
     return texture;
+}
+
+SDL_Texture *createDescriptionTexture(
+        SDL_Renderer *renderer,
+        TTF_Font *infoFont,
+        char *description,
+        int32_t width, int32_t height) 
+{
+
+    SDL_Color color = {220,220,220,255};
+    SDL_Surface *surface = TTF_RenderText_Blended_Wrapped(
+            infoFont, description, color, width);
+
+    if (!surface) {
+        printf("Font render failed, %s\n", TTF_GetError());
+        return NULL;
+    }
+
+    SDL_Texture* texture = 
+            SDL_CreateTextureFromSurface(renderer, surface);
+
+    SDL_FreeSurface(surface);
+    return texture;
+
 }
 
 uint32_t megabytes(uint32_t n) {
