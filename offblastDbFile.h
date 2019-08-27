@@ -34,12 +34,26 @@ typedef struct LaunchTarget {
     char fileName[256];
     char path[PATH_MAX];
     char platform[256];
+
+    char coverPath[PATH_MAX];
+    off_t descriptionOffset;
 } LaunchTarget;
 
 typedef struct LaunchTargetFile {
     uint32_t nEntries;
     LaunchTarget entries[];
 } LaunchTargetFile;
+
+typedef struct OffblastBlobFile {
+    off_t cursor;
+    char memory[];
+} OffblastBlobFile;
+
+typedef struct OffblastBlob {
+    uint32_t targetSignature;
+    size_t length;
+    char content[];
+} OffblastBlob;
 
 
 int init_db_file(char *, OffblastDbFile *dbFileStruct, 

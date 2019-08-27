@@ -34,11 +34,17 @@ typedef struct OffblastUi {
         int32_t winHeight;
         int32_t winFold;
         int32_t winMargin;
-        TTF_Font *titleFont;
-        SDL_Texture *titleTexture;
-        SDL_Renderer *renderer;
         int32_t boxWidth;
         int32_t boxPad;
+        double titlePointSize;
+        double infoPointSize;
+        TTF_Font *titleFont;
+        TTF_Font *infoFont;
+        TTF_Font *debugFont;
+        SDL_Texture *titleTexture;
+        SDL_Texture *infoTexture;
+        SDL_Texture *descriptionTexture;
+        SDL_Renderer *renderer;
 } OffblastUi;
 
 typedef struct UiTile{
@@ -64,69 +70,40 @@ typedef struct Animation {
     void (* callback)(struct Animation*);
 } Animation;
 
-typedef struct TitleFadedCallbackArgs {
+typedef struct InfoFadedCallbackArgs {
     OffblastUi *ui;
-    char *newTitle;
-} TitleFadedCallbackArgs;
+    LaunchTarget *newTarget;
+} InfoFadedCallbackArgs;
 
 
 
+uint32_t megabytes(uint32_t n);
 uint32_t needsReRender(SDL_Window *window, OffblastUi *ui);
 double easeOutCirc(double t, double b, double c, double d);
 double easeInOutCirc (double t, double b, double c, double d);
 char *getCsvField(char *line, int fieldNo);
 double goldenRatioLarge(double in, uint32_t exponent);
+void horizontalMoveDone(struct Animation *context);
+UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
+void infoFaded(struct Animation *context);
 
 void changeColumn(
         Animation *theAnimation, 
         Animation *titleAnimation, 
         uint32_t direction);
 
-UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
 
 SDL_Texture *createTitleTexture(
         SDL_Renderer *renderer,
         TTF_Font *titleFont,
         char *titleString);
 
-void horizontalMoveDone(struct Animation *context) {
-
-    UiRow *row = context->callbackArgs;
-
-    if (context->direction == 1) {
-        row->cursor = row->cursor->next;
-    }
-    else {
-        row->cursor = row->cursor->previous;
-    }
-}
-
-void titleFaded(struct Animation *context) {
-
-    TitleFadedCallbackArgs *args = context->callbackArgs;
+SDL_Texture *createInfoTexture(
+        SDL_Renderer *renderer,
+        TTF_Font *infoFont,
+        LaunchTarget *target);
 
 
-    if (context->direction == 0) {
-
-        SDL_DestroyTexture(args->ui->titleTexture);
-
-        args->ui->titleTexture = createTitleTexture(
-                args->ui->renderer,
-                args->ui->titleFont,
-                args->newTitle);
-
-        assert(args->ui->titleTexture);
-
-        context->startTick = SDL_GetTicks();
-        context->direction = 1;
-        context->durationMs = NAVIGATION_MOVE_DURATION / 2;
-        context->animating = 1;
-        context->callback = &titleFaded;
-    }
-    else {
-        context->animating = 0;
-    }
-}
 
 int main (int argc, char** argv) {
 
@@ -231,6 +208,19 @@ int main (int argc, char** argv) {
         (LaunchTargetFile*) launchTargetDb.memory;
     free(launchTargetDbPath);
 
+    char *descriptionDbPath;
+    asprintf(&descriptionDbPath, "%s/descriptions.bin", configPath);
+    OffblastDbFile descriptionDb = {0};
+    if (!init_db_file(descriptionDbPath, &descriptionDb, 
+                sizeof(OffblastBlobFile) + 33333))
+    {
+        printf("couldn't initialize the descriptions file, exiting\n");
+        return 1;
+    }
+    OffblastBlobFile *descriptionFile = 
+        (OffblastBlobFile*) descriptionDb.memory;
+    free(descriptionDbPath);
+
 
 #if 0
     // XXX DEBUG Dump out all launch targets
@@ -300,6 +290,7 @@ int main (int argc, char** argv) {
                 break;
             }
             free(openGameDbPlatformPath);
+            openGameDbPlatformPath = NULL;
 
             char *csvLine = NULL;
             size_t csvLineLength = 0;
@@ -329,6 +320,7 @@ int main (int argc, char** argv) {
                         char *gameDate = getCsvField(csvLine, 2);
                         char *scoreString = getCsvField(csvLine, 3);
                         char *metaScoreString = getCsvField(csvLine, 4);
+                        char *description = getCsvField(csvLine, 6);
 
                         printf("\n%s\n%u\n%s\n%s\ng: %s\n\nm: %s\n", 
                                 gameSeed, 
@@ -362,18 +354,33 @@ int main (int argc, char** argv) {
                         float score = -1;
                         if (strlen(scoreString) != 0) {
                             score = atof(scoreString) * 2 * 10;
-                            printf("score converted from %s to %f\n", scoreString, score);
                         }
                         if (strlen(metaScoreString) != 0) {
                             if (score == -1) {
                                 score = atof(metaScoreString);
-                                printf("using metascore of  %f\n", score);
                             }
                             else {
                                 score = (score + atof(metaScoreString)) / 2;
-                                printf("score average taken %f\n", score);
                             }
                         }
+
+                        // XXX TODO check we have enough space to write
+                        // the description into the file
+                        OffblastBlob *newDescription = (OffblastBlob*) 
+                            &descriptionFile->memory[descriptionFile->cursor];
+
+                        newDescription->targetSignature = targetSignature;
+                        newDescription->length = strlen(description);
+
+                        memcpy(&newDescription->content, description, 
+                                strlen(description));
+                        *(newDescription->content + strlen(description)) = '\0';
+
+                        newEntry->descriptionOffset = descriptionFile->cursor;
+                        
+                        descriptionFile->cursor += 
+                            sizeof(OffblastBlob) + strlen(description) + 1;
+
 
                         // TODO round properly
                         newEntry->ranking = (uint32_t) score;
@@ -382,6 +389,9 @@ int main (int argc, char** argv) {
                         launchTargetFile->nEntries++;
 
                         free(gameDate);
+                        free(scoreString);
+                        free(metaScoreString);
+                        free(description);
 
                     }
                     else {
@@ -634,17 +644,27 @@ int main (int argc, char** argv) {
             );
 
 
+    ui->titlePointSize = goldenRatioLarge(ui->winWidth, 7);
     ui->titleFont = TTF_OpenFont(
-            "fonts/Roboto-Regular.ttf", goldenRatioLarge(ui->winWidth, 6));
-
+            "fonts/Roboto-Regular.ttf", ui->titlePointSize);
     if (!ui->titleFont) {
         printf("Title font initialization Failed, %s\n", TTF_GetError());
         return 1;
     }
 
-    TTF_Font *smallFont;
-    smallFont = TTF_OpenFont("fonts/Roboto-Regular.ttf", SMALL_FONT_SIZE*SCALING);
-    if (!smallFont) {
+    ui->infoPointSize = goldenRatioLarge(ui->winWidth, 9);
+    ui->infoFont = TTF_OpenFont(
+            "fonts/Roboto-Regular.ttf", ui->infoPointSize);
+
+    if (!ui->infoFont) {
+        printf("Font initialization Failed, %s\n", TTF_GetError());
+        return 1;
+    }
+
+    ui->debugFont = TTF_OpenFont(
+            "fonts/Roboto-Regular.ttf", goldenRatioLarge(ui->winWidth, 11));
+
+    if (!ui->debugFont) {
         printf("Font initialization Failed, %s\n", TTF_GetError());
         return 1;
     }
@@ -652,13 +672,13 @@ int main (int argc, char** argv) {
     Animation *theAnimation = calloc(1, sizeof(Animation));
     Animation *titleAnimation = calloc(1, sizeof(Animation));
 
-    TitleFadedCallbackArgs *titleFadedArgs = 
-        calloc(1, sizeof(TitleFadedCallbackArgs));
+    InfoFadedCallbackArgs *infoFadedArgs = 
+        calloc(1, sizeof(InfoFadedCallbackArgs));
 
-    titleFadedArgs->ui = ui;
-    titleFadedArgs->newTitle = "Loading";
+    infoFadedArgs->ui = ui;
+    infoFadedArgs->newTarget = NULL;
 
-    titleAnimation->callbackArgs = titleFadedArgs;
+    titleAnimation->callbackArgs = infoFadedArgs;
 
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
@@ -701,6 +721,11 @@ int main (int argc, char** argv) {
             ui->titleFont,
             mainRow.cursor->target->name);
 
+    ui->infoTexture = createInfoTexture(
+            ui->renderer,
+            ui->infoFont,
+            mainRow.cursor->target
+    );
 
     while (running) {
 
@@ -745,16 +770,16 @@ int main (int argc, char** argv) {
                         keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_L) 
                 {
-                    titleFadedArgs->newTitle 
-                        = mainRow.cursor->next->target->name;
+                    infoFadedArgs->newTarget
+                        = mainRow.cursor->next->target;
                     changeColumn(theAnimation, titleAnimation, 1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_H) 
                 {
-                    titleFadedArgs->newTitle 
-                        = mainRow.cursor->previous->target->name;
+                    infoFadedArgs->newTarget
+                        = mainRow.cursor->previous->target;
                     changeColumn(theAnimation, titleAnimation, 0);
                 }
                 else {
@@ -784,18 +809,30 @@ int main (int argc, char** argv) {
             }
 
             SDL_SetTextureAlphaMod(ui->titleTexture, change);
+            SDL_SetTextureAlphaMod(ui->infoTexture, change);
         }
         else {
             SDL_SetTextureAlphaMod(ui->titleTexture, 255);
+            SDL_SetTextureAlphaMod(ui->infoTexture, 255);
         }
 
         SDL_Rect titleRect = {0, 0, 0, 0}; 
-        SDL_QueryTexture(ui->titleTexture, NULL, NULL, &titleRect.w, &titleRect.h);
+        SDL_QueryTexture(ui->titleTexture, NULL, NULL, 
+                &titleRect.w, &titleRect.h);
+
+        SDL_Rect infoRect = {0, 0, 0, 0}; 
+        SDL_QueryTexture(ui->infoTexture, NULL, NULL, 
+                &infoRect.w, &infoRect.h);
 
         titleRect.x = ui->winMargin;
+        infoRect.x = ui->winMargin;
         titleRect.y = goldenRatioLarge((double) ui->winHeight, 5);
+        infoRect.y = (titleRect.y + 
+            ui->titlePointSize + 
+            goldenRatioLarge((double) ui->titlePointSize, 2));
 
         SDL_RenderCopy(ui->renderer, ui->titleTexture, NULL, &titleRect);
+        SDL_RenderCopy(ui->renderer, ui->infoTexture, NULL, &infoRect);
 
 
 
@@ -859,7 +896,7 @@ int main (int argc, char** argv) {
         SDL_Color fpsColor = {255,255,255,255};
 
         SDL_Surface *fpsSurface = TTF_RenderText_Solid(
-                smallFont,
+                ui->debugFont,
                 fpsString,
                 fpsColor);
 
@@ -1001,7 +1038,7 @@ void changeColumn(
         titleAnimation->direction = 0;
         titleAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
         titleAnimation->animating = 1;
-        titleAnimation->callback = &titleFaded;
+        titleAnimation->callback = &infoFaded;
     }
 }
 
@@ -1045,4 +1082,80 @@ double goldenRatioLarge(double in, uint32_t exponent) {
     else {
         return goldenRatioLarge(1/PHI * in, --exponent); 
     }
+}
+
+void horizontalMoveDone(struct Animation *context) {
+
+    UiRow *row = context->callbackArgs;
+
+    if (context->direction == 1) {
+        row->cursor = row->cursor->next;
+    }
+    else {
+        row->cursor = row->cursor->previous;
+    }
+}
+
+void infoFaded(struct Animation *context) {
+
+    InfoFadedCallbackArgs *args = context->callbackArgs;
+
+    if (context->direction == 0) {
+
+        SDL_DestroyTexture(args->ui->titleTexture);
+
+        args->ui->titleTexture = createTitleTexture(
+                args->ui->renderer,
+                args->ui->titleFont,
+                args->newTarget->name);
+
+        args->ui->infoTexture = createInfoTexture(
+                args->ui->renderer,
+                args->ui->infoFont,
+                args->newTarget);
+
+        assert(args->ui->titleTexture);
+        assert(args->ui->infoTexture);
+
+        context->startTick = SDL_GetTicks();
+        context->direction = 1;
+        context->durationMs = NAVIGATION_MOVE_DURATION / 2;
+        context->animating = 1;
+        context->callback = &infoFaded;
+    }
+    else {
+        context->animating = 0;
+    }
+}
+
+SDL_Texture *createInfoTexture(
+        SDL_Renderer *renderer,
+        TTF_Font *infoFont,
+        LaunchTarget *target) 
+{
+    SDL_Color color = {220,220,220,255};
+
+    char *tempString;
+    asprintf(&tempString, "%.4s     %u%%", 
+            target->date, target->ranking);
+
+    SDL_Surface *infoSurface = TTF_RenderText_Blended(
+            infoFont, tempString, color);
+
+    if (!infoSurface) {
+        printf("Font render failed, %s\n", TTF_GetError());
+        return NULL;
+    }
+
+    SDL_Texture* texture = 
+            SDL_CreateTextureFromSurface(renderer, infoSurface);
+
+    SDL_FreeSurface(infoSurface);
+    free(tempString);
+    
+    return texture;
+}
+
+uint32_t megabytes(uint32_t n) {
+    return n * 1024 * 1024;
 }
