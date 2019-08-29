@@ -10,10 +10,9 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 
-// * TODO MULTIPLE ROWS
-//      -- vertical animation
-// TODO FIX SMALL INFO TEXTURES ON INITIAL LOAD (load on demand?)
 // TODO get rid of all fixed sizes and scaling constants
+// TODO review animation callback system, probably no need for context now
+//      as we can just pass the ui struct in
 // TODO GRADIENT LAYERS
 // TODO ROW NAMES
 // TODO PLATFORM IN INFO
@@ -53,13 +52,14 @@ typedef struct UiRow {
     struct UiRow *previousRow;
 } UiRow;
 
+struct OffblastUi;
 typedef struct Animation {
     uint32_t animating;
     uint32_t direction;
     uint32_t startTick;
     uint32_t durationMs;
     void *callbackArgs;
-    void (* callback)(struct Animation*);
+    void (* callback)(struct OffblastUi*);
 } Animation;
 
 typedef struct OffblastUi {
@@ -93,24 +93,16 @@ typedef struct OffblastUi {
 } OffblastUi;
 
 
-typedef struct InfoFadedCallbackArgs {
-    OffblastUi *ui;
-    LaunchTarget *newTarget;
-    OffblastBlobFile *descriptionFile;
-} InfoFadedCallbackArgs;
-
-
-
 uint32_t megabytes(uint32_t n);
 uint32_t needsReRender(SDL_Window *window, OffblastUi *ui);
 double easeOutCirc(double t, double b, double c, double d);
 double easeInOutCirc (double t, double b, double c, double d);
 char *getCsvField(char *line, int fieldNo);
 double goldenRatioLarge(double in, uint32_t exponent);
-void horizontalMoveDone(struct Animation *context);
-void verticalMoveDone(struct Animation *context);
+void horizontalMoveDone(OffblastUi *ui);
+void verticalMoveDone(OffblastUi *ui);
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
-void infoFaded(struct Animation *context);
+void infoFaded(OffblastUi *ui);
 uint32_t animationRunning(OffblastUi *ui);
 
 void changeRow(
@@ -680,15 +672,6 @@ int main (int argc, char** argv) {
     ui->verticalAnimation = calloc(1, sizeof(Animation));
     ui->infoAnimation = calloc(1, sizeof(Animation));
 
-    InfoFadedCallbackArgs *infoFadedArgs = 
-        calloc(1, sizeof(InfoFadedCallbackArgs));
-
-    infoFadedArgs->ui = ui;
-    infoFadedArgs->newTarget = NULL;
-    infoFadedArgs->descriptionFile = descriptionFile;
-
-    ui->infoAnimation->callbackArgs = infoFadedArgs;
-
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
     uint32_t renderFrequency = 1000/60;
@@ -779,26 +762,6 @@ int main (int argc, char** argv) {
         }
     }
 
-    ui->titleTexture = createTitleTexture(
-            ui->renderer,
-            ui->titleFont,
-            ui->rowCursor->tileCursor->target->name);
-
-    ui->infoTexture = createInfoTexture(
-            ui->renderer,
-            ui->infoFont,
-            ui->rowCursor->tileCursor->target);
-
-    OffblastBlob *descriptionBlob = (OffblastBlob*)
-        &descriptionFile->memory[ui->rowCursor->tileCursor->target->descriptionOffset];
-    ui->descriptionTexture = createDescriptionTexture(
-            ui->renderer,
-            ui->infoFont,
-            descriptionBlob->content,
-            ui->descriptionWidth,
-            ui->descriptionHeight
-    );
-
     while (running) {
 
         if (needsReRender(window, ui) == 1) {
@@ -824,32 +787,24 @@ int main (int argc, char** argv) {
                         keyEvent->keysym.scancode == SDL_SCANCODE_DOWN ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_J) 
                 {
-                    infoFadedArgs->newTarget
-                        = ui->rowCursor->nextRow->tileCursor->target;
                     changeRow(ui, 1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_UP ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_K) 
                 {
-                    infoFadedArgs->newTarget
-                        = ui->rowCursor->previousRow->tileCursor->target;
                     changeRow(ui, 0);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_L) 
                 {
-                    infoFadedArgs->newTarget
-                        = ui->rowCursor->tileCursor->next->target;
                     changeColumn(ui, 1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_H) 
                 {
-                    infoFadedArgs->newTarget
-                        = ui->rowCursor->tileCursor->previous->target;
                     changeColumn(ui, 0);
                 }
                 else {
@@ -937,7 +892,31 @@ int main (int argc, char** argv) {
         SDL_SetRenderDrawColor(ui->renderer, 0x00, 0x00, 0x00, 0xFF);
         SDL_RenderFillRect(ui->renderer, &infoLayer);
 
-        // Title 
+        // Target Info 
+        if (ui->titleTexture == NULL) {
+            ui->titleTexture = createTitleTexture(
+                    ui->renderer,
+                    ui->titleFont,
+                    ui->rowCursor->tileCursor->target->name);
+        }
+        if (ui->infoTexture == NULL) {
+            ui->infoTexture = createInfoTexture(
+                    ui->renderer,
+                    ui->infoFont,
+                    ui->rowCursor->tileCursor->target);
+        }
+        if (ui->descriptionTexture == NULL) {
+            OffblastBlob *descriptionBlob = (OffblastBlob*)
+                &descriptionFile->memory[ui->rowCursor->tileCursor->target->descriptionOffset];
+            ui->descriptionTexture = createDescriptionTexture(
+                ui->renderer,
+                ui->infoFont,
+                descriptionBlob->content,
+                ui->descriptionWidth,
+                ui->descriptionHeight);
+        }
+
+
         if (ui->infoAnimation->animating == 1) {
             uint8_t change = easeInOutCirc(
                         (double)SDL_GetTicks() - ui->infoAnimation->startTick,
@@ -997,19 +976,19 @@ int main (int argc, char** argv) {
                 ui->horizontalAnimation->startTick + ui->horizontalAnimation->durationMs) 
         {
             ui->horizontalAnimation->animating = 0;
-            ui->horizontalAnimation->callback(ui->horizontalAnimation);
+            ui->horizontalAnimation->callback(ui);
         }
         else if (ui->verticalAnimation->animating && SDL_GetTicks() > 
                 ui->verticalAnimation->startTick + ui->verticalAnimation->durationMs) 
         {
             ui->verticalAnimation->animating = 0;
-            ui->verticalAnimation->callback(ui->verticalAnimation);
+            ui->verticalAnimation->callback(ui);
         }
         else if (ui->infoAnimation->animating && SDL_GetTicks() > 
                 ui->infoAnimation->startTick + ui->infoAnimation->durationMs) 
         {
             ui->infoAnimation->animating = 0;
-            ui->infoAnimation->callback(ui->infoAnimation);
+            ui->infoAnimation->callback(ui);
         }
 
 
@@ -1172,6 +1151,13 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
             return 1;
         }
 
+        SDL_DestroyTexture(ui->infoTexture);
+        ui->infoTexture = NULL;
+        SDL_DestroyTexture(ui->titleTexture);
+        ui->titleTexture = NULL;
+        SDL_DestroyTexture(ui->descriptionTexture);
+        ui->descriptionTexture = NULL;
+
         updated = 1;
     }
 
@@ -1267,11 +1253,8 @@ double goldenRatioLarge(double in, uint32_t exponent) {
     }
 }
 
-void horizontalMoveDone(struct Animation *context) {
-
-    OffblastUi *ui = context->callbackArgs;
-
-    if (context->direction == 1) {
+void horizontalMoveDone(OffblastUi *ui) {
+    if (ui->horizontalAnimation->direction == 1) {
         ui->rowCursor->tileCursor = 
             ui->rowCursor->tileCursor->next;
     }
@@ -1281,11 +1264,8 @@ void horizontalMoveDone(struct Animation *context) {
     }
 }
 
-void verticalMoveDone(struct Animation *context) {
-
-    OffblastUi *ui = context->callbackArgs;
-
-    if (context->direction == 1) {
+void verticalMoveDone(OffblastUi *ui) {
+    if (ui->verticalAnimation->direction == 1) {
         ui->rowCursor = 
             ui->rowCursor->nextRow;
     }
@@ -1295,48 +1275,26 @@ void verticalMoveDone(struct Animation *context) {
     }
 }
 
-void infoFaded(struct Animation *context) {
+void infoFaded(OffblastUi *ui) {
 
-    InfoFadedCallbackArgs *args = context->callbackArgs;
+    if (ui->infoAnimation->direction == 0) {
 
-    if (context->direction == 0) {
+        SDL_DestroyTexture(ui->titleTexture);
+        SDL_DestroyTexture(ui->infoTexture);
+        SDL_DestroyTexture(ui->descriptionTexture);
 
-        SDL_DestroyTexture(args->ui->titleTexture);
-        SDL_DestroyTexture(args->ui->infoTexture);
-        SDL_DestroyTexture(args->ui->descriptionTexture);
+        ui->titleTexture = NULL;
+        ui->infoTexture = NULL;
+        ui->descriptionTexture = NULL;
 
-        args->ui->titleTexture = createTitleTexture(
-                args->ui->renderer,
-                args->ui->titleFont,
-                args->newTarget->name);
-
-        args->ui->infoTexture = createInfoTexture(
-                args->ui->renderer,
-                args->ui->infoFont,
-                args->newTarget);
-
-        OffblastBlob *descriptionBlob = (OffblastBlob*)
-            &args->descriptionFile->memory[args->newTarget->descriptionOffset];
-
-        args->ui->descriptionTexture = createDescriptionTexture(
-                args->ui->renderer,
-                args->ui->infoFont,
-                descriptionBlob->content,
-                args->ui->descriptionWidth,
-                args->ui->descriptionHeight);
-
-        assert(args->ui->titleTexture);
-        assert(args->ui->infoTexture);
-        assert(args->ui->descriptionTexture);
-
-        context->startTick = SDL_GetTicks();
-        context->direction = 1;
-        context->durationMs = NAVIGATION_MOVE_DURATION / 2;
-        context->animating = 1;
-        context->callback = &infoFaded;
+        ui->infoAnimation->startTick = SDL_GetTicks();
+        ui->infoAnimation->direction = 1;
+        ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
+        ui->infoAnimation->animating = 1;
+        ui->infoAnimation->callback = &infoFaded;
     }
     else {
-        context->animating = 0;
+        ui->infoAnimation->animating = 0;
     }
 }
 
