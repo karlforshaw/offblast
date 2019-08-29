@@ -87,6 +87,8 @@ typedef struct OffblastUi {
 
         UiRow *rowCursor;
         UiRow *rows;
+        LaunchTarget *movingToTarget;
+        UiRow *movingToRow;
 } OffblastUi;
 
 
@@ -693,12 +695,10 @@ int main (int argc, char** argv) {
         if (strlen(target->fileName) != 0) {
             rows[ROW_INDEX_LIBRARY].tiles[j].target = target;
             if (j+1 == libraryLength) {
-                printf("\ngot to the end\n");
                 rows[ROW_INDEX_LIBRARY].tiles[j].next = 
                     &rows[ROW_INDEX_LIBRARY].tiles[0];
             }
             else {
-                printf("\ndoing next\n");
                 rows[ROW_INDEX_LIBRARY].tiles[j].next = 
                     &rows[ROW_INDEX_LIBRARY].tiles[j+1];
             }
@@ -743,6 +743,9 @@ int main (int argc, char** argv) {
                 &rows[ROW_INDEX_TOP_RATED].tiles[i-1];
         }
     }
+
+    ui->movingToTarget = ui->rowCursor->tileCursor->target;
+    ui->movingToRow = ui->rowCursor;
 
     while (running) {
 
@@ -873,12 +876,10 @@ int main (int argc, char** argv) {
         SDL_RenderFillRect(ui->renderer, &infoLayer);
 
         // Target Info 
-        LaunchTarget *currentTarget = ui->rowCursor->tileCursor->target;
-
         if (ui->titleTexture == NULL) {
             SDL_Color titleColor = {255,255,255,255};
             SDL_Surface *titleSurface = TTF_RenderText_Blended(
-                    ui->titleFont, currentTarget->name, titleColor);
+                    ui->titleFont, ui->movingToTarget->name, titleColor);
 
             if (!titleSurface) {
                 printf("Font render failed, %s\n", TTF_GetError());
@@ -896,9 +897,9 @@ int main (int argc, char** argv) {
 
             char *tempString;
             asprintf(&tempString, "%.4s  |  %s  |  %u%%", 
-                    currentTarget->date, 
-                    currentTarget->platform,
-                    currentTarget->ranking);
+                    ui->movingToTarget->date, 
+                    ui->movingToTarget->platform,
+                    ui->movingToTarget->ranking);
 
             SDL_Surface *infoSurface = TTF_RenderText_Blended(
                     ui->infoFont, tempString, color);
@@ -920,7 +921,7 @@ int main (int argc, char** argv) {
             SDL_Color color = {220,220,220,255};
 
             OffblastBlob *descriptionBlob = (OffblastBlob*)
-                &descriptionFile->memory[currentTarget->descriptionOffset];
+                &descriptionFile->memory[ui->movingToTarget->descriptionOffset];
 
             SDL_Surface *surface = TTF_RenderText_Blended_Wrapped(
                     ui->infoFont, 
@@ -939,10 +940,9 @@ int main (int argc, char** argv) {
         }
 
         if (ui->rowNameTexture == NULL) {
-            printf("UPDATE ROW NAME %s\n", ui->rowCursor->name);
             SDL_Color color = {255,255,255,255};
             SDL_Surface *surface = TTF_RenderText_Blended(
-                    ui->infoFont, ui->rowCursor->name, color);
+                    ui->infoFont, ui->movingToRow->name, color);
 
             if (!surface) {
                 printf("Font render failed, %s\n", TTF_GetError());
@@ -1208,6 +1208,15 @@ void changeColumn(
         ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
         ui->infoAnimation->animating = 1;
         ui->infoAnimation->callback = &infoFaded;
+
+        if (direction == 0) {
+            ui->movingToTarget = 
+                ui->rowCursor->tileCursor->previous->target;
+        }
+        else {
+            ui->movingToTarget 
+                = ui->rowCursor->tileCursor->next->target;
+        }
     }
 }
 
@@ -1228,6 +1237,17 @@ void changeRow(
         ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
         ui->infoAnimation->animating = 1;
         ui->infoAnimation->callback = &infoFaded;
+
+        if (direction == 0) {
+            ui->movingToRow = ui->rowCursor->previousRow;
+            ui->movingToTarget = 
+                ui->rowCursor->previousRow->tileCursor->target;
+        }
+        else {
+            ui->movingToRow = ui->rowCursor->nextRow;
+            ui->movingToTarget = 
+                ui->rowCursor->nextRow->tileCursor->target;
+        }
     }
 }
 
