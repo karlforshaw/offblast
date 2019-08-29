@@ -10,6 +10,7 @@
 
 // * TODO MULTIPLE ROWS
 //      -- vertical animation
+// TODO FIX SMALL INFO TEXTURES ON INITIAL LOAD (load on demand?)
 // TODO GRADIENT LAYERS
 // TODO ROW NAMES
 // TODO PLATFORM IN INFO
@@ -49,6 +50,15 @@ typedef struct UiRow {
     struct UiRow *previousRow;
 } UiRow;
 
+typedef struct Animation {
+    uint32_t animating;
+    uint32_t direction;
+    uint32_t startTick;
+    uint32_t durationMs;
+    void *callbackArgs;
+    void (* callback)(struct Animation*);
+} Animation;
+
 typedef struct OffblastUi {
         int32_t winWidth;
         int32_t winHeight;
@@ -71,18 +81,14 @@ typedef struct OffblastUi {
         SDL_Texture *descriptionTexture;
         SDL_Renderer *renderer;
 
+        Animation *horizontalAnimation;
+        Animation *verticalAnimation;
+        Animation *infoAnimation;
+
         uint32_t rowCursor;
         UiRow *rows;
 } OffblastUi;
 
-typedef struct Animation {
-    uint32_t animating;
-    uint32_t direction;
-    uint32_t startTick;
-    uint32_t durationMs;
-    void *callbackArgs;
-    void (* callback)(struct Animation*);
-} Animation;
 
 typedef struct InfoFadedCallbackArgs {
     OffblastUi *ui;
@@ -665,38 +671,11 @@ int main (int argc, char** argv) {
     needsReRender(window, ui);
 
     ui->renderer = SDL_CreateRenderer(window, -1, 
-            SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
-            );
+            SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
-
-    ui->titlePointSize = goldenRatioLarge(ui->winWidth, 7);
-    ui->titleFont = TTF_OpenFont(
-            "fonts/Roboto-Regular.ttf", ui->titlePointSize);
-    if (!ui->titleFont) {
-        printf("Title font initialization Failed, %s\n", TTF_GetError());
-        return 1;
-    }
-
-    ui->infoPointSize = goldenRatioLarge(ui->winWidth, 9);
-    ui->infoFont = TTF_OpenFont(
-            "fonts/Roboto-Regular.ttf", ui->infoPointSize);
-
-    if (!ui->infoFont) {
-        printf("Font initialization Failed, %s\n", TTF_GetError());
-        return 1;
-    }
-
-    ui->debugFont = TTF_OpenFont(
-            "fonts/Roboto-Regular.ttf", goldenRatioLarge(ui->winWidth, 11));
-
-    if (!ui->debugFont) {
-        printf("Font initialization Failed, %s\n", TTF_GetError());
-        return 1;
-    }
-
-    Animation *horizontalAnimation = calloc(1, sizeof(Animation));
-    Animation *verticalAnimation = calloc(1, sizeof(Animation));
-    Animation *titleAnimation = calloc(1, sizeof(Animation));
+    ui->horizontalAnimation = calloc(1, sizeof(Animation));
+    ui->verticalAnimation = calloc(1, sizeof(Animation));
+    ui->infoAnimation = calloc(1, sizeof(Animation));
 
     InfoFadedCallbackArgs *infoFadedArgs = 
         calloc(1, sizeof(InfoFadedCallbackArgs));
@@ -705,7 +684,7 @@ int main (int argc, char** argv) {
     infoFadedArgs->newTarget = NULL;
     infoFadedArgs->descriptionFile = descriptionFile;
 
-    titleAnimation->callbackArgs = infoFadedArgs;
+    ui->infoAnimation->callbackArgs = infoFadedArgs;
 
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
@@ -766,7 +745,7 @@ int main (int argc, char** argv) {
 
 
     // PREP essential PS1
-    horizontalAnimation->callbackArgs = ui;
+    ui->horizontalAnimation->callbackArgs = ui;
     uint32_t topRatedLength = 9;
     rows[ROW_INDEX_TOP_RATED].length = topRatedLength;
     rows[ROW_INDEX_TOP_RATED].tiles = calloc(topRatedLength, sizeof(UiTile));
@@ -816,7 +795,6 @@ int main (int argc, char** argv) {
             ui->descriptionHeight
     );
 
-
     while (running) {
 
         if (needsReRender(window, ui) == 1) {
@@ -844,7 +822,7 @@ int main (int argc, char** argv) {
                 {
                     infoFadedArgs->newTarget
                         = rows[ui->rowCursor].nextRow->cursor->target;
-                    changeRow(verticalAnimation, titleAnimation, 1);
+                    changeRow(ui->verticalAnimation, ui->infoAnimation, 1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_UP ||
@@ -852,7 +830,7 @@ int main (int argc, char** argv) {
                 {
                     infoFadedArgs->newTarget
                         = rows[ui->rowCursor].previousRow->cursor->target;
-                    changeRow(verticalAnimation, titleAnimation, 0);
+                    changeRow(ui->verticalAnimation, ui->infoAnimation, 0);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
@@ -860,7 +838,7 @@ int main (int argc, char** argv) {
                 {
                     infoFadedArgs->newTarget
                         = rows[ui->rowCursor].cursor->next->target;
-                    changeColumn(horizontalAnimation, titleAnimation, 1);
+                    changeColumn(ui->horizontalAnimation, ui->infoAnimation, 1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
@@ -868,7 +846,7 @@ int main (int argc, char** argv) {
                 {
                     infoFadedArgs->newTarget
                         = rows[ui->rowCursor].cursor->previous->target;
-                    changeColumn(horizontalAnimation, titleAnimation, 0);
+                    changeColumn(ui->horizontalAnimation, ui->infoAnimation, 0);
                 }
                 else {
                     printf("key up %d\n", keyEvent->keysym.scancode);
@@ -882,14 +860,14 @@ int main (int argc, char** argv) {
         
 
         // Title 
-        if (titleAnimation->animating == 1) {
+        if (ui->infoAnimation->animating == 1) {
             uint8_t change = easeInOutCirc(
-                        (double)SDL_GetTicks() - titleAnimation->startTick,
+                        (double)SDL_GetTicks() - ui->infoAnimation->startTick,
                         1.0,
                         255.0,
-                        (double)titleAnimation->durationMs);
+                        (double)ui->infoAnimation->durationMs);
 
-            if (titleAnimation->direction == 0) {
+            if (ui->infoAnimation->direction == 0) {
                 change = 256 - change;
             }
             else {
@@ -952,14 +930,14 @@ int main (int argc, char** argv) {
                     ui->winMargin + i * (ui->boxWidth + ui->boxPad);
 
 
-                if (horizontalAnimation->animating != 0 && onRow == ui->rowCursor) {
+                if (ui->horizontalAnimation->animating != 0 && onRow == ui->rowCursor) {
                     double change = easeInOutCirc(
-                            (double)SDL_GetTicks() - horizontalAnimation->startTick,
+                            (double)SDL_GetTicks() - ui->horizontalAnimation->startTick,
                             0.0,
                             (double)ui->boxWidth + ui->boxPad,
-                            (double)horizontalAnimation->durationMs);
+                            (double)ui->horizontalAnimation->durationMs);
 
-                    if (horizontalAnimation->direction > 0) {
+                    if (ui->horizontalAnimation->direction > 0) {
                         change = -change;
                     }
 
@@ -981,17 +959,17 @@ int main (int argc, char** argv) {
 
 
         // TODO run this in a callback function
-        if (horizontalAnimation->animating && SDL_GetTicks() > 
-                horizontalAnimation->startTick + horizontalAnimation->durationMs) 
+        if (ui->horizontalAnimation->animating && SDL_GetTicks() > 
+                ui->horizontalAnimation->startTick + ui->horizontalAnimation->durationMs) 
         {
-            horizontalAnimation->animating = 0;
-            horizontalAnimation->callback(horizontalAnimation);
+            ui->horizontalAnimation->animating = 0;
+            ui->horizontalAnimation->callback(ui->horizontalAnimation);
         }
-        else if (titleAnimation->animating && SDL_GetTicks() > 
-                titleAnimation->startTick + titleAnimation->durationMs) 
+        else if (ui->infoAnimation->animating && SDL_GetTicks() > 
+                ui->infoAnimation->startTick + ui->infoAnimation->durationMs) 
         {
-            titleAnimation->animating = 0;
-            titleAnimation->callback(titleAnimation);
+            ui->infoAnimation->animating = 0;
+            ui->infoAnimation->callback(ui->infoAnimation);
         }
 
 
@@ -1038,9 +1016,9 @@ int main (int argc, char** argv) {
         lastTick = SDL_GetTicks();
     }
 
-    free(horizontalAnimation);
-    free(titleAnimation);
-    free(ui);
+    // TODO there's no program without this memory so why would I free it?
+    //free(horizontalAnimation);
+    //free(ui);
 
     SDL_DestroyWindow(window);
     SDL_Quit();
@@ -1128,6 +1106,31 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
 
         // TODO find a better limit
         ui->descriptionHeight = 400;
+
+        ui->titlePointSize = goldenRatioLarge(ui->winWidth, 7);
+        ui->titleFont = TTF_OpenFont(
+                "fonts/Roboto-Regular.ttf", ui->titlePointSize);
+        if (!ui->titleFont) {
+            printf("Title font initialization Failed, %s\n", TTF_GetError());
+            return 1;
+        }
+
+        ui->infoPointSize = goldenRatioLarge(ui->winWidth, 9);
+        ui->infoFont = TTF_OpenFont(
+                "fonts/Roboto-Regular.ttf", ui->infoPointSize);
+
+        if (!ui->infoFont) {
+            printf("Font initialization Failed, %s\n", TTF_GetError());
+            return 1;
+        }
+
+        ui->debugFont = TTF_OpenFont(
+                "fonts/Roboto-Regular.ttf", goldenRatioLarge(ui->winWidth, 11));
+
+        if (!ui->debugFont) {
+            printf("Font initialization Failed, %s\n", TTF_GetError());
+            return 1;
+        }
 
         updated = 1;
     }
