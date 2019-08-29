@@ -113,24 +113,6 @@ void changeColumn(
         OffblastUi *ui,
         uint32_t direction);
 
-SDL_Texture *createTitleTexture(
-        SDL_Renderer *renderer,
-        TTF_Font *titleFont,
-        char *titleString);
-
-SDL_Texture *createInfoTexture(
-        SDL_Renderer *renderer,
-        TTF_Font *infoFont,
-        LaunchTarget *target);
-
-SDL_Texture *createDescriptionTexture(
-        SDL_Renderer *renderer,
-        TTF_Font *infoFont,
-        char *description,
-        int32_t width, int32_t height); 
-
-
-
 int main (int argc, char** argv) {
 
     printf("\nStarting up OffBlast with %d args.\n\n", argc);
@@ -883,7 +865,6 @@ int main (int argc, char** argv) {
             rowToRender = rowToRender->nextRow;
         }
 
-        // DRAW THE FOLD XXX
         SDL_Rect infoLayer = {
             0, 0,
             ui->winWidth,
@@ -893,27 +874,66 @@ int main (int argc, char** argv) {
         SDL_RenderFillRect(ui->renderer, &infoLayer);
 
         // Target Info 
+        LaunchTarget *currentTarget = ui->rowCursor->tileCursor->target;
+
         if (ui->titleTexture == NULL) {
-            ui->titleTexture = createTitleTexture(
-                    ui->renderer,
-                    ui->titleFont,
-                    ui->rowCursor->tileCursor->target->name);
+            SDL_Color titleColor = {255,255,255,255};
+            SDL_Surface *titleSurface = TTF_RenderText_Blended(
+                    ui->titleFont, currentTarget->name, titleColor);
+
+            if (!titleSurface) {
+                printf("Font render failed, %s\n", TTF_GetError());
+                return 1;
+            }
+
+            ui->titleTexture = 
+                SDL_CreateTextureFromSurface(ui->renderer, titleSurface);
+            SDL_FreeSurface(titleSurface);
         }
+
         if (ui->infoTexture == NULL) {
-            ui->infoTexture = createInfoTexture(
-                    ui->renderer,
-                    ui->infoFont,
-                    ui->rowCursor->tileCursor->target);
+
+            SDL_Color color = {220,220,220,255};
+
+            char *tempString;
+            asprintf(&tempString, "%.4s     %u%%", 
+                    currentTarget->date, currentTarget->ranking);
+
+            SDL_Surface *infoSurface = TTF_RenderText_Blended(
+                    ui->infoFont, tempString, color);
+            free(tempString);
+
+            if (!infoSurface) {
+                printf("Font render failed, %s\n", TTF_GetError());
+                return 1;
+            }
+
+            ui->infoTexture = 
+                SDL_CreateTextureFromSurface(ui->renderer, infoSurface);
+            SDL_FreeSurface(infoSurface);
+    
         }
         if (ui->descriptionTexture == NULL) {
+
+            SDL_Color color = {220,220,220,255};
+
             OffblastBlob *descriptionBlob = (OffblastBlob*)
-                &descriptionFile->memory[ui->rowCursor->tileCursor->target->descriptionOffset];
-            ui->descriptionTexture = createDescriptionTexture(
-                ui->renderer,
-                ui->infoFont,
-                descriptionBlob->content,
-                ui->descriptionWidth,
-                ui->descriptionHeight);
+                &descriptionFile->memory[currentTarget->descriptionOffset];
+
+            SDL_Surface *surface = TTF_RenderText_Blended_Wrapped(
+                    ui->infoFont, 
+                    descriptionBlob->content,
+                    color,
+                    ui->descriptionWidth);
+
+            if (!surface) {
+                printf("Font render failed, %s\n", TTF_GetError());
+                return 1;
+            }
+
+            ui->descriptionTexture = 
+                SDL_CreateTextureFromSurface(ui->renderer, surface);
+            SDL_FreeSurface(surface);
         }
 
 
@@ -1223,26 +1243,6 @@ UiTile *rewindTiles(UiTile *fromTile, uint32_t depth) {
     }
 }
 
-SDL_Texture *createTitleTexture(
-        SDL_Renderer *renderer,
-        TTF_Font *titleFont,
-        char *titleString) 
-{
-    SDL_Color titleColor = {255,255,255,255};
-    SDL_Surface *titleSurface = TTF_RenderText_Blended(titleFont, titleString, titleColor);
-
-    if (!titleSurface) {
-        printf("Font render failed, %s\n", TTF_GetError());
-        return NULL;
-    }
-
-    SDL_Texture* texture = 
-            SDL_CreateTextureFromSurface(renderer, titleSurface);
-
-    SDL_FreeSurface(titleSurface);
-    
-    return texture;
-}
 
 double goldenRatioLarge(double in, uint32_t exponent) {
     if (exponent == 0) {
@@ -1298,57 +1298,6 @@ void infoFaded(OffblastUi *ui) {
     }
 }
 
-SDL_Texture *createInfoTexture(
-        SDL_Renderer *renderer,
-        TTF_Font *infoFont,
-        LaunchTarget *target) 
-{
-    SDL_Color color = {220,220,220,255};
-
-    char *tempString;
-    asprintf(&tempString, "%.4s     %u%%", 
-            target->date, target->ranking);
-
-    SDL_Surface *infoSurface = TTF_RenderText_Blended(
-            infoFont, tempString, color);
-
-    if (!infoSurface) {
-        printf("Font render failed, %s\n", TTF_GetError());
-        return NULL;
-    }
-
-    SDL_Texture* texture = 
-            SDL_CreateTextureFromSurface(renderer, infoSurface);
-
-    SDL_FreeSurface(infoSurface);
-    free(tempString);
-    
-    return texture;
-}
-
-SDL_Texture *createDescriptionTexture(
-        SDL_Renderer *renderer,
-        TTF_Font *infoFont,
-        char *description,
-        int32_t width, int32_t height) 
-{
-
-    SDL_Color color = {220,220,220,255};
-    SDL_Surface *surface = TTF_RenderText_Blended_Wrapped(
-            infoFont, description, color, width);
-
-    if (!surface) {
-        printf("Font render failed, %s\n", TTF_GetError());
-        return NULL;
-    }
-
-    SDL_Texture* texture = 
-            SDL_CreateTextureFromSurface(renderer, surface);
-
-    SDL_FreeSurface(surface);
-    return texture;
-
-}
 
 uint32_t megabytes(uint32_t n) {
     return n * 1024 * 1024;
