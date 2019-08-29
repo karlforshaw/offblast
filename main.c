@@ -7,9 +7,8 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
-// TODO text is based on cursor as it is, not as it will be..
-// TODO PLATFORM IN INFO
-//
+// - TODO Put the row name on it's own animation that is only
+//  triggered on row change
 // TODO GRADIENT LAYERS
 // TODO PLATFORM BADGES ON MIXED LISTS
 // TODO GRANDIA IS BEING DETECTED AS "D" DETECT BETTER!
