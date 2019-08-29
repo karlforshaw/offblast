@@ -7,7 +7,7 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
-// TODO ROW NAMES
+// TODO text is based on cursor as it is, not as it will be..
 // TODO PLATFORM IN INFO
 //
 // TODO GRADIENT LAYERS
@@ -41,6 +41,7 @@ typedef struct UiTile{
 
 typedef struct UiRow {
     uint32_t length;
+    char *name;
     struct UiTile *tileCursor;
     struct UiTile *tiles;
     struct UiRow *nextRow;
@@ -77,6 +78,7 @@ typedef struct OffblastUi {
         SDL_Texture *titleTexture;
         SDL_Texture *infoTexture;
         SDL_Texture *descriptionTexture;
+        SDL_Texture *rowNameTexture;
         SDL_Renderer *renderer;
 
         Animation *horizontalAnimation;
@@ -659,12 +661,14 @@ int main (int argc, char** argv) {
     // 1. Your Library
     // 2. Essential Playstation
     ui->rows = calloc(2, sizeof(UiRow));
-    UiRow *rows = ui->rows;
     ui->rows[0].nextRow = &ui->rows[1];
     ui->rows[0].previousRow = &ui->rows[1];
+    ui->rows[0].name = "Your Library";
     ui->rows[1].nextRow = &ui->rows[0];
     ui->rows[1].previousRow = &ui->rows[0];
+    ui->rows[1].name = "Essential Playstation";
     ui->rowCursor = ui->rows;
+    UiRow *rows = ui->rows;
 
 
 
@@ -689,22 +693,25 @@ int main (int argc, char** argv) {
         if (strlen(target->fileName) != 0) {
             rows[ROW_INDEX_LIBRARY].tiles[j].target = target;
             if (j+1 == libraryLength) {
+                printf("\ngot to the end\n");
                 rows[ROW_INDEX_LIBRARY].tiles[j].next = 
                     &rows[ROW_INDEX_LIBRARY].tiles[0];
             }
             else {
+                printf("\ndoing next\n");
                 rows[ROW_INDEX_LIBRARY].tiles[j].next = 
                     &rows[ROW_INDEX_LIBRARY].tiles[j+1];
             }
-           if (j==0) {
-               rows[ROW_INDEX_LIBRARY].tiles[j].previous = 
-                   &rows[ROW_INDEX_LIBRARY].tiles[libraryLength -1];
-           }
-           else {
-               rows[ROW_INDEX_LIBRARY].tiles[j].previous 
-                   = &rows[ROW_INDEX_LIBRARY].tiles[j-1];
-           }
-           j++;
+
+            if (j==0) {
+                rows[ROW_INDEX_LIBRARY].tiles[j].previous = 
+                    &rows[ROW_INDEX_LIBRARY].tiles[libraryLength -1];
+            }
+            else {
+                rows[ROW_INDEX_LIBRARY].tiles[j].previous 
+                    = &rows[ROW_INDEX_LIBRARY].tiles[j-1];
+            }
+            j++;
         }
     }
 
@@ -806,9 +813,9 @@ int main (int argc, char** argv) {
             SDL_Rect rowRects[COLS_TOTAL];
 
             UiTile *tileToRender = 
-                rewindTiles(rowToRender->tileCursor, COLS_ON_SCREEN);
+                rewindTiles(rowToRender->tileCursor, 2);
 
-            for (int32_t iTile = -COLS_ON_SCREEN; iTile < COLS_TOTAL; iTile++) {
+            for (int32_t iTile = -2; iTile < COLS_TOTAL; iTile++) {
 
                 rowRects[iTile].x = 
                     ui->winMargin + iTile * (ui->boxWidth + ui->boxPad);
@@ -907,6 +914,7 @@ int main (int argc, char** argv) {
             SDL_FreeSurface(infoSurface);
     
         }
+
         if (ui->descriptionTexture == NULL) {
 
             SDL_Color color = {220,220,220,255};
@@ -930,6 +938,23 @@ int main (int argc, char** argv) {
             SDL_FreeSurface(surface);
         }
 
+        if (ui->rowNameTexture == NULL) {
+            printf("UPDATE ROW NAME %s\n", ui->rowCursor->name);
+            SDL_Color color = {255,255,255,255};
+            SDL_Surface *surface = TTF_RenderText_Blended(
+                    ui->infoFont, ui->rowCursor->name, color);
+
+            if (!surface) {
+                printf("Font render failed, %s\n", TTF_GetError());
+                return 1;
+            }
+
+            ui->rowNameTexture = 
+                SDL_CreateTextureFromSurface(ui->renderer, surface);
+            SDL_FreeSurface(surface);
+        }
+
+
 
         if (ui->infoAnimation->animating == 1) {
             uint8_t change = easeInOutCirc(
@@ -948,11 +973,13 @@ int main (int argc, char** argv) {
             SDL_SetTextureAlphaMod(ui->titleTexture, change);
             SDL_SetTextureAlphaMod(ui->infoTexture, change);
             SDL_SetTextureAlphaMod(ui->descriptionTexture, change);
+            SDL_SetTextureAlphaMod(ui->rowNameTexture, change);
         }
         else {
             SDL_SetTextureAlphaMod(ui->titleTexture, 255);
             SDL_SetTextureAlphaMod(ui->infoTexture, 255);
             SDL_SetTextureAlphaMod(ui->descriptionTexture, 255);
+            SDL_SetTextureAlphaMod(ui->rowNameTexture, 255);
         }
 
         SDL_Rect titleRect = {0, 0, 0, 0}; 
@@ -967,9 +994,14 @@ int main (int argc, char** argv) {
         SDL_QueryTexture(ui->descriptionTexture, NULL, NULL, 
                 &descRect.w, &descRect.h);
 
+        SDL_Rect rowNameRect = {0, 0, 0, 0}; 
+        SDL_QueryTexture(ui->rowNameTexture, NULL, NULL, 
+                &rowNameRect.w, &rowNameRect.h);
+
         titleRect.x = ui->winMargin;
         infoRect.x = ui->winMargin;
         descRect.x = ui->winMargin;
+        rowNameRect.x = ui->winMargin;
 
         titleRect.y = goldenRatioLarge((double) ui->winHeight, 5);
         infoRect.y = (titleRect.y + 
@@ -978,14 +1010,13 @@ int main (int argc, char** argv) {
         descRect.y = (infoRect.y + 
             ui->infoPointSize + 
             goldenRatioLarge((double) ui->infoPointSize, 2));
+        rowNameRect.y = ui->winFold - ui->infoPointSize - ui->boxPad;
 
         SDL_RenderCopy(ui->renderer, ui->titleTexture, NULL, &titleRect);
         SDL_RenderCopy(ui->renderer, ui->infoTexture, NULL, &infoRect);
         SDL_RenderCopy(ui->renderer, ui->descriptionTexture, NULL, &descRect);
+        SDL_RenderCopy(ui->renderer, ui->rowNameTexture, NULL, &rowNameRect);
 
-
-
-        // TODO run this in a callback function
         animationTick(ui->horizontalAnimation, ui);
         animationTick(ui->verticalAnimation, ui);
         animationTick(ui->infoAnimation, ui);
@@ -1150,6 +1181,8 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
         ui->titleTexture = NULL;
         SDL_DestroyTexture(ui->descriptionTexture);
         ui->descriptionTexture = NULL;
+        SDL_DestroyTexture(ui->rowNameTexture);
+        ui->rowNameTexture = NULL;
 
         updated = 1;
     }
@@ -1206,7 +1239,6 @@ void startVerticalAnimation(
 }
 
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth) {
-
     if (depth == 0) {
         return fromTile;
     }
@@ -1255,10 +1287,12 @@ void infoFaded(OffblastUi *ui) {
         SDL_DestroyTexture(ui->titleTexture);
         SDL_DestroyTexture(ui->infoTexture);
         SDL_DestroyTexture(ui->descriptionTexture);
+        SDL_DestroyTexture(ui->rowNameTexture);
 
         ui->titleTexture = NULL;
         ui->infoTexture = NULL;
         ui->descriptionTexture = NULL;
+        ui->rowNameTexture = NULL;
 
         ui->infoAnimation->startTick = SDL_GetTicks();
         ui->infoAnimation->direction = 1;
