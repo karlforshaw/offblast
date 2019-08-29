@@ -1,21 +1,16 @@
 #define _GNU_SOURCE
-#define SCALING 2.0
 #define PHI 1.618033988749895
 
-#define SMALL_FONT_SIZE 12
 #define COLS_ON_SCREEN 5
 #define COLS_TOTAL 10 
-#define ROWS_ON_SCREEN 2
 #define ROWS_TOTAL 4
+
 #define NAVIGATION_MOVE_DURATION 250 
 
-
-// TODO get rid of all fixed sizes and scaling constants
-// TODO review animation callback system, probably no need for context now
-//      as we can just pass the ui struct in
-// TODO GRADIENT LAYERS
 // TODO ROW NAMES
 // TODO PLATFORM IN INFO
+//
+// TODO GRADIENT LAYERS
 // TODO PLATFORM BADGES ON MIXED LISTS
 // TODO GRANDIA IS BEING DETECTED AS "D" DETECT BETTER!
 
@@ -104,6 +99,7 @@ void verticalMoveDone(OffblastUi *ui);
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
 void infoFaded(OffblastUi *ui);
 uint32_t animationRunning(OffblastUi *ui);
+void animationTick(Animation *theAnimation, OffblastUi *ui);
 
 void changeRow(
         OffblastUi *ui,
@@ -712,9 +708,6 @@ int main (int argc, char** argv) {
         }
     }
 
-    ui->horizontalAnimation->callbackArgs = ui;
-    ui->verticalAnimation->callbackArgs = ui;
-
     // PREP essential PS1
     uint32_t topRatedLength = 9;
     rows[ROW_INDEX_TOP_RATED].length = topRatedLength;
@@ -747,7 +740,7 @@ int main (int argc, char** argv) {
     while (running) {
 
         if (needsReRender(window, ui) == 1) {
-            // TODO something
+            printf("Window size changed, sizes updated.\n");
         }
 
         SDL_Event event;
@@ -805,7 +798,6 @@ int main (int argc, char** argv) {
         SDL_SetRenderDrawColor(ui->renderer, 0xFF, 0xFF, 0xFF, 0x66);
         UiRow *rowToRender = ui->rowCursor->previousRow;
 
-        // TODO formalize this
         for (int32_t iRow = -1; iRow < ROWS_TOTAL-1; iRow++) {
 
             uint8_t shade = 255;
@@ -896,8 +888,10 @@ int main (int argc, char** argv) {
             SDL_Color color = {220,220,220,255};
 
             char *tempString;
-            asprintf(&tempString, "%.4s     %u%%", 
-                    currentTarget->date, currentTarget->ranking);
+            asprintf(&tempString, "%.4s  |  %s  |  %u%%", 
+                    currentTarget->date, 
+                    currentTarget->platform,
+                    currentTarget->ranking);
 
             SDL_Surface *infoSurface = TTF_RenderText_Blended(
                     ui->infoFont, tempString, color);
@@ -992,25 +986,9 @@ int main (int argc, char** argv) {
 
 
         // TODO run this in a callback function
-        if (ui->horizontalAnimation->animating && SDL_GetTicks() > 
-                ui->horizontalAnimation->startTick + ui->horizontalAnimation->durationMs) 
-        {
-            ui->horizontalAnimation->animating = 0;
-            ui->horizontalAnimation->callback(ui);
-        }
-        else if (ui->verticalAnimation->animating && SDL_GetTicks() > 
-                ui->verticalAnimation->startTick + ui->verticalAnimation->durationMs) 
-        {
-            ui->verticalAnimation->animating = 0;
-            ui->verticalAnimation->callback(ui);
-        }
-        else if (ui->infoAnimation->animating && SDL_GetTicks() > 
-                ui->infoAnimation->startTick + ui->infoAnimation->durationMs) 
-        {
-            ui->infoAnimation->animating = 0;
-            ui->infoAnimation->callback(ui);
-        }
-
+        animationTick(ui->horizontalAnimation, ui);
+        animationTick(ui->verticalAnimation, ui);
+        animationTick(ui->infoAnimation, ui);
 
 
         // DEBUG FPS INFO
@@ -1037,8 +1015,8 @@ int main (int argc, char** argv) {
         SDL_FreeSurface(fpsSurface);
 
         SDL_Rect fpsRect = {
-            SMALL_FONT_SIZE*SCALING,
-            SMALL_FONT_SIZE*SCALING,
+            goldenRatioLarge(ui->winWidth, 9),
+            goldenRatioLarge(ui->winHeight, 9),
             0, 0};
 
         SDL_QueryTexture(fpsTexture, NULL, NULL, &fpsRect.w, &fpsRect.h);
@@ -1054,10 +1032,6 @@ int main (int argc, char** argv) {
 
         lastTick = SDL_GetTicks();
     }
-
-    // TODO there's no program without this memory so why would I free it?
-    //free(horizontalAnimation);
-    //free(ui);
 
     SDL_DestroyWindow(window);
     SDL_Quit();
@@ -1129,7 +1103,6 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
     SDL_GetWindowSize(window, &newWidth, &newHeight);
 
     if (newWidth != ui->winWidth || newHeight != ui->winHeight) {
-        printf("rerendering needed\n");
 
         ui->winWidth = newWidth;
         ui->winHeight= newHeight;
@@ -1137,14 +1110,14 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
         ui->winMargin = goldenRatioLarge((double) newWidth, 5);
 
         ui->boxWidth = newWidth / COLS_ON_SCREEN;
-        ui->boxHeight = 500; // TODO use golden
+        ui->boxHeight = goldenRatioLarge(ui->winWidth, 4);
         ui->boxPad = goldenRatioLarge((double) ui->winWidth, 9);
 
         ui->descriptionWidth = 
             goldenRatioLarge((double) newWidth, 1) - ui->winMargin;
 
-        // TODO find a better limit
-        ui->descriptionHeight = 400;
+        // TODO Find a better way to enfoce this
+        ui->descriptionHeight = goldenRatioLarge(ui->winWidth, 3);
 
         ui->titlePointSize = goldenRatioLarge(ui->winWidth, 7);
         ui->titleFont = TTF_OpenFont(
@@ -1317,4 +1290,13 @@ uint32_t animationRunning(OffblastUi *ui) {
     }
 
     return result;
+}
+
+void animationTick(Animation *theAnimation, OffblastUi *ui) {
+        if (theAnimation->animating && SDL_GetTicks() > 
+                theAnimation->startTick + theAnimation->durationMs) 
+        {
+            theAnimation->animating = 0;
+            theAnimation->callback(ui);
+        }
 }
