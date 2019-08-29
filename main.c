@@ -4,13 +4,16 @@
 
 #define SMALL_FONT_SIZE 12
 #define COLS_ON_SCREEN 5
-#define NAVIGATION_MOVE_DURATION 250 
 #define COLS_TOTAL 10 
+#define ROWS_ON_SCREEN 2
+#define ROWS_TOTAL 4
+#define NAVIGATION_MOVE_DURATION 250 
 
 
 // * TODO MULTIPLE ROWS
 //      -- vertical animation
 // TODO FIX SMALL INFO TEXTURES ON INITIAL LOAD (load on demand?)
+// TODO get rid of all fixed sizes and scaling constants
 // TODO GRADIENT LAYERS
 // TODO ROW NAMES
 // TODO PLATFORM IN INFO
@@ -44,7 +47,7 @@ typedef struct UiTile{
 
 typedef struct UiRow {
     uint32_t length;
-    struct UiTile *cursor;
+    struct UiTile *tileCursor;
     struct UiTile *tiles;
     struct UiRow *nextRow;
     struct UiRow *previousRow;
@@ -85,7 +88,7 @@ typedef struct OffblastUi {
         Animation *verticalAnimation;
         Animation *infoAnimation;
 
-        uint32_t rowCursor;
+        UiRow *rowCursor;
         UiRow *rows;
 } OffblastUi;
 
@@ -105,17 +108,17 @@ double easeInOutCirc (double t, double b, double c, double d);
 char *getCsvField(char *line, int fieldNo);
 double goldenRatioLarge(double in, uint32_t exponent);
 void horizontalMoveDone(struct Animation *context);
+void verticalMoveDone(struct Animation *context);
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
 void infoFaded(struct Animation *context);
+uint32_t animationRunning(OffblastUi *ui);
 
 void changeRow(
-        Animation *verticalAnimation,
-        Animation *titleAnimation,
+        OffblastUi *ui,
         uint32_t direction);
 
 void changeColumn(
-        Animation *theAnimation, 
-        Animation *titleAnimation, 
+        OffblastUi *ui,
         uint32_t direction);
 
 SDL_Texture *createTitleTexture(
@@ -700,6 +703,7 @@ int main (int argc, char** argv) {
     ui->rows[0].previousRow = &ui->rows[1];
     ui->rows[1].nextRow = &ui->rows[0];
     ui->rows[1].previousRow = &ui->rows[0];
+    ui->rowCursor = ui->rows;
 
 
 
@@ -718,7 +722,7 @@ int main (int argc, char** argv) {
     rows[ROW_INDEX_LIBRARY].length = libraryLength; 
     rows[ROW_INDEX_LIBRARY].tiles = calloc(libraryLength, sizeof(UiTile)); 
     assert(rows[ROW_INDEX_LIBRARY].tiles);
-    rows[ROW_INDEX_LIBRARY].cursor = &rows[ROW_INDEX_LIBRARY].tiles[0];
+    rows[ROW_INDEX_LIBRARY].tileCursor = &rows[ROW_INDEX_LIBRARY].tiles[0];
     for (uint32_t i = 0, j = 0; i < launchTargetFile->nEntries; i++) {
         LaunchTarget *target = &launchTargetFile->entries[i];
         if (strlen(target->fileName) != 0) {
@@ -743,14 +747,15 @@ int main (int argc, char** argv) {
         }
     }
 
+    ui->horizontalAnimation->callbackArgs = ui;
+    ui->verticalAnimation->callbackArgs = ui;
 
     // PREP essential PS1
-    ui->horizontalAnimation->callbackArgs = ui;
     uint32_t topRatedLength = 9;
     rows[ROW_INDEX_TOP_RATED].length = topRatedLength;
     rows[ROW_INDEX_TOP_RATED].tiles = calloc(topRatedLength, sizeof(UiTile));
     assert(rows[ROW_INDEX_TOP_RATED].tiles);
-    rows[ROW_INDEX_TOP_RATED].cursor = &rows[ROW_INDEX_TOP_RATED].tiles[0];
+    rows[ROW_INDEX_TOP_RATED].tileCursor = &rows[ROW_INDEX_TOP_RATED].tiles[0];
     for (uint32_t i = 0; i < rows[ROW_INDEX_TOP_RATED].length; i++) {
         rows[ROW_INDEX_TOP_RATED].tiles[i].target = 
             &launchTargetFile->entries[i];
@@ -777,16 +782,15 @@ int main (int argc, char** argv) {
     ui->titleTexture = createTitleTexture(
             ui->renderer,
             ui->titleFont,
-            rows[0].cursor->target->name);
+            ui->rowCursor->tileCursor->target->name);
 
     ui->infoTexture = createInfoTexture(
             ui->renderer,
             ui->infoFont,
-            rows[0].cursor->target
-    );
+            ui->rowCursor->tileCursor->target);
 
     OffblastBlob *descriptionBlob = (OffblastBlob*)
-        &descriptionFile->memory[rows[0].cursor->target->descriptionOffset];
+        &descriptionFile->memory[ui->rowCursor->tileCursor->target->descriptionOffset];
     ui->descriptionTexture = createDescriptionTexture(
             ui->renderer,
             ui->infoFont,
@@ -821,32 +825,32 @@ int main (int argc, char** argv) {
                         keyEvent->keysym.scancode == SDL_SCANCODE_J) 
                 {
                     infoFadedArgs->newTarget
-                        = rows[ui->rowCursor].nextRow->cursor->target;
-                    changeRow(ui->verticalAnimation, ui->infoAnimation, 1);
+                        = ui->rowCursor->nextRow->tileCursor->target;
+                    changeRow(ui, 1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_UP ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_K) 
                 {
                     infoFadedArgs->newTarget
-                        = rows[ui->rowCursor].previousRow->cursor->target;
-                    changeRow(ui->verticalAnimation, ui->infoAnimation, 0);
+                        = ui->rowCursor->previousRow->tileCursor->target;
+                    changeRow(ui, 0);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_L) 
                 {
                     infoFadedArgs->newTarget
-                        = rows[ui->rowCursor].cursor->next->target;
-                    changeColumn(ui->horizontalAnimation, ui->infoAnimation, 1);
+                        = ui->rowCursor->tileCursor->next->target;
+                    changeColumn(ui, 1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_H) 
                 {
                     infoFadedArgs->newTarget
-                        = rows[ui->rowCursor].cursor->previous->target;
-                    changeColumn(ui->horizontalAnimation, ui->infoAnimation, 0);
+                        = ui->rowCursor->tileCursor->previous->target;
+                    changeColumn(ui, 0);
                 }
                 else {
                     printf("key up %d\n", keyEvent->keysym.scancode);
@@ -858,6 +862,80 @@ int main (int argc, char** argv) {
         SDL_SetRenderDrawColor(ui->renderer, 0x03, 0x03, 0x03, 0xFF);
         SDL_RenderClear(ui->renderer);
         
+
+
+        // Blocks
+        SDL_SetRenderDrawColor(ui->renderer, 0xFF, 0xFF, 0xFF, 0x66);
+        UiRow *rowToRender = ui->rowCursor->previousRow;
+
+        // TODO formalize this
+        for (int32_t iRow = -1; iRow < ROWS_TOTAL-1; iRow++) {
+
+            uint8_t shade = 255;
+            SDL_SetRenderDrawColor(ui->renderer, shade, shade, shade, 0x66);
+
+            SDL_Rect rowRects[COLS_TOTAL];
+
+            UiTile *tileToRender = 
+                rewindTiles(rowToRender->tileCursor, COLS_ON_SCREEN);
+
+            for (int32_t iTile = -COLS_ON_SCREEN; iTile < COLS_TOTAL; iTile++) {
+
+                rowRects[iTile].x = 
+                    ui->winMargin + iTile * (ui->boxWidth + ui->boxPad);
+
+                if (ui->horizontalAnimation->animating != 0 && iRow == 0) 
+                {
+                    double change = easeInOutCirc(
+                            (double)SDL_GetTicks() - ui->horizontalAnimation->startTick,
+                            0.0,
+                            (double)ui->boxWidth + ui->boxPad,
+                            (double)ui->horizontalAnimation->durationMs);
+
+                    if (ui->horizontalAnimation->direction > 0) {
+                        change = -change;
+                    }
+
+                    rowRects[iTile].x += change;
+
+                }
+
+                rowRects[iTile].y = 
+                    ui->winFold + (iRow * (ui->boxHeight + ui->boxPad));
+
+                if (ui->verticalAnimation->animating != 0) 
+                {
+                    double change = easeInOutCirc(
+                            (double)SDL_GetTicks() - ui->verticalAnimation->startTick,
+                            0.0,
+                            (double)ui->boxHeight+ ui->boxPad,
+                            (double)ui->verticalAnimation->durationMs);
+
+                    if (ui->verticalAnimation->direction > 0) {
+                        change = -change;
+                    }
+
+                    rowRects[iTile].y += change;
+
+                }
+
+                rowRects[iTile].w = ui->boxWidth;
+                rowRects[iTile].h = ui->boxHeight;
+                SDL_RenderFillRect(ui->renderer, &rowRects[iTile]);
+                tileToRender = tileToRender->next;
+            }
+
+            rowToRender = rowToRender->nextRow;
+        }
+
+        // DRAW THE FOLD XXX
+        SDL_Rect infoLayer = {
+            0, 0,
+            ui->winWidth,
+            ui->winFold
+        };
+        SDL_SetRenderDrawColor(ui->renderer, 0x00, 0x00, 0x00, 0xFF);
+        SDL_RenderFillRect(ui->renderer, &infoLayer);
 
         // Title 
         if (ui->infoAnimation->animating == 1) {
@@ -914,56 +992,18 @@ int main (int argc, char** argv) {
 
 
 
-        // Blocks
-        SDL_SetRenderDrawColor(ui->renderer, 0xFF, 0xFF, 0xFF, 0x66);
-
-        for (uint32_t onRow = 0; onRow < 2; onRow++) {
-
-            SDL_Rect rowRects[COLS_TOTAL];
-
-            UiTile *tileToRender = 
-                rewindTiles(rows[onRow].cursor, COLS_ON_SCREEN);
-
-            for (int32_t i = -COLS_ON_SCREEN; i < COLS_TOTAL; i++) {
-
-                rowRects[i].x = 
-                    ui->winMargin + i * (ui->boxWidth + ui->boxPad);
-
-
-                if (ui->horizontalAnimation->animating != 0 && onRow == ui->rowCursor) {
-                    double change = easeInOutCirc(
-                            (double)SDL_GetTicks() - ui->horizontalAnimation->startTick,
-                            0.0,
-                            (double)ui->boxWidth + ui->boxPad,
-                            (double)ui->horizontalAnimation->durationMs);
-
-                    if (ui->horizontalAnimation->direction > 0) {
-                        change = -change;
-                    }
-
-                    rowRects[i].x += change;
-
-                }
-
-                rowRects[i].y = ui->winFold + (onRow * ui->boxHeight);
-                if (onRow > 0) {
-                    rowRects[i].y += ui->boxPad;
-                }
-
-                rowRects[i].w = ui->boxWidth;
-                rowRects[i].h = ui->boxHeight;
-                SDL_RenderFillRect(ui->renderer, &rowRects[i]);
-                tileToRender = tileToRender->next;
-            }
-        }
-
-
         // TODO run this in a callback function
         if (ui->horizontalAnimation->animating && SDL_GetTicks() > 
                 ui->horizontalAnimation->startTick + ui->horizontalAnimation->durationMs) 
         {
             ui->horizontalAnimation->animating = 0;
             ui->horizontalAnimation->callback(ui->horizontalAnimation);
+        }
+        else if (ui->verticalAnimation->animating && SDL_GetTicks() > 
+                ui->verticalAnimation->startTick + ui->verticalAnimation->durationMs) 
+        {
+            ui->verticalAnimation->animating = 0;
+            ui->verticalAnimation->callback(ui->verticalAnimation);
         }
         else if (ui->infoAnimation->animating && SDL_GetTicks() > 
                 ui->infoAnimation->startTick + ui->infoAnimation->durationMs) 
@@ -1139,36 +1179,44 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
 }
 
 
-// XXX time to start thinking about how we accept input
-// is it worth us strapping the animations into the ui struct
-// so that we can determin whether or not we should accept input?
-void changeColumn( // TODO change name to start HorizontalAnimation??
-        Animation *theAnimation, 
-        Animation *titleAnimation,
+void changeColumn(
+        OffblastUi *ui,
         uint32_t direction) 
 {
-    if (theAnimation->animating == 0)  // TODO some kind of input lock
+    if (animationRunning(ui) == 0)
     {
-        theAnimation->startTick = SDL_GetTicks();
-        theAnimation->direction = direction;
-        theAnimation->durationMs = NAVIGATION_MOVE_DURATION;
-        theAnimation->animating = 1;
-        theAnimation->callback = &horizontalMoveDone;
+        ui->horizontalAnimation->startTick = SDL_GetTicks();
+        ui->horizontalAnimation->direction = direction;
+        ui->horizontalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
+        ui->horizontalAnimation->animating = 1;
+        ui->horizontalAnimation->callback = &horizontalMoveDone;
 
-        titleAnimation->startTick = SDL_GetTicks();
-        titleAnimation->direction = 0;
-        titleAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
-        titleAnimation->animating = 1;
-        titleAnimation->callback = &infoFaded;
+        ui->infoAnimation->startTick = SDL_GetTicks();
+        ui->infoAnimation->direction = 0;
+        ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
+        ui->infoAnimation->animating = 1;
+        ui->infoAnimation->callback = &infoFaded;
     }
 }
 
 void changeRow(
-        Animation *verticalAnimation,
-        Animation *titleAnimation,
+        OffblastUi *ui,
         uint32_t direction) 
 {
-    printf("changing row\n"); // XXX KARL HERE
+    if (animationRunning(ui) == 0)
+    {
+        ui->verticalAnimation->startTick = SDL_GetTicks();
+        ui->verticalAnimation->direction = direction;
+        ui->verticalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
+        ui->verticalAnimation->animating = 1;
+        ui->verticalAnimation->callback = &verticalMoveDone;
+
+        ui->infoAnimation->startTick = SDL_GetTicks();
+        ui->infoAnimation->direction = 0;
+        ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
+        ui->infoAnimation->animating = 1;
+        ui->infoAnimation->callback = &infoFaded;
+    }
 }
 
 void startVerticalAnimation(
@@ -1224,12 +1272,26 @@ void horizontalMoveDone(struct Animation *context) {
     OffblastUi *ui = context->callbackArgs;
 
     if (context->direction == 1) {
-        ui->rows[ui->rowCursor].cursor = 
-            ui->rows[ui->rowCursor].cursor->next;
+        ui->rowCursor->tileCursor = 
+            ui->rowCursor->tileCursor->next;
     }
     else {
-        ui->rows[ui->rowCursor].cursor = 
-            ui->rows[ui->rowCursor].cursor->previous;
+        ui->rowCursor->tileCursor = 
+            ui->rowCursor->tileCursor->previous;
+    }
+}
+
+void verticalMoveDone(struct Animation *context) {
+
+    OffblastUi *ui = context->callbackArgs;
+
+    if (context->direction == 1) {
+        ui->rowCursor = 
+            ui->rowCursor->nextRow;
+    }
+    else {
+        ui->rowCursor = 
+            ui->rowCursor->previousRow;
     }
 }
 
@@ -1332,4 +1394,20 @@ SDL_Texture *createDescriptionTexture(
 
 uint32_t megabytes(uint32_t n) {
     return n * 1024 * 1024;
+}
+
+uint32_t animationRunning(OffblastUi *ui) {
+    uint32_t result = 0;
+
+    if (ui->horizontalAnimation->animating != 0) {
+        result++;
+    }
+    else if (ui->verticalAnimation->animating != 0) {
+        result++;
+    }
+    else if (ui->infoAnimation->animating != 0) {
+        result++;
+    }
+
+    return result;
 }
