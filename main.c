@@ -4,6 +4,7 @@
 #define COLS_ON_SCREEN 5
 #define COLS_TOTAL 10 
 #define ROWS_TOTAL 4
+#define MAX_PLATFORMS 50 
 
 #define NAVIGATION_MOVE_DURATION 250 
 
@@ -84,6 +85,7 @@ typedef struct OffblastUi {
         Animation *verticalAnimation;
         Animation *infoAnimation;
 
+        uint32_t numRows;
         UiRow *rowCursor;
         UiRow *rows;
         LaunchTarget *movingToTarget;
@@ -244,7 +246,8 @@ int main (int argc, char** argv) {
     } // XXX DEBUG ONLY CODE
 #endif 
 
-
+    char (*platforms)[256] = calloc(MAX_PLATFORMS, 256 * sizeof(char));
+    uint32_t nPlatforms = 0;
 
     size_t nPaths = json_object_array_length(paths);
     for (int i=0; i<nPaths; i++) {
@@ -272,8 +275,23 @@ int main (int argc, char** argv) {
 
         printf("Running Path for %s: %s\n", theExtension, thePath);
 
+        if (i == 0) {
+            memcpy(platforms[nPlatforms], thePlatform, strlen(thePlatform));
+            nPlatforms++;
+        }
+        else {
+            uint8_t gotPlatform = 0;
+            for (uint32_t i = 0; i < nPlatforms; i++) {
+                if (strcmp(platforms[i], thePlatform) == 0) gotPlatform = 1;
+            }
+            if (!gotPlatform) {
+                memcpy(platforms[nPlatforms], thePlatform, strlen(thePlatform));
+                nPlatforms++;
+            }
+        }
+
         uint32_t platformScraped = 0;
-        for(uint32_t i=0; i < launchTargetFile->nEntries; ++i) {
+        for (uint32_t i=0; i < launchTargetFile->nEntries; ++i) {
             if (strcmp(launchTargetFile->entries[i].platform, 
                         thePlatform) == 0) 
             {
@@ -589,6 +607,8 @@ int main (int argc, char** argv) {
         closedir(dir);
     }
 
+    printf("DEBUG - got %u platforms\n", nPlatforms);
+
     close(pathDb.fd);
     close(launchTargetDb.fd);
 
@@ -661,85 +681,105 @@ int main (int argc, char** argv) {
     // rows for now:
     // 1. Your Library
     // 2. Essential Playstation
-    ui->rows = calloc(2, sizeof(UiRow));
-    ui->rows[0].nextRow = &ui->rows[1];
-    ui->rows[0].previousRow = &ui->rows[1];
-    ui->rows[0].name = "Your Library";
-    ui->rows[1].nextRow = &ui->rows[0];
-    ui->rows[1].previousRow = &ui->rows[0];
-    ui->rows[1].name = "Essential Playstation";
+    ui->rows = calloc(1 + nPlatforms, sizeof(UiRow));
+    ui->numRows = 0;
     ui->rowCursor = ui->rows;
-    UiRow *rows = ui->rows;
 
-
-
-    // PREP your library
-    // walk through the targets and grab out anything that has 
-    // a filepath
+    // __ROW__ "Your Library"
     // TODO put a limit on this
-#define ROW_INDEX_LIBRARY 0
-#define ROW_INDEX_TOP_RATED 1
     uint32_t libraryLength = 0;
     for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
         LaunchTarget *target = &launchTargetFile->entries[i];
         if (strlen(target->fileName) != 0) 
             libraryLength++;
     }
-    rows[ROW_INDEX_LIBRARY].length = libraryLength; 
-    rows[ROW_INDEX_LIBRARY].tiles = calloc(libraryLength, sizeof(UiTile)); 
-    assert(rows[ROW_INDEX_LIBRARY].tiles);
-    rows[ROW_INDEX_LIBRARY].tileCursor = &rows[ROW_INDEX_LIBRARY].tiles[0];
-    for (uint32_t i = 0, j = 0; i < launchTargetFile->nEntries; i++) {
-        LaunchTarget *target = &launchTargetFile->entries[i];
-        if (strlen(target->fileName) != 0) {
-            rows[ROW_INDEX_LIBRARY].tiles[j].target = target;
-            if (j+1 == libraryLength) {
-                rows[ROW_INDEX_LIBRARY].tiles[j].next = 
-                    &rows[ROW_INDEX_LIBRARY].tiles[0];
-            }
-            else {
-                rows[ROW_INDEX_LIBRARY].tiles[j].next = 
-                    &rows[ROW_INDEX_LIBRARY].tiles[j+1];
-            }
 
-            if (j==0) {
-                rows[ROW_INDEX_LIBRARY].tiles[j].previous = 
-                    &rows[ROW_INDEX_LIBRARY].tiles[libraryLength -1];
+    if (libraryLength > 0) {
+        ui->rows[ui->numRows].length = libraryLength; 
+        ui->rows[ui->numRows].tiles = calloc(libraryLength, sizeof(UiTile)); 
+        assert(ui->rows[ui->numRows].tiles);
+        ui->rows[ui->numRows].tileCursor = &ui->rows[ui->numRows].tiles[0];
+        for (uint32_t i = 0, j = 0; i < launchTargetFile->nEntries; i++) {
+            LaunchTarget *target = &launchTargetFile->entries[i];
+            if (strlen(target->fileName) != 0) {
+                ui->rows[ui->numRows].tiles[j].target = target;
+                if (j+1 == libraryLength) {
+                    ui->rows[ui->numRows].tiles[j].next = 
+                        &ui->rows[ui->numRows].tiles[0];
+                }
+                else {
+                    ui->rows[ui->numRows].tiles[j].next = 
+                        &ui->rows[ui->numRows].tiles[j+1];
+                }
+
+                if (j==0) {
+                    ui->rows[ui->numRows].tiles[j].previous = 
+                        &ui->rows[ui->numRows].tiles[libraryLength -1];
+                }
+                else {
+                    ui->rows[ui->numRows].tiles[j].previous 
+                        = &ui->rows[ui->numRows].tiles[j-1];
+                }
+                j++;
             }
-            else {
-                rows[ROW_INDEX_LIBRARY].tiles[j].previous 
-                    = &rows[ROW_INDEX_LIBRARY].tiles[j-1];
-            }
-            j++;
         }
+        ui->numRows++;
+        ui->rows[ui->numRows].name = "Your Library";
+    }
+    else { 
+        printf("woah now looks like we have an empty library\n");
     }
 
-    // PREP essential PS1
-    uint32_t topRatedLength = 9;
-    rows[ROW_INDEX_TOP_RATED].length = topRatedLength;
-    rows[ROW_INDEX_TOP_RATED].tiles = calloc(topRatedLength, sizeof(UiTile));
-    assert(rows[ROW_INDEX_TOP_RATED].tiles);
-    rows[ROW_INDEX_TOP_RATED].tileCursor = &rows[ROW_INDEX_TOP_RATED].tiles[0];
-    for (uint32_t i = 0; i < rows[ROW_INDEX_TOP_RATED].length; i++) {
-        rows[ROW_INDEX_TOP_RATED].tiles[i].target = 
-            &launchTargetFile->entries[i];
 
-        if (i+1 == rows[ROW_INDEX_TOP_RATED].length) {
-            rows[ROW_INDEX_TOP_RATED].tiles[i].next = 
-                &rows[ROW_INDEX_TOP_RATED].tiles[0]; 
-        }
-        else {
-            rows[ROW_INDEX_TOP_RATED].tiles[i].next = 
-                &rows[ROW_INDEX_TOP_RATED].tiles[i+1]; 
+    // __ROWS__ Essentials per platform
+    for (uint32_t iPlatform = 0; iPlatform < nPlatforms; iPlatform++) {
+
+        asprintf(&ui->rows[ui->numRows].name, "Essential %s", platforms[iPlatform]);
+
+        uint32_t topRatedLength = 9;
+        ui->rows[ui->numRows].length = topRatedLength;
+        ui->rows[ui->numRows].tiles = calloc(topRatedLength, sizeof(UiTile));
+        assert(ui->rows[ui->numRows].tiles);
+        ui->rows[ui->numRows].tileCursor = &ui->rows[ui->numRows].tiles[0];
+        for (uint32_t i = 0; i < ui->rows[ui->numRows].length; i++) {
+            ui->rows[ui->numRows].tiles[i].target = 
+                &launchTargetFile->entries[i];
+
+            if (i+1 == ui->rows[ui->numRows].length) {
+                ui->rows[ui->numRows].tiles[i].next = 
+                    &ui->rows[ui->numRows].tiles[0]; 
+            }
+            else {
+                ui->rows[ui->numRows].tiles[i].next = 
+                    &ui->rows[ui->numRows].tiles[i+1]; 
+            }
+
+            if (i == 0) {
+                ui->rows[ui->numRows].tiles[i].previous = 
+                    &ui->rows[ui->numRows].tiles[topRatedLength-1];
+            }
+            else {
+                ui->rows[ui->numRows].tiles[i].previous = 
+                    &ui->rows[ui->numRows].tiles[i-1];
+            }
         }
 
+        ui->numRows++;
+    }
+
+    for (uint32_t i = 0; i < ui->numRows; i++) {
         if (i == 0) {
-            rows[ROW_INDEX_TOP_RATED].tiles[i].previous = 
-                &rows[ROW_INDEX_TOP_RATED].tiles[topRatedLength-1];
+            ui->rows[i].previousRow = &ui->rows[ui->numRows-1];
         }
         else {
-            rows[ROW_INDEX_TOP_RATED].tiles[i].previous = 
-                &rows[ROW_INDEX_TOP_RATED].tiles[i-1];
+            ui->rows[i].previousRow = &ui->rows[i-1];
+        }
+
+        if (i == ui->numRows - 1) {
+            ui->rows[i].nextRow = &ui->rows[0];
+        }
+        else {
+            ui->rows[i].nextRow = &ui->rows[i+1];
         }
     }
 
