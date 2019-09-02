@@ -8,8 +8,7 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
-// - TODO Put the row name on it's own animation that is only
-//  triggered on row change
+// TODO Translation table for platforms
 // TODO GRADIENT LAYERS
 // TODO PLATFORM BADGES ON MIXED LISTS
 // TODO GRANDIA IS BEING DETECTED AS "D" DETECT BETTER!
@@ -84,6 +83,7 @@ typedef struct OffblastUi {
         Animation *horizontalAnimation;
         Animation *verticalAnimation;
         Animation *infoAnimation;
+        Animation *rowNameAnimation;
 
         uint32_t numRows;
         UiRow *rowCursor;
@@ -103,6 +103,7 @@ void horizontalMoveDone(OffblastUi *ui);
 void verticalMoveDone(OffblastUi *ui);
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
 void infoFaded(OffblastUi *ui);
+void rowNameFaded(OffblastUi *ui);
 uint32_t animationRunning(OffblastUi *ui);
 void animationTick(Animation *theAnimation, OffblastUi *ui);
 
@@ -672,6 +673,7 @@ int main (int argc, char** argv) {
     ui->horizontalAnimation = calloc(1, sizeof(Animation));
     ui->verticalAnimation = calloc(1, sizeof(Animation));
     ui->infoAnimation = calloc(1, sizeof(Animation));
+    ui->rowNameAnimation = calloc(1, sizeof(Animation));
 
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
@@ -1012,12 +1014,30 @@ int main (int argc, char** argv) {
             SDL_SetTextureAlphaMod(ui->titleTexture, change);
             SDL_SetTextureAlphaMod(ui->infoTexture, change);
             SDL_SetTextureAlphaMod(ui->descriptionTexture, change);
-            SDL_SetTextureAlphaMod(ui->rowNameTexture, change);
         }
         else {
             SDL_SetTextureAlphaMod(ui->titleTexture, 255);
             SDL_SetTextureAlphaMod(ui->infoTexture, 255);
             SDL_SetTextureAlphaMod(ui->descriptionTexture, 255);
+        }
+
+        if (ui->rowNameAnimation->animating == 1) {
+            uint8_t change = easeInOutCirc(
+                        (double)SDL_GetTicks() - ui->rowNameAnimation->startTick,
+                        1.0,
+                        255.0,
+                        (double)ui->rowNameAnimation->durationMs);
+
+            if (ui->rowNameAnimation->direction == 0) {
+                change = 256 - change;
+            }
+            else {
+                if (change == 0) change = 255;
+            }
+
+            SDL_SetTextureAlphaMod(ui->rowNameTexture, change);
+        }
+        else {
             SDL_SetTextureAlphaMod(ui->rowNameTexture, 255);
         }
 
@@ -1059,6 +1079,7 @@ int main (int argc, char** argv) {
         animationTick(ui->horizontalAnimation, ui);
         animationTick(ui->verticalAnimation, ui);
         animationTick(ui->infoAnimation, ui);
+        animationTick(ui->rowNameAnimation, ui);
 
 
         // DEBUG FPS INFO
@@ -1277,6 +1298,12 @@ void changeRow(
         ui->infoAnimation->animating = 1;
         ui->infoAnimation->callback = &infoFaded;
 
+        ui->rowNameAnimation->startTick = SDL_GetTicks();
+        ui->rowNameAnimation->direction = 0;
+        ui->rowNameAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
+        ui->rowNameAnimation->animating = 1;
+        ui->rowNameAnimation->callback = &rowNameFaded;
+
         if (direction == 0) {
             ui->movingToRow = ui->rowCursor->previousRow;
             ui->movingToTarget = 
@@ -1361,6 +1388,23 @@ void infoFaded(OffblastUi *ui) {
     }
     else {
         ui->infoAnimation->animating = 0;
+    }
+}
+
+void rowNameFaded(OffblastUi *ui) {
+    if (ui->rowNameAnimation->direction == 0) {
+
+        SDL_DestroyTexture(ui->rowNameTexture);
+        ui->rowNameTexture = NULL;
+
+        ui->rowNameAnimation->startTick = SDL_GetTicks();
+        ui->rowNameAnimation->direction = 1;
+        ui->rowNameAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
+        ui->rowNameAnimation->animating = 1;
+        ui->rowNameAnimation->callback = &rowNameFaded;
+    }
+    else {
+        ui->rowNameAnimation->animating = 0;
     }
 }
 
