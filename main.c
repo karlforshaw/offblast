@@ -8,7 +8,8 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
-// TODO Translation table for platforms
+// TODO LAUNCHING
+// TODO COVER ART
 // TODO GRADIENT LAYERS
 // TODO PLATFORM BADGES ON MIXED LISTS
 // TODO GRANDIA IS BEING DETECTED AS "D" DETECT BETTER!
@@ -106,6 +107,7 @@ void infoFaded(OffblastUi *ui);
 void rowNameFaded(OffblastUi *ui);
 uint32_t animationRunning(OffblastUi *ui);
 void animationTick(Animation *theAnimation, OffblastUi *ui);
+const char *platformString(char *key);
 
 void changeRow(
         OffblastUi *ui,
@@ -682,7 +684,7 @@ int main (int argc, char** argv) {
     // Init Ui
     // rows for now:
     // 1. Your Library
-    // 2. Essential Playstation
+    // 2. Essential *platform" 
     ui->rows = calloc(1 + nPlatforms, sizeof(UiRow));
     ui->numRows = 0;
     ui->rowCursor = ui->rows;
@@ -736,7 +738,8 @@ int main (int argc, char** argv) {
     // __ROWS__ Essentials per platform
     for (uint32_t iPlatform = 0; iPlatform < nPlatforms; iPlatform++) {
 
-        asprintf(&ui->rows[ui->numRows].name, "Essential %s", platforms[iPlatform]);
+        asprintf(&ui->rows[ui->numRows].name, "Essential %s", 
+                platformString(platforms[iPlatform]));
 
         uint32_t topRatedLength = 9;
         ui->rows[ui->numRows].length = topRatedLength;
@@ -939,7 +942,7 @@ int main (int argc, char** argv) {
             char *tempString;
             asprintf(&tempString, "%.4s  |  %s  |  %u%%", 
                     ui->movingToTarget->date, 
-                    ui->movingToTarget->platform,
+                    platformString(ui->movingToTarget->platform),
                     ui->movingToTarget->ranking);
 
             SDL_Surface *infoSurface = TTF_RenderText_Blended(
@@ -1436,4 +1439,93 @@ void animationTick(Animation *theAnimation, OffblastUi *ui) {
             theAnimation->animating = 0;
             theAnimation->callback(ui);
         }
+}
+
+const char *platformString(char *key) {
+    if (strcmp(key, "32x") == 0) {
+        return "Sega 32X";
+    }
+    else if (strcmp(key, "arcade") == 0) {
+        return "Arcade";
+    }
+    else if (strcmp(key, "atari_2600") == 0) {
+        return "Atari 2600";
+    }
+    else if (strcmp(key, "atari_5200") == 0) {
+        return "Atari 5200";
+    }
+    else if (strcmp(key, "atari_7800") == 0) {
+        return "Atari 7800";
+    }
+    else if (strcmp(key, "atari_8-bit_family") == 0) {
+        return "Atari 8-Bit Family";
+    }
+    else if (strcmp(key, "dreamcast") == 0) {
+        return "Sega Dreamcast";
+    }
+    else if (strcmp(key, "game_boy_advance") == 0) {
+        return "Game Boy Advance";
+    }
+    else if (strcmp(key, "game_boy_color") == 0) {
+        return "Game Boy Color";
+    }
+    else if (strcmp(key, "game_boy") == 0) {
+        return "Game Boy";
+    }
+    else if (strcmp(key, "gamecube") == 0) {
+        return "Gamecube";
+    }
+    else if (strcmp(key, "game_gear") == 0) {
+        return "Game Gear";
+    }
+    else if (strcmp(key, "master_system") == 0) {
+        return "Master System";
+    }
+    else if (strcmp(key, "mega_drive") == 0) {
+        return "Mega Drive";
+    }
+    else if (strcmp(key, "nintendo_64") == 0) {
+        return "Nintendo 64";
+    }
+    else if (strcmp(key, "nintendo_ds") == 0) {
+        return "Nintendo DS";
+    }
+    else if (strcmp(key, "nintendo_entertainment_system") == 0) {
+        return "NES";
+    }
+    else if (strcmp(key, "pc") == 0) {
+        return "PC";
+    }
+    else if (strcmp(key, "playstation_3") == 0) {
+        return "Playstation 3";
+    }
+    else if (strcmp(key, "playstation_2") == 0) {
+        return "Playstation 2";
+    }
+    else if (strcmp(key, "playstation") == 0) {
+        return "Playstation";
+    }
+    else if (strcmp(key, "playstation_portable") == 0) {
+        return "Playstation Portable";
+    }
+    else if (strcmp(key, "sega_cd") == 0) {
+        return "Sega CD";
+    }
+    else if (strcmp(key, "sega_saturn") == 0) {
+        return "Saturn";
+    }
+    else if (strcmp(key, "super_nintendo_entertainment_system") == 0) {
+        return "SNES";
+    }
+    else if (strcmp(key, "turbografx-16") == 0) {
+        return "TurboGrafx-16";
+    }
+    else if (strcmp(key, "wii") == 0) {
+        return "Wii";
+    }
+    else if (strcmp(key, "wii_u") == 0) {
+        return "Wii-U";
+    }
+
+    return "Unknown Platform";
 }
