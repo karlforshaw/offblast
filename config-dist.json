@@ -2,12 +2,12 @@
     "paths": [{
         "path": "/home/user/Games/sony_playstation/",
         "extension": ".7z",
-        "launcher": "psx",
+        "launcher": "cat %ROM%",
         "platform": "sony_playstation"
     },{
         "path": "/home/user/roms/psx",
         "extension": ".7z",
-        "launcher": "psx",
+        "launcher": "cat %ROM%",
         "platform": "sony_playstation"
     }],
     "users": [

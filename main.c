@@ -4,6 +4,7 @@
 #define COLS_ON_SCREEN 5
 #define COLS_TOTAL 10 
 #define ROWS_TOTAL 4
+#define MAX_LAUNCH_COMMAND_LENGTH 512
 #define MAX_PLATFORMS 50 
 
 #define NAVIGATION_MOVE_DURATION 250 
@@ -92,6 +93,11 @@ typedef struct OffblastUi {
         LaunchTarget *movingToTarget;
         UiRow *movingToRow;
 } OffblastUi;
+
+typedef struct Launcher {
+    char path[PATH_MAX];
+    char launcher[MAX_LAUNCH_COMMAND_LENGTH];
+} Launcher;
 
 
 uint32_t megabytes(uint32_t n);
@@ -253,16 +259,20 @@ int main (int argc, char** argv) {
     uint32_t nPlatforms = 0;
 
     size_t nPaths = json_object_array_length(paths);
+    Launcher *launchers = calloc(nPaths, sizeof(Launcher));
+
     for (int i=0; i<nPaths; i++) {
 
         json_object *workingPathNode = NULL;
         json_object *workingPathStringNode = NULL;
         json_object *workingPathExtensionNode = NULL;
         json_object *workingPathPlatformNode = NULL;
+        json_object *workingPathLauncherNode = NULL;
 
         const char *thePath = NULL;
         const char *theExtension = NULL;
         const char *thePlatform = NULL;
+        const char *theLauncher = NULL;
 
         workingPathNode = json_object_array_get_idx(paths, i);
         json_object_object_get_ex(workingPathNode, "path",
@@ -272,9 +282,16 @@ int main (int argc, char** argv) {
         json_object_object_get_ex(workingPathNode, "platform",
                 &workingPathPlatformNode);
 
+        json_object_object_get_ex(workingPathNode, "launcher",
+                &workingPathLauncherNode);
+
         thePath = json_object_get_string(workingPathStringNode);
         theExtension = json_object_get_string(workingPathExtensionNode);
         thePlatform = json_object_get_string(workingPathPlatformNode);
+
+        theLauncher = json_object_get_string(workingPathLauncherNode);
+        memcpy(&launchers[i].path, thePath, strlen(thePath));
+        memcpy(&launchers[i].launcher, theLauncher, strlen(theLauncher));
 
         printf("Running Path for %s: %s\n", theExtension, thePath);
 
@@ -811,6 +828,11 @@ int main (int argc, char** argv) {
                     printf("escape pressed, shutting down.\n");
                     running = 0;
                     break;
+                }
+                if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
+                    printf("enter pressed, launching. %s\n", 
+                            ui->rowCursor->tileCursor->target->name);
+                    //rowCursor->tileCursor->target->name;
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_DOWN ||
