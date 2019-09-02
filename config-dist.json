@@ -1,7 +1,4 @@
 {
-    "launchers": [{
-        "psx": "cat %ROM%"
-    }],
     "paths": [{
         "path": "/home/user/Games/sony_playstation/",
         "extension": ".7z",
