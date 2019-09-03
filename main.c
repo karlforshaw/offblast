@@ -9,14 +9,29 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
+// TODO COVER ART
+// -- this is where shit gets real. We need to use curl to start pulling down
+//      the cover art for our games - but we don't want to do it unless they 
+//      are actually appearing in our lists. because it would be fucking insane
+//      to do so with opengamedb listings that have like twenty thousand entries 
+//      in, so here's what i'm thinking.. We'll show a loading texture until
+//      we can load a texture for the cover art.. which means all this will
+//      start with the loading loop.. but first we need to make sure that 
+//      we have access to a url that we're gonna get the art from once we've got
+//      that we can add something to the render loop to check for the existence
+//      of a texture for the game. if it doesn't we can start a thread that 
+//      will try to load it from file, if we don't have it on file download
+//      it with curl and try and load it again.
+//      
+//      * make sure we're storing the cover url
+//      * check if tile texture exists in render loop
+//      * create a function that looks for cover file for game
+//      * create a function that will download the file on it's own thread
+//
 // TODO so many bugs
 //  * Invalid date format is a thing
-//  * if a rom file is empty then it's still added to the db but segfaults 
-//      with a font passed a null pointer error
 //  * if you add a rom after the platform has been scraped we say we already
 //      have it in the db but this is the target, not the filepath etc
-// TODO LAUNCHING
-// TODO COVER ART
 // TODO GRADIENT LAYERS
 // TODO PLATFORM BADGES ON MIXED LISTS
 // TODO GRANDIA IS BEING DETECTED AS "D" DETECT BETTER!
@@ -847,9 +862,7 @@ int main (int argc, char** argv) {
                     else {
 
                         char *romSlug;
-                        asprintf(&romSlug, "%s/%s", 
-                                (char*) &target->path, 
-                                (char*) &target->fileName);
+                        asprintf(&romSlug, "%s", (char*) &target->path);
 
                         char *launchString = calloc(PATH_MAX, sizeof(char));
                         
@@ -865,10 +878,12 @@ int main (int argc, char** argv) {
                         uint8_t replaceIter = 0, replaceLimit = 8;
                         while ((p = strstr(launchString, "%ROM%"))) {
                             memmove(
-                                    p + strlen(romSlug), 
+                                    p + strlen(romSlug) + 2, 
                                     p + 5,
                                     strlen(p+5));
-                            memcpy(p, romSlug, strlen(romSlug));;
+                            *p = '"';
+                            memcpy(p+1, romSlug, strlen(romSlug));
+                            *(p + 1 + strlen(romSlug)) = '"';
 
                             replaceIter++;
                             if (replaceIter >= replaceLimit) {
@@ -877,10 +892,9 @@ int main (int argc, char** argv) {
                             }
                         }
 
-                        printf("-- OFFBLAST! %s\n", launchString);
+                        system(launchString);
                         free(romSlug);
                         free(launchString);
-
                     }
 
                 }
