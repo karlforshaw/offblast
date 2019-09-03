@@ -750,8 +750,8 @@ int main (int argc, char** argv) {
                 j++;
             }
         }
-        ui->numRows++;
         ui->rows[ui->numRows].name = "Your Library";
+        ui->numRows++;
     }
     else { 
         printf("woah now looks like we have an empty library\n");
@@ -998,7 +998,7 @@ int main (int argc, char** argv) {
                     ui->titleFont, ui->movingToTarget->name, titleColor);
 
             if (!titleSurface) {
-                printf("Font render failed, %s\n", TTF_GetError());
+                printf("Title Font render failed, %s\n", TTF_GetError());
                 return 1;
             }
 
@@ -1022,7 +1022,7 @@ int main (int argc, char** argv) {
             free(tempString);
 
             if (!infoSurface) {
-                printf("Font render failed, %s\n", TTF_GetError());
+                printf("Info Font render failed, %s\n", TTF_GetError());
                 return 1;
             }
 
@@ -1046,7 +1046,7 @@ int main (int argc, char** argv) {
                     ui->descriptionWidth);
 
             if (!surface) {
-                printf("Font render failed, %s\n", TTF_GetError());
+                printf("Description Font render failed, %s\n", TTF_GetError());
                 return 1;
             }
 
@@ -1061,7 +1061,7 @@ int main (int argc, char** argv) {
                     ui->infoFont, ui->movingToRow->name, color);
 
             if (!surface) {
-                printf("Font render failed, %s\n", TTF_GetError());
+                printf("Row Name Font render failed, %s\n", TTF_GetError());
                 return 1;
             }
 
@@ -1171,7 +1171,7 @@ int main (int argc, char** argv) {
         free(fpsString);
 
         if (!fpsSurface) {
-            printf("Font render failed, %s\n", TTF_GetError());
+            printf("FPS Font render failed, %s\n", TTF_GetError());
             return 1;
         }
 
