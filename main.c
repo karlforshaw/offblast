@@ -9,6 +9,12 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
+// TODO so many bugs
+//  * Invalid date format is a thing
+//  * if a rom file is empty then it's still added to the db but segfaults 
+//      with a font passed a null pointer error
+//  * if you add a rom after the platform has been scraped we say we already
+//      have it in the db but this is the target, not the filepath etc
 // TODO LAUNCHING
 // TODO COVER ART
 // TODO GRADIENT LAYERS
@@ -830,9 +836,53 @@ int main (int argc, char** argv) {
                     break;
                 }
                 if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
-                    printf("enter pressed, launching. %s\n", 
-                            ui->rowCursor->tileCursor->target->name);
-                    //rowCursor->tileCursor->target->name;
+
+                    LaunchTarget *target = ui->rowCursor->tileCursor->target;
+
+                    if (strlen(target->path) == 0 || 
+                            strlen(target->fileName) == 0) 
+                    {
+                        printf("%s has no launch candidate\n", target->name);
+                    }
+                    else {
+
+                        char *romSlug;
+                        asprintf(&romSlug, "%s/%s", 
+                                (char*) &target->path, 
+                                (char*) &target->fileName);
+
+                        char *launchString = calloc(PATH_MAX, sizeof(char));
+                        
+                        for (uint32_t i = 0; i < nPaths; i++) {
+                            if (strcmp(target->path, launchers[i].path))
+                                memcpy( launchString, 
+                                        launchers[i].launcher, 
+                                        strlen(launchers[i].launcher));
+                        }
+                        assert(strlen(launchString));
+
+                        char *p;
+                        uint8_t replaceIter = 0, replaceLimit = 8;
+                        while ((p = strstr(launchString, "%ROM%"))) {
+                            memmove(
+                                    p + strlen(romSlug), 
+                                    p + 5,
+                                    strlen(p+5));
+                            memcpy(p, romSlug, strlen(romSlug));;
+
+                            replaceIter++;
+                            if (replaceIter >= replaceLimit) {
+                                printf("rom replace iterations exceeded, breaking\n");
+                                break;
+                            }
+                        }
+
+                        printf("-- OFFBLAST! %s\n", launchString);
+                        free(romSlug);
+                        free(launchString);
+
+                    }
+
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_DOWN ||
