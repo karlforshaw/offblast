@@ -29,6 +29,7 @@
 //      * create a function that will download the file on it's own thread
 //
 // TODO so many bugs
+//  * Returning to offblast on i3 results in the window not being full screen
 //  * Invalid date format is a thing
 //  * if you add a rom after the platform has been scraped we say we already
 //      have it in the db but this is the target, not the filepath etc
@@ -57,6 +58,7 @@
 
 typedef struct UiTile{
     struct LaunchTarget *target;
+    SDL_Texture *texture;
     struct UiTile *next; 
     struct UiTile *previous; 
 } UiTile;
@@ -387,6 +389,7 @@ int main (int argc, char** argv) {
                         char *scoreString = getCsvField(csvLine, 3);
                         char *metaScoreString = getCsvField(csvLine, 4);
                         char *description = getCsvField(csvLine, 6);
+                        char *coverArtUrl = getCsvField(csvLine, 7);
 
                         printf("\n%s\n%u\n%s\n%s\ng: %s\n\nm: %s\n", 
                                 gameSeed, 
@@ -408,6 +411,10 @@ int main (int argc, char** argv) {
                         memcpy(&newEntry->platform, 
                                 thePlatform,
                                 strlen(thePlatform));
+
+                        memcpy(&newEntry->coverUrl, 
+                                coverArtUrl,
+                                strlen(coverArtUrl));
 
                         // TODO harden
                         if (strlen(gameDate) != 10) {
@@ -458,6 +465,7 @@ int main (int argc, char** argv) {
                         free(scoreString);
                         free(metaScoreString);
                         free(description);
+                        free(coverArtUrl);
 
                     }
                     else {
@@ -1258,7 +1266,10 @@ char *getCsvField(char *line, int fieldNo)
             if (*cursor == '"') {
                 inQuotes++;
             }
-            else if (*cursor == ',' && !(inQuotes & 1)) {
+            else if ((*cursor == ',' && !(inQuotes & 1)) ||
+                    *cursor == '\n' || 
+                    *cursor == '\0') 
+            {
                 fieldEnd = cursor - 1;
                 cursor++;
                 break;

@@ -35,7 +35,7 @@ typedef struct LaunchTarget {
     char path[PATH_MAX];
     char platform[256];
 
-    char coverPath[PATH_MAX];
+    char coverUrl[PATH_MAX];
     off_t descriptionOffset;
 } LaunchTarget;
 
