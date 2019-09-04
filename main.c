@@ -593,24 +593,28 @@ int main (int argc, char** argv) {
                     printf("cannot open from rom\n");
                 }
 
-                if (!fread(romData, ROM_PEEK_SIZE, 1, romFd)) {
-                    printf("cannot read from rom\n");
+                for (uint32_t i = 0; i < ROM_PEEK_SIZE; i++) {
+                    if (!fread(romData + i, sizeof(char), 1, romFd)) {
+                        if (i == 0) {
+                            printf("cannot read from rom %s\n",
+                                    romPathTrimmed);
+                            continue;
+                        }
+                    }
                 }
-                else {
-                    lmmh_x86_32(romData, ROM_PEEK_SIZE, 33, &romSignature);
-                    memset(romData, 0x0, ROM_PEEK_SIZE);
-                    printf("signature is %u\n", romSignature);
-                }
+
+                lmmh_x86_32(romData, ROM_PEEK_SIZE, 33, &romSignature);
+                memset(romData, 0x0, ROM_PEEK_SIZE);
+                printf("signature is %u\n", romSignature);
 
                 memset(romData, 0x0, ROM_PEEK_SIZE);
                 fclose(romFd);
 
-                // Now we have the signature we can add it to our DB
                 int32_t indexOfEntry = launchTargetIndexByRomSignature(
                         launchTargetFile, romSignature);
 
                 if (indexOfEntry > -1) {
-                    printf("this target is already in the db\n");
+                    printf("target is already in the db\n");
                 }
                 else {
 
