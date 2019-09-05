@@ -7,7 +7,7 @@
 #define MAX_LAUNCH_COMMAND_LENGTH 512
 #define MAX_PLATFORMS 50 
 
-#define LOAD_STATE_LOADING 0
+#define LOAD_STATE_UNKNOWN 0
 #define LOAD_STATE_DOWNLOADING 1
 #define LOAD_STATE_DOWNLOADED 2
 #define LOAD_STATE_LOADED 3
@@ -159,7 +159,8 @@ void *downloadCover(void *arg) {
         char *url = (char *) 
             tileToRender->target->coverUrl;
 
-        printf("Downloading %s\n", url);
+        printf("Downloading Art for %s\n", 
+                tileToRender->target->name);
 
         curl_easy_setopt(curl, CURLOPT_URL, url);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, fd);
@@ -1042,7 +1043,7 @@ int main (int argc, char** argv) {
                         tileToRender->target->coverUrl != NULL) 
                 {
                     if (tileToRender->loadState != LOAD_STATE_LOADED) {
-                        // TODO how many texures can we load this frame?
+
                         char *coverArtPath;
                         asprintf(&coverArtPath, "%u.jpg",
                                 tileToRender->target->targetSignature); 
@@ -1050,19 +1051,25 @@ int main (int argc, char** argv) {
                         SDL_Surface *image = IMG_Load(coverArtPath);
                         free(coverArtPath);
 
-                        if(!image) {
-                            tileToRender->loadState = LOAD_STATE_DOWNLOADING;
-
-                            pthread_t theThread;
-                            pthread_create(
-                                    &theThread, 
-                                    NULL, 
-                                    downloadCover, 
-                                    (void*)tileToRender);
+                        if (tileToRender->loadState == LOAD_STATE_UNKNOWN) {
+                            
+                            if(!image) {
+                                tileToRender->loadState = 
+                                    LOAD_STATE_DOWNLOADING;
+                                pthread_t theThread;
+                                pthread_create(
+                                        &theThread, 
+                                        NULL, 
+                                        downloadCover, 
+                                        (void*)tileToRender);
+                            }
+                            else {
+                                tileToRender->loadState = 
+                                    LOAD_STATE_DOWNLOADED;
+                            }
                         }
-                        else if (tileToRender->loadState == 
-                                LOAD_STATE_DOWNLOADED) 
-                        {
+                        
+                        if (tileToRender->loadState == LOAD_STATE_DOWNLOADED) {
                             tileToRender->texture = 
                                 SDL_CreateTextureFromSurface(ui->renderer, 
                                         image);
