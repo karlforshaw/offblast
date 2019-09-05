@@ -7,14 +7,14 @@
 #define MAX_LAUNCH_COMMAND_LENGTH 512
 #define MAX_PLATFORMS 50 
 
-#define LOAD_STATE_LOADED 2
-#define LOAD_STATE_DOWNLOADING 1
 #define LOAD_STATE_LOADING 0
+#define LOAD_STATE_DOWNLOADING 1
+#define LOAD_STATE_DOWNLOADED 2
+#define LOAD_STATE_LOADED 3
 
 #define NAVIGATION_MOVE_DURATION 250 
 
 // TODO COVER ART
-//      * download images on a separate thread
 //      * images need to be put in the .offblast directory
 //      * only jpg is supported, we can use imagemagick to convert on download?
 //      * a loading animation 
@@ -45,6 +45,7 @@
 #include <murmurhash.h>
 #include <curl/curl.h>
 #include <math.h>
+#include <pthread.h>
 
 #include "offblast.h"
 #include "offblastDbFile.h"
@@ -131,6 +132,53 @@ void rowNameFaded(OffblastUi *ui);
 uint32_t animationRunning(OffblastUi *ui);
 void animationTick(Animation *theAnimation, OffblastUi *ui);
 const char *platformString(char *key);
+void *downloadCover(void *arg);
+
+void *downloadCover(void *arg) {
+    UiTile *tileToRender = (UiTile*)arg;
+
+    char *coverArtPath;
+    asprintf(&coverArtPath, "%u.jpg",
+            tileToRender->target->targetSignature); 
+
+    FILE *fd = fopen(coverArtPath, "wb");
+    if (!fd) {
+        printf("Can't open file for write\n");
+    }
+    else {
+
+        curl_global_init(CURL_GLOBAL_DEFAULT);
+        CURL *curl = curl_easy_init();
+        if (!curl) {
+            printf("CURL init fail.\n");
+            return NULL;
+        }
+        //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+        curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+        char *url = (char *) 
+            tileToRender->target->coverUrl;
+
+        printf("Downloading %s\n", url);
+
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fd);
+
+        uint32_t res = curl_easy_perform(curl);
+
+        if (res != CURLE_OK) {
+            printf("%s\n", curl_easy_strerror(res));
+        }
+
+        curl_easy_cleanup(curl);
+        fclose(fd);
+
+        tileToRender->loadState = LOAD_STATE_DOWNLOADED;
+    }
+
+    free(coverArtPath);
+    return NULL;
+}
 
 void changeRow(
         OffblastUi *ui,
@@ -169,14 +217,6 @@ int main (int argc, char** argv) {
         }
     }
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    CURL *curl = curl_easy_init();
-    if (!curl) {
-        printf("couldn't init curl\n");
-        return 1;
-    }
-    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
     char *configFilePath;
     asprintf(&configFilePath, "%s/config.json", configPath);
@@ -1008,44 +1048,27 @@ int main (int argc, char** argv) {
                                 tileToRender->target->targetSignature); 
 
                         SDL_Surface *image = IMG_Load(coverArtPath);
+                        free(coverArtPath);
 
                         if(!image) {
-
                             tileToRender->loadState = LOAD_STATE_DOWNLOADING;
 
-                            // TODO thread this!
-                            FILE *fd = fopen(coverArtPath, "wb");
-                            if (!fd) {
-                                printf("Can't open file for write\n");
-                            }
-                            else {
-
-                                char *url = (char *) 
-                                    tileToRender->target->coverUrl;
-
-                                printf("Downloading %s\n", url);
-
-                                curl_easy_setopt(curl, CURLOPT_URL, url);
-                                curl_easy_setopt(curl, CURLOPT_WRITEDATA, fd);
-
-                                uint32_t res = curl_easy_perform(curl);
-
-                                if (res != CURLE_OK) {
-                                    printf("%s\n", curl_easy_strerror(res));
-                                }
-
-                                fclose(fd);
-                            }
-
+                            pthread_t theThread;
+                            pthread_create(
+                                    &theThread, 
+                                    NULL, 
+                                    downloadCover, 
+                                    (void*)tileToRender);
                         }
-                        else {
+                        else if (tileToRender->loadState == 
+                                LOAD_STATE_DOWNLOADED) 
+                        {
                             tileToRender->texture = 
                                 SDL_CreateTextureFromSurface(ui->renderer, 
                                         image);
 
                             tileToRender->loadState = LOAD_STATE_LOADED;
                         }
-                        free(coverArtPath);
 
                     }
 
