@@ -1037,9 +1037,13 @@ int main (int argc, char** argv) {
                     SDL_RenderFillRect(ui->renderer, &theRect);
                 }
                 else {
-                    // TODO we want to stretch but in the right aspect ratio, 
-                    // so I think we have to query the texture first don't we?
-                    SDL_Rect srcRect = {0,0, 100,100};
+                    SDL_Rect srcRect = {};
+                    SDL_QueryTexture(tileToRender->texture, NULL, NULL, 
+                            &srcRect.w, &srcRect.h);
+
+                    // clip the height for the aspect ratio
+                    srcRect.h = srcRect.w / 7 * 5;
+
                     SDL_RenderCopy(ui->renderer, tileToRender->texture, 
                             &srcRect, &theRect);
                 }
