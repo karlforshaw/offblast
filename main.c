@@ -7,32 +7,23 @@
 #define MAX_LAUNCH_COMMAND_LENGTH 512
 #define MAX_PLATFORMS 50 
 
+#define LOAD_STATE_LOADED 2
+#define LOAD_STATE_DOWNLOADING 1
+#define LOAD_STATE_LOADING 0
+
 #define NAVIGATION_MOVE_DURATION 250 
 
 // TODO COVER ART
-// -- this is where shit gets real. We need to use curl to start pulling down
-//      the cover art for our games - but we don't want to do it unless they 
-//      are actually appearing in our lists. because it would be fucking insane
-//      to do so with opengamedb listings that have like twenty thousand entries 
-//      in, so here's what i'm thinking.. We'll show a loading texture until
-//      we can load a texture for the cover art.. which means all this will
-//      start with the loading loop.. but first we need to make sure that 
-//      we have access to a url that we're gonna get the art from once we've got
-//      that we can add something to the render loop to check for the existence
-//      of a texture for the game. if it doesn't we can start a thread that 
-//      will try to load it from file, if we don't have it on file download
-//      it with curl and try and load it again.
-//      
-//      * make sure we're storing the cover url
-//      * check if tile texture exists in render loop
-//      * create a function that looks for cover file for game
-//      * create a function that will download the file on it's own thread
+//      * only jpg is supported, we can use imagemagick to convert on download?
+//      * download images on a separate thread
+//      * a loading animation 
 //
 // TODO so many bugs
 //  * Returning to offblast on i3 results in the window not being full screen
 //  * Invalid date format is a thing
 //  * if you add a rom after the platform has been scraped we say we already
 //      have it in the db but this is the target, not the filepath etc
+//
 // TODO GRADIENT LAYERS
 // TODO PLATFORM BADGES ON MIXED LISTS
 // TODO GRANDIA IS BEING DETECTED AS "D" DETECT BETTER!
@@ -48,6 +39,7 @@
 #include <errno.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#include <SDL2/SDL_image.h>
 #include <json-c/json.h>
 #include <murmurhash.h>
 #include <curl/curl.h>
@@ -59,6 +51,7 @@
 typedef struct UiTile{
     struct LaunchTarget *target;
     SDL_Texture *texture;
+    uint8_t loadState;
     struct UiTile *next; 
     struct UiTile *previous; 
 } UiTile;
@@ -175,13 +168,17 @@ int main (int argc, char** argv) {
         }
     }
 
-/*
+    curl_global_init(CURL_GLOBAL_DEFAULT);
     CURL *curl = curl_easy_init();
     if (!curl) {
         printf("couldn't init curl\n");
         return 1;
     }
-*/
+    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+    //curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    //curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    //curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
     char *configFilePath;
     asprintf(&configFilePath, "%s/config.json", configPath);
@@ -955,14 +952,14 @@ int main (int argc, char** argv) {
             uint8_t shade = 255;
             SDL_SetRenderDrawColor(ui->renderer, shade, shade, shade, 0x66);
 
-            SDL_Rect rowRects[COLS_TOTAL];
-
             UiTile *tileToRender = 
                 rewindTiles(rowToRender->tileCursor, 2);
 
             for (int32_t iTile = -2; iTile < COLS_TOTAL; iTile++) {
 
-                rowRects[iTile].x = 
+                SDL_Rect theRect = {};
+
+                theRect.x = 
                     ui->winMargin + iTile * (ui->boxWidth + ui->boxPad);
 
                 if (ui->horizontalAnimation->animating != 0 && iRow == 0) 
@@ -977,11 +974,11 @@ int main (int argc, char** argv) {
                         change = -change;
                     }
 
-                    rowRects[iTile].x += change;
+                    theRect.x += change;
 
                 }
 
-                rowRects[iTile].y = 
+                theRect.y = 
                     ui->winFold + (iRow * (ui->boxHeight + ui->boxPad));
 
                 if (ui->verticalAnimation->animating != 0) 
@@ -996,13 +993,72 @@ int main (int argc, char** argv) {
                         change = -change;
                     }
 
-                    rowRects[iTile].y += change;
+                    theRect.y += change;
 
                 }
 
-                rowRects[iTile].w = ui->boxWidth;
-                rowRects[iTile].h = ui->boxHeight;
-                SDL_RenderFillRect(ui->renderer, &rowRects[iTile]);
+                theRect.w = ui->boxWidth;
+                theRect.h = ui->boxHeight;
+
+                if (tileToRender->texture == NULL &&
+                        tileToRender->target->coverUrl != NULL) 
+                {
+                    if (tileToRender->loadState != LOAD_STATE_LOADED) {
+                        // TODO how many texures can we load this frame?
+                        char *coverArtPath;
+                        asprintf(&coverArtPath, "%u.jpg",
+                                tileToRender->target->targetSignature); 
+
+                        SDL_Surface *image = IMG_Load(coverArtPath);
+
+                        if(!image) {
+                            printf("IMG_Load: %s\n", IMG_GetError());
+                            tileToRender->loadState = LOAD_STATE_DOWNLOADING;
+
+                            // TODO thread this!
+                            FILE *fd = fopen(coverArtPath, "wb");
+                            if (!fd) {
+                                printf("Can't open file for write\n");
+                            }
+                            else {
+
+                                char *url = (char *) 
+                                    tileToRender->target->coverUrl;
+
+                                printf("trying to download %s\n", url);
+
+                                curl_easy_setopt(curl, CURLOPT_URL, url);
+                                curl_easy_setopt(curl, CURLOPT_WRITEDATA, fd);
+
+                                uint32_t res = curl_easy_perform(curl);
+
+                                if (res != CURLE_OK) {
+                                    printf("%s\n", curl_easy_strerror(res));
+                                }
+                                else {
+                                    printf("DOWNLOADED\n");
+                                }
+
+                                fclose(fd);
+                            }
+                            tileToRender->loadState = LOAD_STATE_LOADED;
+                        }
+                        else {
+                            tileToRender->texture = 
+                                SDL_CreateTextureFromSurface(ui->renderer, 
+                                        image);
+                        }
+                        free(coverArtPath);
+
+                    }
+
+                    SDL_RenderFillRect(ui->renderer, &theRect);
+                }
+                else {
+                    SDL_RenderCopy(ui->renderer, tileToRender->texture, NULL, 
+                            &theRect);
+                }
+
                 tileToRender = tileToRender->next;
             }
 
@@ -1267,6 +1323,7 @@ char *getCsvField(char *line, int fieldNo)
                 inQuotes++;
             }
             else if ((*cursor == ',' && !(inQuotes & 1)) ||
+                    *cursor == '\r' || 
                     *cursor == '\n' || 
                     *cursor == '\0') 
             {
