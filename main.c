@@ -15,6 +15,7 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // TODO COVER ART
+//      * stop stretching the texture
 //      * only jpg is supported, we can use imagemagick to convert on download?
 //      * a loading animation 
 //
@@ -133,62 +134,6 @@ void animationTick(Animation *theAnimation, OffblastUi *ui);
 const char *platformString(char *key);
 void *downloadCover(void *arg);
 char *getCoverPath();
-
-char *getCoverPath(uint32_t signature) {
-
-    char *homePath = getenv("HOME");
-    assert(homePath);
-
-    char *coverArtPath;
-    asprintf(&coverArtPath, "%s/.offblast/covers/%u.jpg", homePath, signature); 
-
-    return coverArtPath;
-}
-
-void *downloadCover(void *arg) {
-
-    UiTile* tileToRender = (UiTile *)arg;
-    char *coverArtPath = getCoverPath(tileToRender->target->targetSignature); 
-    FILE *fd = fopen(coverArtPath, "wb");
-    free(coverArtPath);
-
-    if (!fd) {
-        printf("Can't open file for write\n");
-    }
-    else {
-
-        curl_global_init(CURL_GLOBAL_DEFAULT);
-        CURL *curl = curl_easy_init();
-        if (!curl) {
-            printf("CURL init fail.\n");
-            return NULL;
-        }
-        //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-        curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
-
-        char *url = (char *) 
-            tileToRender->target->coverUrl;
-
-        printf("Downloading Art for %s\n", 
-                tileToRender->target->name);
-
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fd);
-
-        uint32_t res = curl_easy_perform(curl);
-
-        if (res != CURLE_OK) {
-            printf("%s\n", curl_easy_strerror(res));
-        }
-
-        curl_easy_cleanup(curl);
-        fclose(fd);
-
-        tileToRender->loadState = LOAD_STATE_DOWNLOADED;
-    }
-
-    return NULL;
-}
 
 void changeRow(
         OffblastUi *ui,
@@ -1092,7 +1037,9 @@ int main (int argc, char** argv) {
                     SDL_RenderFillRect(ui->renderer, &theRect);
                 }
                 else {
-                    SDL_RenderCopy(ui->renderer, tileToRender->texture, NULL, 
+                    // TODO we want to stretch but in the right aspect ratio, so I think we have to query the texture first don't we?
+                    SDL_Rect srcRect = {0,0, 100,100};
+                    SDL_RenderCopy(ui->renderer, tileToRender->texture, &srcRect, 
                             &theRect);
                 }
 
@@ -1724,3 +1671,62 @@ const char *platformString(char *key) {
 
     return "Unknown Platform";
 }
+
+
+char *getCoverPath(uint32_t signature) {
+
+    char *homePath = getenv("HOME");
+    assert(homePath);
+
+    char *coverArtPath;
+    asprintf(&coverArtPath, "%s/.offblast/covers/%u.jpg", homePath, signature); 
+
+    return coverArtPath;
+}
+
+
+void *downloadCover(void *arg) {
+
+    UiTile* tileToRender = (UiTile *)arg;
+    char *coverArtPath = getCoverPath(tileToRender->target->targetSignature); 
+    FILE *fd = fopen(coverArtPath, "wb");
+    free(coverArtPath);
+
+    if (!fd) {
+        printf("Can't open file for write\n");
+    }
+    else {
+
+        curl_global_init(CURL_GLOBAL_DEFAULT);
+        CURL *curl = curl_easy_init();
+        if (!curl) {
+            printf("CURL init fail.\n");
+            return NULL;
+        }
+        //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+        curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+        char *url = (char *) 
+            tileToRender->target->coverUrl;
+
+        printf("Downloading Art for %s\n", 
+                tileToRender->target->name);
+
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fd);
+
+        uint32_t res = curl_easy_perform(curl);
+
+        if (res != CURLE_OK) {
+            printf("%s\n", curl_easy_strerror(res));
+        }
+
+        curl_easy_cleanup(curl);
+        fclose(fd);
+
+        tileToRender->loadState = LOAD_STATE_DOWNLOADED;
+    }
+
+    return NULL;
+}
+
