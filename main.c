@@ -1037,10 +1037,11 @@ int main (int argc, char** argv) {
                     SDL_RenderFillRect(ui->renderer, &theRect);
                 }
                 else {
-                    // TODO we want to stretch but in the right aspect ratio, so I think we have to query the texture first don't we?
+                    // TODO we want to stretch but in the right aspect ratio, 
+                    // so I think we have to query the texture first don't we?
                     SDL_Rect srcRect = {0,0, 100,100};
-                    SDL_RenderCopy(ui->renderer, tileToRender->texture, &srcRect, 
-                            &theRect);
+                    SDL_RenderCopy(ui->renderer, tileToRender->texture, 
+                            &srcRect, &theRect);
                 }
 
                 tileToRender = tileToRender->next;
@@ -1345,8 +1346,10 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
         ui->winFold = newHeight * 0.5;
         ui->winMargin = goldenRatioLarge((double) newWidth, 5);
 
-        ui->boxWidth = newWidth / COLS_ON_SCREEN;
+        // 7:5
         ui->boxHeight = goldenRatioLarge(ui->winWidth, 4);
+        ui->boxWidth = ui->boxHeight/5 * 7;
+
         ui->boxPad = goldenRatioLarge((double) ui->winWidth, 9);
 
         ui->descriptionWidth = 
