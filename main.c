@@ -14,8 +14,9 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // TODO COVER ART
-//      * only jpg is supported, we can use imagemagick to convert on download?
 //      * download images on a separate thread
+//      * images need to be put in the .offblast directory
+//      * only jpg is supported, we can use imagemagick to convert on download?
 //      * a loading animation 
 //
 // TODO so many bugs
@@ -174,11 +175,8 @@ int main (int argc, char** argv) {
         printf("couldn't init curl\n");
         return 1;
     }
-    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
-    //curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    //curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    //curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
     char *configFilePath;
     asprintf(&configFilePath, "%s/config.json", configPath);
@@ -1012,7 +1010,7 @@ int main (int argc, char** argv) {
                         SDL_Surface *image = IMG_Load(coverArtPath);
 
                         if(!image) {
-                            printf("IMG_Load: %s\n", IMG_GetError());
+
                             tileToRender->loadState = LOAD_STATE_DOWNLOADING;
 
                             // TODO thread this!
@@ -1025,7 +1023,7 @@ int main (int argc, char** argv) {
                                 char *url = (char *) 
                                     tileToRender->target->coverUrl;
 
-                                printf("trying to download %s\n", url);
+                                printf("Downloading %s\n", url);
 
                                 curl_easy_setopt(curl, CURLOPT_URL, url);
                                 curl_easy_setopt(curl, CURLOPT_WRITEDATA, fd);
@@ -1035,18 +1033,17 @@ int main (int argc, char** argv) {
                                 if (res != CURLE_OK) {
                                     printf("%s\n", curl_easy_strerror(res));
                                 }
-                                else {
-                                    printf("DOWNLOADED\n");
-                                }
 
                                 fclose(fd);
                             }
-                            tileToRender->loadState = LOAD_STATE_LOADED;
+
                         }
                         else {
                             tileToRender->texture = 
                                 SDL_CreateTextureFromSurface(ui->renderer, 
                                         image);
+
+                            tileToRender->loadState = LOAD_STATE_LOADED;
                         }
                         free(coverArtPath);
 
