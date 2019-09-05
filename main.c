@@ -15,7 +15,6 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // TODO COVER ART
-//      * images need to be put in the .offblast directory
 //      * only jpg is supported, we can use imagemagick to convert on download?
 //      * a loading animation 
 //
@@ -133,15 +132,26 @@ uint32_t animationRunning(OffblastUi *ui);
 void animationTick(Animation *theAnimation, OffblastUi *ui);
 const char *platformString(char *key);
 void *downloadCover(void *arg);
+char *getCoverPath();
 
-void *downloadCover(void *arg) {
-    UiTile *tileToRender = (UiTile*)arg;
+char *getCoverPath(uint32_t signature) {
+
+    char *homePath = getenv("HOME");
+    assert(homePath);
 
     char *coverArtPath;
-    asprintf(&coverArtPath, "%u.jpg",
-            tileToRender->target->targetSignature); 
+    asprintf(&coverArtPath, "%s/.offblast/covers/%u.jpg", homePath, signature); 
 
+    return coverArtPath;
+}
+
+void *downloadCover(void *arg) {
+
+    UiTile* tileToRender = (UiTile *)arg;
+    char *coverArtPath = getCoverPath(tileToRender->target->targetSignature); 
     FILE *fd = fopen(coverArtPath, "wb");
+    free(coverArtPath);
+
     if (!fd) {
         printf("Can't open file for write\n");
     }
@@ -177,7 +187,6 @@ void *downloadCover(void *arg) {
         tileToRender->loadState = LOAD_STATE_DOWNLOADED;
     }
 
-    free(coverArtPath);
     return NULL;
 }
 
@@ -200,12 +209,15 @@ int main (int argc, char** argv) {
     char *configPath;
     asprintf(&configPath, "%s/.offblast", homePath);
 
+    char *coverPath;
+    asprintf(&coverPath, "%s/covers/", configPath);
+
     int madeConfigDir;
     madeConfigDir = mkdir(configPath, S_IRWXU);
+    madeConfigDir = mkdir(coverPath, S_IRWXU);
     
     if (madeConfigDir == 0) {
         printf("Created offblast directory\n");
-        // TODO create a config file too
     }
     else {
         switch (errno) {
@@ -1044,10 +1056,8 @@ int main (int argc, char** argv) {
                 {
                     if (tileToRender->loadState != LOAD_STATE_LOADED) {
 
-                        char *coverArtPath;
-                        asprintf(&coverArtPath, "%u.jpg",
-                                tileToRender->target->targetSignature); 
-
+                        char *coverArtPath =
+                            getCoverPath(tileToRender->target->targetSignature); 
                         SDL_Surface *image = IMG_Load(coverArtPath);
                         free(coverArtPath);
 
