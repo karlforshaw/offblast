@@ -49,6 +49,9 @@
 #include <curl/curl.h>
 #include <math.h>
 #include <pthread.h>
+        
+#define GL3_PROTOTYPES 1
+#include <GL/glew.h>
 
 #include "offblast.h"
 #include "offblastDbFile.h"
@@ -699,12 +702,18 @@ int main (int argc, char** argv) {
     }
 
     // Let's create the window
+    //SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, 
+            //SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+
     SDL_Window* window = SDL_CreateWindow("OffBlast", 
             SDL_WINDOWPOS_UNDEFINED, 
             SDL_WINDOWPOS_UNDEFINED,
             640,
             480,
-            SDL_WINDOW_FULLSCREEN_DESKTOP | 
+            SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP | 
                 SDL_WINDOW_ALLOW_HIGHDPI);
 
     if (window == NULL) {
@@ -712,16 +721,76 @@ int main (int argc, char** argv) {
         return 1;
     }
 
+    SDL_GLContext glContext = SDL_GL_CreateContext(window);
+    glewInit();
+
     OffblastUi *ui = calloc(1, sizeof(OffblastUi));
     needsReRender(window, ui);
 
-    ui->renderer = SDL_CreateRenderer(window, -1, 
-            SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    // TODO remove
+    //ui->renderer = SDL_CreateRenderer(window, -1, 
+     //       SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
     ui->horizontalAnimation = calloc(1, sizeof(Animation));
     ui->verticalAnimation = calloc(1, sizeof(Animation));
     ui->infoAnimation = calloc(1, sizeof(Animation));
     ui->rowNameAnimation = calloc(1, sizeof(Animation));
+
+    // Create the vertex data and buffers for each layer
+    // FPS INFO 
+    const float fpsVertexPositions[] = {
+        0.75f, 0.75f, 0.0f, 1.0f,
+        0.75f, -0.75f, 0.0f, 1.0f,
+        -0.75f, -0.75f, 0.0f, 1.0f
+    };
+
+    GLuint fpsVertexBufferObject;
+    glGenBuffers(1, &fpsVertexBufferObject);
+    glBindBuffer(GL_ARRAY_BUFFER, fpsVertexBufferObject);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(fpsVertexPositions), 
+            fpsVertexPositions, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    const char *vertexShaderStr = 
+        "#version 330\n"
+        "layout(location = 0) in vec4 position;\n"
+        "void main()\n"
+        "{\n"
+        "   gl_Position = position;\n"
+        "}\n";
+
+    const char *fragmentShaderStr = 
+        "#version 330\n"
+        "out vec4 outputColor;\n"
+        "void main()\n"
+        "{\n"
+        "   outputColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);\n"
+        "}\n";
+
+    GLint compStatus = GL_FALSE; 
+    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertexShaderStr, NULL);
+    glCompileShader(vertexShader);
+    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &compStatus);
+    printf("Vertex Shader Compilation: %d\n", compStatus);
+    assert(compStatus);
+
+    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragmentShaderStr, NULL);
+    glCompileShader(fragmentShader);
+    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &compStatus);
+    printf("Fragment Shader Compilation: %d\n", compStatus);
+    assert(compStatus);
+
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertexShader);
+    glAttachShader(program, fragmentShader);
+    glLinkProgram(program);
+
+    GLint programStatus;
+    glGetProgramiv(program, GL_LINK_STATUS, &programStatus);
+    printf("GL Program Status: %d\n", programStatus);
+    assert(programStatus);
 
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
@@ -937,12 +1006,28 @@ int main (int argc, char** argv) {
 
         }
 
-        SDL_SetRenderDrawColor(ui->renderer, 0x03, 0x03, 0x03, 0xFF);
-        SDL_RenderClear(ui->renderer);
-        
+        // XXX SDL RENDER
+        //SDL_SetRenderDrawColor(ui->renderer, 0x03, 0x03, 0x03, 0xFF);
+        //SDL_RenderClear(ui->renderer);
+        glClearColor(1.0, 0.0, 0.0, 1.0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(program);
+
+        // XXX KARL
+        // gonna print the fps layer here
+        glBindBuffer(GL_ARRAY_BUFFER, fpsVertexBufferObject);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        glDisableVertexAttribArray(0);
+        glUseProgram(0);
+
+        SDL_GL_SwapWindow(window);
 
 
         // Blocks
+#if 0
         SDL_SetRenderDrawColor(ui->renderer, 0xFF, 0xFF, 0xFF, 0x66);
         UiRow *rowToRender = ui->rowCursor->previousRow;
 
@@ -1230,7 +1315,6 @@ int main (int argc, char** argv) {
         animationTick(ui->infoAnimation, ui);
         animationTick(ui->rowNameAnimation, ui);
 
-
         // DEBUG FPS INFO
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
@@ -1260,11 +1344,15 @@ int main (int argc, char** argv) {
             0, 0};
 
         SDL_QueryTexture(fpsTexture, NULL, NULL, &fpsRect.w, &fpsRect.h);
-        SDL_RenderCopy(ui->renderer, fpsTexture, NULL, &fpsRect);
+
+        //SDL_RenderCopy(ui->renderer, fpsTexture, NULL, &fpsRect);
+        //
         SDL_DestroyTexture(fpsTexture);
+#endif
 
 
-        SDL_RenderPresent(ui->renderer);
+        //SDL_RenderPresent(ui->renderer);
+        SDL_GL_SwapWindow(window);
 
         if (SDL_GetTicks() - lastTick < renderFrequency) {
             SDL_Delay(renderFrequency - (SDL_GetTicks() - lastTick));
@@ -1273,6 +1361,7 @@ int main (int argc, char** argv) {
         lastTick = SDL_GetTicks();
     }
 
+    SDL_GL_DeleteContext(glContext);
     SDL_DestroyWindow(window);
     SDL_Quit();
 
