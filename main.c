@@ -741,15 +741,23 @@ int main (int argc, char** argv) {
     const float fpsVertexPositions[] = {
         0.75f, 0.75f, 0.0f, 1.0f,
         0.75f, -0.75f, 0.0f, 1.0f,
-        -0.75f, -0.75f, 0.0f, 1.0f
+        -0.75f, -0.75f, 0.0f, 1.0f,
+        -0.75f, -0.75f, 0.0f, 1.0f,
+        -0.75f, 0.75f, 0.0f, 1.0f,
+        0.75f, 0.75f, 0.0f, 1.0f,
     };
 
     GLuint fpsVertexBufferObject;
+    GLuint vao;
+
     glGenBuffers(1, &fpsVertexBufferObject);
     glBindBuffer(GL_ARRAY_BUFFER, fpsVertexBufferObject);
     glBufferData(GL_ARRAY_BUFFER, sizeof(fpsVertexPositions), 
             fpsVertexPositions, GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
 
     const char *vertexShaderStr = 
         "#version 330\n"
@@ -764,7 +772,7 @@ int main (int argc, char** argv) {
         "out vec4 outputColor;\n"
         "void main()\n"
         "{\n"
-        "   outputColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);\n"
+        "   outputColor = vec4(1.0f, 0.7f, 0.6f, 0.8f);\n"
         "}\n";
 
     GLint compStatus = GL_FALSE; 
@@ -791,6 +799,11 @@ int main (int argc, char** argv) {
     glGetProgramiv(program, GL_LINK_STATUS, &programStatus);
     printf("GL Program Status: %d\n", programStatus);
     assert(programStatus);
+
+    glDetachShader(program, vertexShader);
+    glDetachShader(program, fragmentShader);
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
 
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
@@ -1018,7 +1031,7 @@ int main (int argc, char** argv) {
         glBindBuffer(GL_ARRAY_BUFFER, fpsVertexBufferObject);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glDrawArrays(GL_TRIANGLES, 0, 6); // DRAW SIX VERTICES
 
         glDisableVertexAttribArray(0);
         glUseProgram(0);
@@ -1439,6 +1452,7 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
 
         ui->winWidth = newWidth;
         ui->winHeight= newHeight;
+        glViewport(0, 0, (GLsizei)newWidth, (GLsizei)newHeight);
         ui->winFold = newHeight * 0.5;
         ui->winMargin = goldenRatioLarge((double) newWidth, 5);
 
