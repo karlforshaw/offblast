@@ -14,20 +14,23 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
-// TODO COVER ART
-//      * stop stretching the texture
-//      * only jpg is supported, we can use imagemagick to convert on download?
+// TODO GRADIENT LAYERS
+//      * move to an opengl renderer
+//      * would certainly pretty things up
+//      * would be cool if we could do it on the BG too
+//
+// TODO COVER ART 
 //      * a loading animation 
 //
-// TODO so many bugs
-//  * Returning to offblast on i3 results in the window not being full screen
-//  * Invalid date format is a thing
-//  * if you add a rom after the platform has been scraped we say we already
-//      have it in the db but this is the target, not the filepath etc
-//
-// TODO GRADIENT LAYERS
 // TODO PLATFORM BADGES ON MIXED LISTS
 // TODO GRANDIA IS BEING DETECTED AS "D" DETECT BETTER!
+//
+// Known Bugs:
+//      - Invalid date format is a thing
+//      - Only JPG covers are supported
+//      - Returning to offblast on i3 - window not being full screen
+//      * if you add a rom after the platform has been scraped we say we already
+//          have it in the db but this is the target, not the filepath etc
 
 #include <stdio.h>
 #include <stdint.h>
