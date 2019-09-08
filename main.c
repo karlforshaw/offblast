@@ -158,14 +158,7 @@ void *downloadCover(void *arg);
 
 char *getCoverPath();
 
-unsigned int power_two_floor(unsigned int val) {
-    unsigned int power = 2, nextVal = power * 2;
-
-    while ((nextVal *= 2) <= val)
-        power *= 2;
-
-    return power * 2;
-}
+unsigned int power_two_floor(unsigned int val);
 
 void changeRow(
         OffblastUi *ui,
@@ -1869,3 +1862,11 @@ void *downloadCover(void *arg) {
     return NULL;
 }
 
+unsigned int power_two_floor(unsigned int val) {
+    unsigned int power = 2, nextVal = power * 2;
+
+    while ((nextVal *= 2) <= val)
+        power *= 2;
+
+    return power * 2;
+}
