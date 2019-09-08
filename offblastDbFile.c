@@ -15,9 +15,8 @@
 
 #define ITEM_BUFFER_NUM 1000ul
 
-int init_db_file(char *path, OffblastDbFile *dbFileStruct, 
-        size_t itemSize) 
-{
+int init_db_file(char *path, OffblastDbFile *dbFileStruct,
+                 size_t itemSize) {
 
     int fd = open(path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
     struct stat sb;
@@ -28,20 +27,18 @@ int init_db_file(char *path, OffblastDbFile *dbFileStruct,
     }
 
     size_t initialBytesToAllocate = itemSize * ((size_t) ITEM_BUFFER_NUM);
-    if (sb.st_size == 0 && 
-            fallocate(fd, 0, 0, initialBytesToAllocate) == -1) 
-    {
+    if (sb.st_size == 0 &&
+        fallocate(fd, 0, 0, initialBytesToAllocate) == -1) {
         printf("couldn't allocate space for the db %s\n", path);
         perror("error :");
-    }
-    else {
+    } else {
         sb.st_size = initialBytesToAllocate;
     }
 
     printf("allocating %lu for %s\n", sb.st_size, path);
     dbFileStruct->fd = fd;
     void *memory = mmap(
-            NULL, 
+            NULL,
             sb.st_size,
             PROT_READ | PROT_WRITE,
             MAP_SHARED,
@@ -59,35 +56,32 @@ int init_db_file(char *path, OffblastDbFile *dbFileStruct,
     return 1;
 }
 
-int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file, 
-        uint32_t targetSignature) 
-{
+int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file,
+                                           uint32_t targetSignature) {
     uint32_t foundIndex = -1;
     for (uint32_t i = 0; i < file->nEntries; i++) {
-        if (file->entries[i].targetSignature == 
-                targetSignature) {
+        if (file->entries[i].targetSignature ==
+            targetSignature) {
             foundIndex = i;
         }
     }
     return foundIndex;
 }
 
-int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file, 
-        uint32_t romSignature) 
-{
+int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file,
+                                        uint32_t romSignature) {
     uint32_t foundIndex = -1;
     for (uint32_t i = 0; i < file->nEntries; i++) {
-        if (file->entries[i].romSignature == 
-                romSignature) {
+        if (file->entries[i].romSignature ==
+            romSignature) {
             foundIndex = i;
         }
     }
     return foundIndex;
 }
 
-int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, 
-        char *search)
-{
+int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file,
+                                     char *search) {
     uint32_t foundIndex = -1;
     char *bestMatch = NULL;
 
@@ -97,10 +91,10 @@ int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file,
         char *result = strstr(search, file->entries[i].name);
 
         if (result != NULL) {
-            printf("Match: %s\n", 
-                    file->entries[i].name);
+            printf("Match: %s\n",
+                   file->entries[i].name);
 
-            if (bestMatch == NULL || strlen(result) > strlen(bestMatch)){ 
+            if (bestMatch == NULL || strlen(result) > strlen(bestMatch)) {
                 foundIndex = i;
                 bestMatch = file->entries[i].name;
             }
@@ -109,8 +103,7 @@ int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file,
 
     if (foundIndex == -1) {
         printf("NOT FOUND\n\n");
-    }
-    else {
+    } else {
         printf("best match: %s - index %u\n\n", bestMatch, foundIndex);
     }
 

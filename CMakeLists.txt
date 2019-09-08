@@ -1,0 +1,59 @@
+cmake_minimum_required(VERSION 3.14)
+
+project(offblast C)
+
+set(CMAKE C STANDARD C99)
+
+add_executable(${PROJECT_NAME} main.c offblast.h offblastDbFile.c offblastDbFile.h)
+
+add_custom_command(
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+        ${CMAKE_CURRENT_BINARY_DIR}/fonts
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/fonts
+        ${CMAKE_CURRENT_BINARY_DIR}/fonts)
+
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+target_link_libraries(${PROJECT_NAME} Threads::Threads m pthread)
+
+INCLUDE(FindPkgConfig)
+
+PKG_SEARCH_MODULE(SDL2 REQUIRED sdl2)
+
+PKG_SEARCH_MODULE(JSON-C REQUIRED json-c)
+
+PKG_SEARCH_MODULE(SDL2IMAGE REQUIRED SDL2_image)
+
+PKG_SEARCH_MODULE(SDL2TTF REQUIRED SDL2_ttf)
+
+PKG_SEARCH_MODULE(LIBMURMURHASH REQUIRED libmurmurhash)
+
+PKG_SEARCH_MODULE(GL REQUIRED gl)
+
+PKG_SEARCH_MODULE(GLEW REQUIRED glew)
+
+PKG_SEARCH_MODULE(LIBCURL REQUIRED libcurl)
+
+INCLUDE_DIRECTORIES(
+        ${PROJECT_NAME}
+        ${SDL2_INCLUDE_DIRS}
+        ${SDL2IMAGE_INCLUDE_DIRS}
+        ${SDL2TTF_INCLUDE_DIRS}
+        ${JSON-C_INCLUDE_DIRS}
+        ${LIBMURMURHASH_INCLUDE_DIRS}
+        ${GL_INCLUDE_DIRS}
+        ${GLEW_INCLUDE_DIRS}
+        ${LIBCURL_INCLUDE_DIRS})
+
+TARGET_LINK_LIBRARIES(
+        ${PROJECT_NAME}
+        ${SDL2_LIBRARIES}
+        ${SDL2IMAGE_LIBRARIES}
+        ${SDL2TTF_LIBRARIES}
+        ${JSON-C_LIBRARIES}
+        ${LIBMURMURHASH_LIBRARIES}
+        ${GL_LIBRARIES}
+        ${GLEW_LIBRARIES}
+        ${LIBCURL_LIBRARIES})

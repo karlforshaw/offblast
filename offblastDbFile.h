@@ -56,18 +56,18 @@ typedef struct OffblastBlob {
 } OffblastBlob;
 
 
-int init_db_file(char *, OffblastDbFile *dbFileStruct, 
-        size_t itemSize);
+int init_db_file(char *, OffblastDbFile *dbFileStruct,
+                 size_t itemSize);
 
 // TODO implement
 int num_remaining_items(OffblastDbFile *dbFileStruct,
-        size_t itemSize);
+                        size_t itemSize);
 
-int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file, 
-        uint32_t targetSignature);
+int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file,
+                                           uint32_t targetSignature);
 
-int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file, 
-        uint32_t targetSignature);
+int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file,
+                                        uint32_t targetSignature);
 
-int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, 
-        char *search);
+int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file,
+                                     char *search);

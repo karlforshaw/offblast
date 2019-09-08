@@ -51,12 +51,13 @@
 #include <pthread.h>
 
 #define GL3_PROTOTYPES 1
+
 #include <GL/glew.h>
 
 #include "offblast.h"
 #include "offblastDbFile.h"
 
-typedef struct UiTile{
+typedef struct UiTile {
     struct LaunchTarget *target;
     SDL_Texture *texture;
     uint8_t loadState;
@@ -80,42 +81,43 @@ typedef struct Animation {
     uint32_t startTick;
     uint32_t durationMs;
     void *callbackArgs;
-    void (* callback)(struct OffblastUi*);
+
+    void (*callback)(struct OffblastUi *);
 } Animation;
 
 typedef struct OffblastUi {
-        int32_t winWidth;
-        int32_t winHeight;
-        int32_t winFold;
-        int32_t winMargin;
-        int32_t boxWidth;
-        int32_t boxHeight;
-        int32_t boxPad;
-        int32_t descriptionWidth;
-        int32_t descriptionHeight;
-        double titlePointSize;
-        double infoPointSize;
+    int32_t winWidth;
+    int32_t winHeight;
+    int32_t winFold;
+    int32_t winMargin;
+    int32_t boxWidth;
+    int32_t boxHeight;
+    int32_t boxPad;
+    int32_t descriptionWidth;
+    int32_t descriptionHeight;
+    double titlePointSize;
+    double infoPointSize;
 
-        TTF_Font *titleFont;
-        TTF_Font *infoFont;
-        TTF_Font *debugFont;
+    TTF_Font *titleFont;
+    TTF_Font *infoFont;
+    TTF_Font *debugFont;
 
-        SDL_Texture *titleTexture;
-        SDL_Texture *infoTexture;
-        SDL_Texture *descriptionTexture;
-        SDL_Texture *rowNameTexture;
-        SDL_Renderer *renderer;
+    SDL_Texture *titleTexture;
+    SDL_Texture *infoTexture;
+    SDL_Texture *descriptionTexture;
+    SDL_Texture *rowNameTexture;
+    SDL_Renderer *renderer;
 
-        Animation *horizontalAnimation;
-        Animation *verticalAnimation;
-        Animation *infoAnimation;
-        Animation *rowNameAnimation;
+    Animation *horizontalAnimation;
+    Animation *verticalAnimation;
+    Animation *infoAnimation;
+    Animation *rowNameAnimation;
 
-        uint32_t numRows;
-        UiRow *rowCursor;
-        UiRow *rows;
-        LaunchTarget *movingToTarget;
-        UiRow *movingToRow;
+    uint32_t numRows;
+    UiRow *rowCursor;
+    UiRow *rows;
+    LaunchTarget *movingToTarget;
+    UiRow *movingToRow;
 } OffblastUi;
 
 typedef struct Launcher {
@@ -125,20 +127,35 @@ typedef struct Launcher {
 
 
 uint32_t megabytes(uint32_t n);
+
 uint32_t needsReRender(SDL_Window *window, OffblastUi *ui);
+
 double easeOutCirc(double t, double b, double c, double d);
-double easeInOutCirc (double t, double b, double c, double d);
+
+double easeInOutCirc(double t, double b, double c, double d);
+
 char *getCsvField(char *line, int fieldNo);
+
 double goldenRatioLarge(double in, uint32_t exponent);
+
 void horizontalMoveDone(OffblastUi *ui);
+
 void verticalMoveDone(OffblastUi *ui);
+
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
+
 void infoFaded(OffblastUi *ui);
+
 void rowNameFaded(OffblastUi *ui);
+
 uint32_t animationRunning(OffblastUi *ui);
+
 void animationTick(Animation *theAnimation, OffblastUi *ui);
+
 const char *platformString(char *key);
+
 void *downloadCover(void *arg);
+
 char *getCoverPath();
 
 unsigned int power_two_floor(unsigned int val) {
@@ -158,7 +175,7 @@ void changeColumn(
         OffblastUi *ui,
         uint32_t direction);
 
-int main (int argc, char** argv) {
+int main(int argc, char **argv) {
 
     printf("\nStarting up OffBlast with %d args.\n\n", argc);
 
@@ -175,11 +192,10 @@ int main (int argc, char** argv) {
     int madeConfigDir;
     madeConfigDir = mkdir(configPath, S_IRWXU);
     madeConfigDir = mkdir(coverPath, S_IRWXU);
-    
+
     if (madeConfigDir == 0) {
         printf("Created offblast directory\n");
-    }
-    else {
+    } else {
         switch (errno) {
             case EEXIST:
                 break;
@@ -213,8 +229,8 @@ int main (int argc, char** argv) {
     json_object *configObj = NULL;
 
     configObj = json_tokener_parse_ex(tokener,
-            configText,
-            configSize);
+                                      configText,
+                                      configSize);
 
     assert(configObj);
 
@@ -224,12 +240,12 @@ int main (int argc, char** argv) {
     assert(paths);
 
     json_object *configForOpenGameDb;
-    json_object_object_get_ex(configObj, "opengamedb", 
-            &configForOpenGameDb);
+    json_object_object_get_ex(configObj, "opengamedb",
+                              &configForOpenGameDb);
 
     assert(configForOpenGameDb);
-    const char *openGameDbPath = 
-        json_object_get_string(configForOpenGameDb);
+    const char *openGameDbPath =
+            json_object_get_string(configForOpenGameDb);
 
     printf("Found OpenGameDb at %s\n", openGameDbPath);
 
@@ -241,33 +257,31 @@ int main (int argc, char** argv) {
         printf("couldn't initialize path db, exiting\n");
         return 1;
     }
-    PathInfoFile *pathInfoFile = (PathInfoFile*) pathDb.memory;
+    PathInfoFile *pathInfoFile = (PathInfoFile *) pathDb.memory;
     free(pathInfoDbPath);
 
     char *launchTargetDbPath;
     asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
     OffblastDbFile launchTargetDb = {0};
-    if (!init_db_file(launchTargetDbPath, &launchTargetDb, 
-                sizeof(LaunchTarget))) 
-    {
+    if (!init_db_file(launchTargetDbPath, &launchTargetDb,
+                      sizeof(LaunchTarget))) {
         printf("couldn't initialize path db, exiting\n");
         return 1;
     }
-    LaunchTargetFile *launchTargetFile = 
-        (LaunchTargetFile*) launchTargetDb.memory;
+    LaunchTargetFile *launchTargetFile =
+            (LaunchTargetFile *) launchTargetDb.memory;
     free(launchTargetDbPath);
 
     char *descriptionDbPath;
     asprintf(&descriptionDbPath, "%s/descriptions.bin", configPath);
     OffblastDbFile descriptionDb = {0};
-    if (!init_db_file(descriptionDbPath, &descriptionDb, 
-                sizeof(OffblastBlobFile) + 33333))
-    {
+    if (!init_db_file(descriptionDbPath, &descriptionDb,
+                      sizeof(OffblastBlobFile) + 33333)) {
         printf("couldn't initialize the descriptions file, exiting\n");
         return 1;
     }
-    OffblastBlobFile *descriptionFile = 
-        (OffblastBlobFile*) descriptionDb.memory;
+    OffblastBlobFile *descriptionFile =
+            (OffblastBlobFile *) descriptionDb.memory;
     free(descriptionDbPath);
 
 
@@ -284,7 +298,7 @@ int main (int argc, char** argv) {
         printf("--\n\n");
 
     } // XXX DEBUG ONLY CODE
-#endif 
+#endif
 
     char (*platforms)[256] = calloc(MAX_PLATFORMS, 256 * sizeof(char));
     uint32_t nPlatforms = 0;
@@ -292,7 +306,7 @@ int main (int argc, char** argv) {
     size_t nPaths = json_object_array_length(paths);
     Launcher *launchers = calloc(nPaths, sizeof(Launcher));
 
-    for (int i=0; i<nPaths; i++) {
+    for (int i = 0; i < nPaths; i++) {
 
         json_object *workingPathNode = NULL;
         json_object *workingPathStringNode = NULL;
@@ -307,14 +321,14 @@ int main (int argc, char** argv) {
 
         workingPathNode = json_object_array_get_idx(paths, i);
         json_object_object_get_ex(workingPathNode, "path",
-                &workingPathStringNode);
+                                  &workingPathStringNode);
         json_object_object_get_ex(workingPathNode, "extension",
-                &workingPathExtensionNode);
+                                  &workingPathExtensionNode);
         json_object_object_get_ex(workingPathNode, "platform",
-                &workingPathPlatformNode);
+                                  &workingPathPlatformNode);
 
         json_object_object_get_ex(workingPathNode, "launcher",
-                &workingPathLauncherNode);
+                                  &workingPathLauncherNode);
 
         thePath = json_object_get_string(workingPathStringNode);
         theExtension = json_object_get_string(workingPathExtensionNode);
@@ -329,8 +343,7 @@ int main (int argc, char** argv) {
         if (i == 0) {
             memcpy(platforms[nPlatforms], thePlatform, strlen(thePlatform));
             nPlatforms++;
-        }
-        else {
+        } else {
             uint8_t gotPlatform = 0;
             for (uint32_t i = 0; i < nPlatforms; i++) {
                 if (strcmp(platforms[i], thePlatform) == 0) gotPlatform = 1;
@@ -342,10 +355,9 @@ int main (int argc, char** argv) {
         }
 
         uint32_t platformScraped = 0;
-        for (uint32_t i=0; i < launchTargetFile->nEntries; ++i) {
-            if (strcmp(launchTargetFile->entries[i].platform, 
-                        thePlatform) == 0) 
-            {
+        for (uint32_t i = 0; i < launchTargetFile->nEntries; ++i) {
+            if (strcmp(launchTargetFile->entries[i].platform,
+                       thePlatform) == 0) {
                 printf("%s already scraped.\n", thePlatform);
                 platformScraped = 1;
                 break;
@@ -355,8 +367,8 @@ int main (int argc, char** argv) {
         if (!platformScraped) {
 
             char *openGameDbPlatformPath;
-            asprintf(&openGameDbPlatformPath, "%s/%s.csv", openGameDbPath, 
-                    thePlatform);
+            asprintf(&openGameDbPlatformPath, "%s/%s.csv", openGameDbPath,
+                     thePlatform);
             printf("Looking for file %s\n", openGameDbPlatformPath);
 
             FILE *openGameDbFile = fopen(openGameDbPlatformPath, "r");
@@ -374,8 +386,7 @@ int main (int argc, char** argv) {
             uint32_t onRow = 0;
 
             while ((csvBytesRead = getline(
-                            &csvLine, &csvLineLength, openGameDbFile)) != -1) 
-            {
+                    &csvLine, &csvLineLength, openGameDbFile)) != -1) {
                 if (onRow > 0) {
 
                     char *gameName = getCsvField(csvLine, 1);
@@ -385,8 +396,8 @@ int main (int argc, char** argv) {
 
                     uint32_t targetSignature = 0;
 
-                    lmmh_x86_32(gameSeed, strlen(gameSeed), 33, 
-                            &targetSignature);
+                    lmmh_x86_32(gameSeed, strlen(gameSeed), 33,
+                                &targetSignature);
 
                     int32_t indexOfEntry = launchTargetIndexByTargetSignature(
                             launchTargetFile, targetSignature);
@@ -399,36 +410,35 @@ int main (int argc, char** argv) {
                         char *description = getCsvField(csvLine, 6);
                         char *coverArtUrl = getCsvField(csvLine, 7);
 
-                        printf("\n%s\n%u\n%s\n%s\ng: %s\n\nm: %s\n", 
-                                gameSeed, 
-                                targetSignature, 
-                                gameName, 
-                                gameDate,
-                                scoreString, metaScoreString);
+                        printf("\n%s\n%u\n%s\n%s\ng: %s\n\nm: %s\n",
+                               gameSeed,
+                               targetSignature,
+                               gameName,
+                               gameDate,
+                               scoreString, metaScoreString);
 
-                        LaunchTarget *newEntry = 
-                            &launchTargetFile->entries[launchTargetFile->nEntries];
+                        LaunchTarget *newEntry =
+                                &launchTargetFile->entries[launchTargetFile->nEntries];
                         printf("writing new game to %p\n", newEntry);
 
                         newEntry->targetSignature = targetSignature;
 
-                        memcpy(&newEntry->name, 
-                                gameName, 
-                                strlen(gameName));
+                        memcpy(&newEntry->name,
+                               gameName,
+                               strlen(gameName));
 
-                        memcpy(&newEntry->platform, 
-                                thePlatform,
-                                strlen(thePlatform));
+                        memcpy(&newEntry->platform,
+                               thePlatform,
+                               strlen(thePlatform));
 
-                        memcpy(&newEntry->coverUrl, 
-                                coverArtUrl,
-                                strlen(coverArtUrl));
+                        memcpy(&newEntry->coverUrl,
+                               coverArtUrl,
+                               strlen(coverArtUrl));
 
                         // TODO harden
                         if (strlen(gameDate) != 10) {
                             printf("INVALID DATE FORMAT\n");
-                        }
-                        else {
+                        } else {
                             memcpy(&newEntry->date, gameDate, 10);
                         }
 
@@ -439,28 +449,27 @@ int main (int argc, char** argv) {
                         if (strlen(metaScoreString) != 0) {
                             if (score == -1) {
                                 score = atof(metaScoreString);
-                            }
-                            else {
+                            } else {
                                 score = (score + atof(metaScoreString)) / 2;
                             }
                         }
 
                         // XXX TODO check we have enough space to write
                         // the description into the file
-                        OffblastBlob *newDescription = (OffblastBlob*) 
-                            &descriptionFile->memory[descriptionFile->cursor];
+                        OffblastBlob *newDescription = (OffblastBlob *)
+                                &descriptionFile->memory[descriptionFile->cursor];
 
                         newDescription->targetSignature = targetSignature;
                         newDescription->length = strlen(description);
 
-                        memcpy(&newDescription->content, description, 
-                                strlen(description));
+                        memcpy(&newDescription->content, description,
+                               strlen(description));
                         *(newDescription->content + strlen(description)) = '\0';
 
                         newEntry->descriptionOffset = descriptionFile->cursor;
-                        
-                        descriptionFile->cursor += 
-                            sizeof(OffblastBlob) + strlen(description) + 1;
+
+                        descriptionFile->cursor +=
+                                sizeof(OffblastBlob) + strlen(description) + 1;
 
 
                         // TODO round properly
@@ -475,12 +484,11 @@ int main (int argc, char** argv) {
                         free(description);
                         free(coverArtUrl);
 
-                    }
-                    else {
-                        printf("%d index found, We already have %u:%s\n", 
-                                indexOfEntry,
-                                targetSignature, 
-                                gameSeed);
+                    } else {
+                        printf("%d index found, We already have %u:%s\n",
+                               indexOfEntry,
+                               targetSignature,
+                               gameSeed);
                     }
 
                     free(gameSeed);
@@ -514,11 +522,11 @@ int main (int argc, char** argv) {
 
             char *ext = strrchr(currentEntry->d_name, '.');
 
-            if (ext && strcmp(ext, theExtension) == 0){
+            if (ext && strcmp(ext, theExtension) == 0) {
 
-                memcpy(matchingFileNames + numItems, 
-                        currentEntry->d_name, 
-                        strlen(currentEntry->d_name));
+                memcpy(matchingFileNames + numItems,
+                       currentEntry->d_name,
+                       strlen(currentEntry->d_name));
 
                 numItems++;
                 if (numItems == nAllocated) {
@@ -526,8 +534,8 @@ int main (int argc, char** argv) {
                     unsigned int bytesToAllocate = nEntriesToAlloc * 256;
                     nAllocated += nEntriesToAlloc;
 
-                    void *newBlock = realloc(fileNameBlock, 
-                            nAllocated * 256);
+                    void *newBlock = realloc(fileNameBlock,
+                                             nAllocated * 256);
 
                     if (newBlock == NULL) {
                         printf("failed to reallocate enough ram\n");
@@ -538,7 +546,7 @@ int main (int argc, char** argv) {
                     matchingFileNames = fileNameBlock;
 
                     memset(
-                            matchingFileNames+numItems, 
+                            matchingFileNames + numItems,
                             0x0,
                             bytesToAllocate);
 
@@ -549,28 +557,25 @@ int main (int argc, char** argv) {
         uint32_t contentSignature = 0;
         uint32_t pathSignature = 0;
         lmmh_x86_32(thePath, strlen(thePath), 33, &pathSignature);
-        lmmh_x86_32(matchingFileNames, numItems*256, 33, &contentSignature);
+        lmmh_x86_32(matchingFileNames, numItems * 256, 33, &contentSignature);
 
-        printf("got sig: signature:%u contentsHash:%u\n", pathSignature, 
-                contentSignature);
+        printf("got sig: signature:%u contentsHash:%u\n", pathSignature,
+               contentSignature);
 
         uint32_t rescrapeRequired = (pathInfoFile->nEntries == 0);
 
         // This goes through everything we have in the file now
         // We need something to detect whether it's in the file
         uint32_t isInFile = 0;
-        for (uint32_t i=0; i < pathInfoFile->nEntries; i++) {
+        for (uint32_t i = 0; i < pathInfoFile->nEntries; i++) {
             if (pathInfoFile->entries[i].signature == pathSignature
-                    && pathInfoFile->entries[i].contentsHash 
-                    != contentSignature) 
-            {
+                && pathInfoFile->entries[i].contentsHash
+                   != contentSignature) {
                 printf("Contents of directory %s have changed!\n", thePath);
-                isInFile =1;
+                isInFile = 1;
                 rescrapeRequired = 1;
                 break;
-            }
-            else if (pathInfoFile->entries[i].signature == pathSignature)
-            {
+            } else if (pathInfoFile->entries[i].signature == pathSignature) {
                 printf("Contents unchanged for: %s\n", thePath);
                 isInFile = 1;
                 break;
@@ -582,10 +587,10 @@ int main (int argc, char** argv) {
 
             // TODO do we have the allocation to add it?
             //
-            pathInfoFile->entries[pathInfoFile->nEntries].signature = 
-                pathSignature;
-            pathInfoFile->entries[pathInfoFile->nEntries].contentsHash = 
-                contentSignature;
+            pathInfoFile->entries[pathInfoFile->nEntries].signature =
+                    pathSignature;
+            pathInfoFile->entries[pathInfoFile->nEntries].contentsHash =
+                    contentSignature;
             pathInfoFile->nEntries++;
 
             rescrapeRequired = 1;
@@ -594,18 +599,18 @@ int main (int argc, char** argv) {
         if (rescrapeRequired) {
             void *romData = calloc(1, ROM_PEEK_SIZE);
 
-            for (uint32_t j=0;j<numItems; j++) {
+            for (uint32_t j = 0; j < numItems; j++) {
 
-                char *romPathTrimmed; 
-                asprintf(&romPathTrimmed, "%s/%s", 
-                        thePath,
-                        matchingFileNames[j]);
+                char *romPathTrimmed;
+                asprintf(&romPathTrimmed, "%s/%s",
+                         thePath,
+                         matchingFileNames[j]);
 
                 // TODO check it's not disc 2 or 3 etc
 
                 uint32_t romSignature;
                 FILE *romFd = fopen(romPathTrimmed, "rb");
-                if (! romFd) {
+                if (!romFd) {
                     printf("cannot open from rom\n");
                 }
 
@@ -613,7 +618,7 @@ int main (int argc, char** argv) {
                     if (!fread(romData + i, sizeof(char), 1, romFd)) {
                         if (i == 0) {
                             printf("cannot read from rom %s\n",
-                                    romPathTrimmed);
+                                   romPathTrimmed);
                             continue;
                         }
                     }
@@ -631,8 +636,7 @@ int main (int argc, char** argv) {
 
                 if (indexOfEntry > -1) {
                     printf("target is already in the db\n");
-                }
-                else {
+                } else {
 
                     indexOfEntry = launchTargetIndexByNameMatch(
                             launchTargetFile, matchingFileNames[j]);
@@ -641,24 +645,24 @@ int main (int argc, char** argv) {
 
                     if (indexOfEntry > -1) {
 
-                        LaunchTarget *theTarget = 
-                            &launchTargetFile->entries[indexOfEntry];
+                        LaunchTarget *theTarget =
+                                &launchTargetFile->entries[indexOfEntry];
 
                         theTarget->romSignature = romSignature;
 
-                        memcpy(&theTarget->fileName, 
-                                &matchingFileNames[j], 
-                                strlen(matchingFileNames[j]));
+                        memcpy(&theTarget->fileName,
+                               &matchingFileNames[j],
+                               strlen(matchingFileNames[j]));
 
-                        memcpy(&theTarget->path, 
-                                romPathTrimmed,
-                                strlen(romPathTrimmed));
-                    
+                        memcpy(&theTarget->path,
+                               romPathTrimmed,
+                               strlen(romPathTrimmed));
+
                     }
                 }
 
                 free(romPathTrimmed);
-            }; 
+            };
 
             free(romData);
         }
@@ -674,7 +678,6 @@ int main (int argc, char** argv) {
     close(launchTargetDb.fd);
 
 
-
     const char *userName = NULL;
     {
         json_object *usersObject = NULL;
@@ -682,8 +685,7 @@ int main (int argc, char** argv) {
 
         if (usersObject == NULL) {
             userName = "Anonymous";
-        }
-        else {
+        } else {
             json_object *tmp = json_object_array_get_idx(usersObject, 0);
             assert(tmp);
             userName = json_object_get_string(tmp);
@@ -696,7 +698,7 @@ int main (int argc, char** argv) {
 
     // XXX START SDL HERE
 
-    
+
 
 
 
@@ -712,18 +714,18 @@ int main (int argc, char** argv) {
 
     // Let's create the window
     //SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, 
-            //SDL_GL_CONTEXT_PROFILE_CORE);
+    //SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
-    SDL_Window* window = SDL_CreateWindow("OffBlast", 
-            SDL_WINDOWPOS_UNDEFINED, 
-            SDL_WINDOWPOS_UNDEFINED,
-            640,
-            480,
-            SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP | 
-                SDL_WINDOW_ALLOW_HIGHDPI);
+    SDL_Window *window = SDL_CreateWindow("OffBlast",
+                                          SDL_WINDOWPOS_UNDEFINED,
+                                          SDL_WINDOWPOS_UNDEFINED,
+                                          640,
+                                          480,
+                                          SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP |
+                                          SDL_WINDOW_ALLOW_HIGHDPI);
 
     if (window == NULL) {
         printf("SDL window creation failed, exiting..\n");
@@ -741,7 +743,7 @@ int main (int argc, char** argv) {
 
     // TODO remove
     //ui->renderer = SDL_CreateRenderer(window, -1, 
-     //       SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    //       SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
     ui->horizontalAnimation = calloc(1, sizeof(Animation));
     ui->verticalAnimation = calloc(1, sizeof(Animation));
@@ -751,14 +753,14 @@ int main (int argc, char** argv) {
     // Create the vertex data and buffers for each layer
     // FPS INFO 
     const float fpsVertexPositions[] = {
-        // xyz                  // rgb              //tex coord
-        -0.25f, -0.25f, 0.0f,   1.0f, 0.0f, 0.0f,   0.0f, 0.0f,
-        -0.25f, 0.25f, 0.0f,    0.0f, 1.0f, 0.0f,   0.0f, 1.0f,
-        0.25f, 0.25f, 0.0f,     0.0f, 0.0f, 1.0f,   1.0f, 1.0f,
+            // xyz                  // rgb              //tex coord
+            -0.25f, -0.25f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            -0.25f, 0.25f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+            0.25f, 0.25f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
 
-        0.25f, 0.25f, 0.0f,     0.0f, 0.0f, 1.0f,   1.0f, 1.0f,
-        0.25f, -0.25f, 0.0f,    0.0f, 1.0f, 0.0f,   1.0f, 0.0f,
-        -0.25f, -0.25f, 0.0f,   1.0f, 0.0f, 0.0f,   0.0f, 0.0f,
+            0.25f, 0.25f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
+            0.25f, -0.25f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+            -0.25f, -0.25f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
     };
 
     GLuint fpsVertexBufferObject;
@@ -768,40 +770,40 @@ int main (int argc, char** argv) {
     glBindVertexArray(vao);
     glGenBuffers(1, &fpsVertexBufferObject);
     glBindBuffer(GL_ARRAY_BUFFER, fpsVertexBufferObject);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(fpsVertexPositions), 
-            fpsVertexPositions, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(fpsVertexPositions),
+                 fpsVertexPositions, GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     GLint len;
     char *logString;
 
-    const char *vertexShaderStr = 
-        "#version 330\n"
-        "layout(location = 0) in vec3 position;\n"
-        "layout(location = 1) in vec3 color;\n"
-        "layout(location = 2) in vec2 aTexcoord;\n"
-        "smooth out vec3 theColor;\n"
-        "out vec2 TexCoord;\n"
-        "void main()\n"
-        "{\n"
-        "   gl_Position = vec4(position, 1.0);\n"
-        "   theColor = color;\n"
-        "   TexCoord = aTexcoord;\n"
-        "}\n";
+    const char *vertexShaderStr =
+            "#version 330\n"
+            "layout(location = 0) in vec3 position;\n"
+            "layout(location = 1) in vec3 color;\n"
+            "layout(location = 2) in vec2 aTexcoord;\n"
+            "smooth out vec3 theColor;\n"
+            "out vec2 TexCoord;\n"
+            "void main()\n"
+            "{\n"
+            "   gl_Position = vec4(position, 1.0);\n"
+            "   theColor = color;\n"
+            "   TexCoord = aTexcoord;\n"
+            "}\n";
 
-    const char *fragmentShaderStr = 
-        "#version 330\n"
-        "smooth in vec3 theColor;\n"
-        "in vec2 TexCoord;\n"
-        "out vec4 outputColor;\n"
-        "uniform sampler2D ourTexture;\n"
-        "void main()\n"
-        "{\n"
-        "   //outputColor = theColor;\n"
-        "   outputColor = texture(ourTexture, TexCoord);\n"
-        "}\n";
+    const char *fragmentShaderStr =
+            "#version 330\n"
+            "smooth in vec3 theColor;\n"
+            "in vec2 TexCoord;\n"
+            "out vec4 outputColor;\n"
+            "uniform sampler2D ourTexture;\n"
+            "void main()\n"
+            "{\n"
+            "   //outputColor = theColor;\n"
+            "   outputColor = texture(ourTexture, TexCoord);\n"
+            "}\n";
 
-    GLint compStatus = GL_FALSE; 
+    GLint compStatus = GL_FALSE;
     GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vertexShader, 1, &vertexShaderStr, NULL);
     glCompileShader(vertexShader);
@@ -809,8 +811,8 @@ int main (int argc, char** argv) {
     printf("Vertex Shader Compilation: %d\n", compStatus);
     if (!compStatus) {
         glGetShaderiv(vertexShader, GL_INFO_LOG_LENGTH,
-                &len);
-        logString = calloc(1, len+1);
+                      &len);
+        logString = calloc(1, len + 1);
         glGetShaderInfoLog(vertexShader, len, NULL, logString);
         printf("%s\n", logString);
     }
@@ -821,10 +823,10 @@ int main (int argc, char** argv) {
     glCompileShader(fragmentShader);
     glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &compStatus);
     printf("Fragment Shader Compilation: %d\n", compStatus);
-    if(!compStatus){
+    if (!compStatus) {
         glGetShaderiv(vertexShader, GL_INFO_LOG_LENGTH,
-                &len);
-        logString = calloc(1, len+1);
+                      &len);
+        logString = calloc(1, len + 1);
         glGetShaderInfoLog(fragmentShader, len, NULL, logString);
         printf("%s\n", logString);
     }
@@ -838,9 +840,9 @@ int main (int argc, char** argv) {
     GLint programStatus;
     glGetProgramiv(program, GL_LINK_STATUS, &programStatus);
     printf("GL Program Status: %d\n", programStatus);
-    if(!programStatus){
-        glGetProgramiv(program,GL_INFO_LOG_LENGTH, &len);
-        logString = calloc(1, len+1);
+    if (!programStatus) {
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &len);
+        logString = calloc(1, len + 1);
         glGetProgramInfoLog(program, 512, NULL, logString);
         printf("%s", logString);
     }
@@ -861,7 +863,7 @@ int main (int argc, char** argv) {
 
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
-    uint32_t renderFrequency = 1000/60;
+    uint32_t renderFrequency = 1000 / 60;
 
     // Init Ui
     // rows for now:
@@ -876,43 +878,40 @@ int main (int argc, char** argv) {
     uint32_t libraryLength = 0;
     for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
         LaunchTarget *target = &launchTargetFile->entries[i];
-        if (strlen(target->fileName) != 0) 
+        if (strlen(target->fileName) != 0)
             libraryLength++;
     }
 
     if (libraryLength > 0) {
-        ui->rows[ui->numRows].length = libraryLength; 
-        ui->rows[ui->numRows].tiles = calloc(libraryLength, sizeof(UiTile)); 
+        ui->rows[ui->numRows].length = libraryLength;
+        ui->rows[ui->numRows].tiles = calloc(libraryLength, sizeof(UiTile));
         assert(ui->rows[ui->numRows].tiles);
         ui->rows[ui->numRows].tileCursor = &ui->rows[ui->numRows].tiles[0];
         for (uint32_t i = 0, j = 0; i < launchTargetFile->nEntries; i++) {
             LaunchTarget *target = &launchTargetFile->entries[i];
             if (strlen(target->fileName) != 0) {
                 ui->rows[ui->numRows].tiles[j].target = target;
-                if (j+1 == libraryLength) {
-                    ui->rows[ui->numRows].tiles[j].next = 
-                        &ui->rows[ui->numRows].tiles[0];
-                }
-                else {
-                    ui->rows[ui->numRows].tiles[j].next = 
-                        &ui->rows[ui->numRows].tiles[j+1];
+                if (j + 1 == libraryLength) {
+                    ui->rows[ui->numRows].tiles[j].next =
+                            &ui->rows[ui->numRows].tiles[0];
+                } else {
+                    ui->rows[ui->numRows].tiles[j].next =
+                            &ui->rows[ui->numRows].tiles[j + 1];
                 }
 
-                if (j==0) {
-                    ui->rows[ui->numRows].tiles[j].previous = 
-                        &ui->rows[ui->numRows].tiles[libraryLength -1];
-                }
-                else {
-                    ui->rows[ui->numRows].tiles[j].previous 
-                        = &ui->rows[ui->numRows].tiles[j-1];
+                if (j == 0) {
+                    ui->rows[ui->numRows].tiles[j].previous =
+                            &ui->rows[ui->numRows].tiles[libraryLength - 1];
+                } else {
+                    ui->rows[ui->numRows].tiles[j].previous
+                            = &ui->rows[ui->numRows].tiles[j - 1];
                 }
                 j++;
             }
         }
         ui->rows[ui->numRows].name = "Your Library";
         ui->numRows++;
-    }
-    else { 
+    } else {
         printf("woah now looks like we have an empty library\n");
     }
 
@@ -920,8 +919,8 @@ int main (int argc, char** argv) {
     // __ROWS__ Essentials per platform
     for (uint32_t iPlatform = 0; iPlatform < nPlatforms; iPlatform++) {
 
-        asprintf(&ui->rows[ui->numRows].name, "Essential %s", 
-                platformString(platforms[iPlatform]));
+        asprintf(&ui->rows[ui->numRows].name, "Essential %s",
+                 platformString(platforms[iPlatform]));
 
         uint32_t topRatedLength = 9;
         ui->rows[ui->numRows].length = topRatedLength;
@@ -929,25 +928,23 @@ int main (int argc, char** argv) {
         assert(ui->rows[ui->numRows].tiles);
         ui->rows[ui->numRows].tileCursor = &ui->rows[ui->numRows].tiles[0];
         for (uint32_t i = 0; i < ui->rows[ui->numRows].length; i++) {
-            ui->rows[ui->numRows].tiles[i].target = 
-                &launchTargetFile->entries[i];
+            ui->rows[ui->numRows].tiles[i].target =
+                    &launchTargetFile->entries[i];
 
-            if (i+1 == ui->rows[ui->numRows].length) {
-                ui->rows[ui->numRows].tiles[i].next = 
-                    &ui->rows[ui->numRows].tiles[0]; 
-            }
-            else {
-                ui->rows[ui->numRows].tiles[i].next = 
-                    &ui->rows[ui->numRows].tiles[i+1]; 
+            if (i + 1 == ui->rows[ui->numRows].length) {
+                ui->rows[ui->numRows].tiles[i].next =
+                        &ui->rows[ui->numRows].tiles[0];
+            } else {
+                ui->rows[ui->numRows].tiles[i].next =
+                        &ui->rows[ui->numRows].tiles[i + 1];
             }
 
             if (i == 0) {
-                ui->rows[ui->numRows].tiles[i].previous = 
-                    &ui->rows[ui->numRows].tiles[topRatedLength-1];
-            }
-            else {
-                ui->rows[ui->numRows].tiles[i].previous = 
-                    &ui->rows[ui->numRows].tiles[i-1];
+                ui->rows[ui->numRows].tiles[i].previous =
+                        &ui->rows[ui->numRows].tiles[topRatedLength - 1];
+            } else {
+                ui->rows[ui->numRows].tiles[i].previous =
+                        &ui->rows[ui->numRows].tiles[i - 1];
             }
         }
 
@@ -956,17 +953,15 @@ int main (int argc, char** argv) {
 
     for (uint32_t i = 0; i < ui->numRows; i++) {
         if (i == 0) {
-            ui->rows[i].previousRow = &ui->rows[ui->numRows-1];
-        }
-        else {
-            ui->rows[i].previousRow = &ui->rows[i-1];
+            ui->rows[i].previousRow = &ui->rows[ui->numRows - 1];
+        } else {
+            ui->rows[i].previousRow = &ui->rows[i - 1];
         }
 
         if (i == ui->numRows - 1) {
             ui->rows[i].nextRow = &ui->rows[0];
-        }
-        else {
-            ui->rows[i].nextRow = &ui->rows[i+1];
+        } else {
+            ui->rows[i].nextRow = &ui->rows[i + 1];
         }
     }
 
@@ -986,9 +981,8 @@ int main (int argc, char** argv) {
                 printf("shutting down\n");
                 running = 0;
                 break;
-            }
-            else if (event.type == SDL_KEYUP) {
-                SDL_KeyboardEvent *keyEvent = (SDL_KeyboardEvent*) &event;
+            } else if (event.type == SDL_KEYUP) {
+                SDL_KeyboardEvent *keyEvent = (SDL_KeyboardEvent *) &event;
                 if (keyEvent->keysym.scancode == SDL_SCANCODE_ESCAPE) {
                     printf("escape pressed, shutting down.\n");
                     running = 0;
@@ -998,23 +992,21 @@ int main (int argc, char** argv) {
 
                     LaunchTarget *target = ui->rowCursor->tileCursor->target;
 
-                    if (strlen(target->path) == 0 || 
-                            strlen(target->fileName) == 0) 
-                    {
+                    if (strlen(target->path) == 0 ||
+                        strlen(target->fileName) == 0) {
                         printf("%s has no launch candidate\n", target->name);
-                    }
-                    else {
+                    } else {
 
                         char *romSlug;
-                        asprintf(&romSlug, "%s", (char*) &target->path);
+                        asprintf(&romSlug, "%s", (char *) &target->path);
 
                         char *launchString = calloc(PATH_MAX, sizeof(char));
-                        
+
                         for (uint32_t i = 0; i < nPaths; i++) {
                             if (strcmp(target->path, launchers[i].path))
-                                memcpy( launchString, 
-                                        launchers[i].launcher, 
-                                        strlen(launchers[i].launcher));
+                                memcpy(launchString,
+                                       launchers[i].launcher,
+                                       strlen(launchers[i].launcher));
                         }
                         assert(strlen(launchString));
 
@@ -1022,11 +1014,11 @@ int main (int argc, char** argv) {
                         uint8_t replaceIter = 0, replaceLimit = 8;
                         while ((p = strstr(launchString, "%ROM%"))) {
                             memmove(
-                                    p + strlen(romSlug) + 2, 
+                                    p + strlen(romSlug) + 2,
                                     p + 5,
-                                    strlen(p+5));
+                                    strlen(p + 5));
                             *p = '"';
-                            memcpy(p+1, romSlug, strlen(romSlug));
+                            memcpy(p + 1, romSlug, strlen(romSlug));
                             *(p + 1 + strlen(romSlug)) = '"';
 
                             replaceIter++;
@@ -1041,32 +1033,23 @@ int main (int argc, char** argv) {
                         free(launchString);
                     }
 
-                }
-                else if (
+                } else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_DOWN ||
-                        keyEvent->keysym.scancode == SDL_SCANCODE_J) 
-                {
+                        keyEvent->keysym.scancode == SDL_SCANCODE_J) {
                     changeRow(ui, 1);
-                }
-                else if (
+                } else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_UP ||
-                        keyEvent->keysym.scancode == SDL_SCANCODE_K) 
-                {
+                        keyEvent->keysym.scancode == SDL_SCANCODE_K) {
                     changeRow(ui, 0);
-                }
-                else if (
+                } else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
-                        keyEvent->keysym.scancode == SDL_SCANCODE_L) 
-                {
+                        keyEvent->keysym.scancode == SDL_SCANCODE_L) {
                     changeColumn(ui, 1);
-                }
-                else if (
+                } else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
-                        keyEvent->keysym.scancode == SDL_SCANCODE_H) 
-                {
+                        keyEvent->keysym.scancode == SDL_SCANCODE_H) {
                     changeColumn(ui, 0);
-                }
-                else {
+                } else {
                     printf("key up %d\n", keyEvent->keysym.scancode);
                 }
             }
@@ -1372,7 +1355,7 @@ int main (int argc, char** argv) {
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "Frame Time: %u", frameTime);
-        SDL_Color fpsColor = {255,0,2,255};
+        SDL_Color fpsColor = {255, 0, 0, 255};
 
         SDL_Surface *fpsSurface = TTF_RenderText_Blended(
                 ui->debugFont,
@@ -1392,15 +1375,13 @@ int main (int argc, char** argv) {
         if (colors == 4) {   // alpha
             if (fpsSurface->format->Rmask == 0x000000ff) {
                 texture_format = GL_RGBA;
-            }
-            else {
+            } else {
                 texture_format = GL_BGRA;
             }
         } else {             // no alpha
             if (fpsSurface->format->Rmask == 0x000000ff) {
                 texture_format = GL_RGB;
-            }
-            else {
+            } else {
                 texture_format = GL_BGR;
             }
         }
@@ -1446,11 +1427,11 @@ int main (int argc, char** argv) {
         glEnableVertexAttribArray(0);
         glEnableVertexAttribArray(1);
         glEnableVertexAttribArray(2);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8*sizeof(float), 0);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8*sizeof(float), 
-                (void*)(3*sizeof(float)));
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8*sizeof(float), 
-                (void*)(6*sizeof(float)));
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), 0);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float),
+                              (void *) (3 * sizeof(float)));
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float),
+                              (void *) (6 * sizeof(float)));
 
         glDrawArrays(GL_TRIANGLES, 0, 6); // DRAW SIX VERTICES
 
@@ -1475,24 +1456,22 @@ int main (int argc, char** argv) {
     return 0;
 }
 
-double easeOutCirc(double t, double b, double c, double d) 
-{
-	t /= d;
-	t--;
-	double change = c * sqrt(1.0f - t*t) + b;
+double easeOutCirc(double t, double b, double c, double d) {
+    t /= d;
+    t--;
+    double change = c * sqrt(1.0f - t * t) + b;
     return change;
 };
 
 
-double easeInOutCirc (double t, double b, double c, double d) {
-	t /= d/2.0;
-	if (t < 1.0) return -c/2.0 * (sqrt(1.0 - t*t) - 1.0) + b;
-	t -= 2.0;
-	return c/2.0 * (sqrt(1.0 - t*t) + 1.0) + b;
+double easeInOutCirc(double t, double b, double c, double d) {
+    t /= d / 2.0;
+    if (t < 1.0) return -c / 2.0 * (sqrt(1.0 - t * t) - 1.0) + b;
+    t -= 2.0;
+    return c / 2.0 * (sqrt(1.0 - t * t) + 1.0) + b;
 };
 
-char *getCsvField(char *line, int fieldNo) 
-{
+char *getCsvField(char *line, int fieldNo) {
     char *cursor = line;
     char *fieldStart = NULL;
     char *fieldEnd = NULL;
@@ -1509,12 +1488,10 @@ char *getCsvField(char *line, int fieldNo)
 
             if (*cursor == '"') {
                 inQuotes++;
-            }
-            else if ((*cursor == ',' && !(inQuotes & 1)) ||
-                    *cursor == '\r' || 
-                    *cursor == '\n' || 
-                    *cursor == '\0') 
-            {
+            } else if ((*cursor == ',' && !(inQuotes & 1)) ||
+                       *cursor == '\r' ||
+                       *cursor == '\n' ||
+                       *cursor == '\0') {
                 fieldEnd = cursor - 1;
                 cursor++;
                 break;
@@ -1535,8 +1512,7 @@ char *getCsvField(char *line, int fieldNo)
     return fieldString;
 }
 
-uint32_t needsReRender(SDL_Window *window, OffblastUi *ui) 
-{
+uint32_t needsReRender(SDL_Window *window, OffblastUi *ui) {
     int32_t newWidth, newHeight;
     uint32_t updated = 0;
 
@@ -1545,19 +1521,19 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
     if (newWidth != ui->winWidth || newHeight != ui->winHeight) {
 
         ui->winWidth = newWidth;
-        ui->winHeight= newHeight;
-        glViewport(0, 0, (GLsizei)newWidth, (GLsizei)newHeight);
+        ui->winHeight = newHeight;
+        glViewport(0, 0, (GLsizei) newWidth, (GLsizei) newHeight);
         ui->winFold = newHeight * 0.5;
         ui->winMargin = goldenRatioLarge((double) newWidth, 5);
 
         // 7:5
         ui->boxHeight = goldenRatioLarge(ui->winWidth, 4);
-        ui->boxWidth = ui->boxHeight/5 * 7;
+        ui->boxWidth = ui->boxHeight / 5 * 7;
 
         ui->boxPad = goldenRatioLarge((double) ui->winWidth, 9);
 
-        ui->descriptionWidth = 
-            goldenRatioLarge((double) newWidth, 1) - ui->winMargin;
+        ui->descriptionWidth =
+                goldenRatioLarge((double) newWidth, 1) - ui->winMargin;
 
         // TODO Find a better way to enfoce this
         ui->descriptionHeight = goldenRatioLarge(ui->winWidth, 3);
@@ -1605,10 +1581,8 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
 
 void changeColumn(
         OffblastUi *ui,
-        uint32_t direction) 
-{
-    if (animationRunning(ui) == 0)
-    {
+        uint32_t direction) {
+    if (animationRunning(ui) == 0) {
         ui->horizontalAnimation->startTick = SDL_GetTicks();
         ui->horizontalAnimation->direction = direction;
         ui->horizontalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
@@ -1622,22 +1596,19 @@ void changeColumn(
         ui->infoAnimation->callback = &infoFaded;
 
         if (direction == 0) {
-            ui->movingToTarget = 
-                ui->rowCursor->tileCursor->previous->target;
-        }
-        else {
-            ui->movingToTarget 
-                = ui->rowCursor->tileCursor->next->target;
+            ui->movingToTarget =
+                    ui->rowCursor->tileCursor->previous->target;
+        } else {
+            ui->movingToTarget
+                    = ui->rowCursor->tileCursor->next->target;
         }
     }
 }
 
 void changeRow(
         OffblastUi *ui,
-        uint32_t direction) 
-{
-    if (animationRunning(ui) == 0)
-    {
+        uint32_t direction) {
+    if (animationRunning(ui) == 0) {
         ui->verticalAnimation->startTick = SDL_GetTicks();
         ui->verticalAnimation->direction = direction;
         ui->verticalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
@@ -1658,13 +1629,12 @@ void changeRow(
 
         if (direction == 0) {
             ui->movingToRow = ui->rowCursor->previousRow;
-            ui->movingToTarget = 
-                ui->rowCursor->previousRow->tileCursor->target;
-        }
-        else {
+            ui->movingToTarget =
+                    ui->rowCursor->previousRow->tileCursor->target;
+        } else {
             ui->movingToRow = ui->rowCursor->nextRow;
-            ui->movingToTarget = 
-                ui->rowCursor->nextRow->tileCursor->target;
+            ui->movingToTarget =
+                    ui->rowCursor->nextRow->tileCursor->target;
         }
     }
 }
@@ -1672,15 +1642,13 @@ void changeRow(
 void startVerticalAnimation(
         Animation *verticalAnimation,
         Animation *titleAnimation,
-        uint32_t direction)
-{
+        uint32_t direction) {
 }
 
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth) {
     if (depth == 0) {
         return fromTile;
-    }
-    else {
+    } else {
         fromTile = fromTile->previous;
         return rewindTiles(fromTile, --depth);
     }
@@ -1690,31 +1658,28 @@ UiTile *rewindTiles(UiTile *fromTile, uint32_t depth) {
 double goldenRatioLarge(double in, uint32_t exponent) {
     if (exponent == 0) {
         return in;
-    }
-    else {
-        return goldenRatioLarge(1/PHI * in, --exponent); 
+    } else {
+        return goldenRatioLarge(1 / PHI * in, --exponent);
     }
 }
 
 void horizontalMoveDone(OffblastUi *ui) {
     if (ui->horizontalAnimation->direction == 1) {
-        ui->rowCursor->tileCursor = 
-            ui->rowCursor->tileCursor->next;
-    }
-    else {
-        ui->rowCursor->tileCursor = 
-            ui->rowCursor->tileCursor->previous;
+        ui->rowCursor->tileCursor =
+                ui->rowCursor->tileCursor->next;
+    } else {
+        ui->rowCursor->tileCursor =
+                ui->rowCursor->tileCursor->previous;
     }
 }
 
 void verticalMoveDone(OffblastUi *ui) {
     if (ui->verticalAnimation->direction == 1) {
-        ui->rowCursor = 
-            ui->rowCursor->nextRow;
-    }
-    else {
-        ui->rowCursor = 
-            ui->rowCursor->previousRow;
+        ui->rowCursor =
+                ui->rowCursor->nextRow;
+    } else {
+        ui->rowCursor =
+                ui->rowCursor->previousRow;
     }
 }
 
@@ -1737,8 +1702,7 @@ void infoFaded(OffblastUi *ui) {
         ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
         ui->infoAnimation->animating = 1;
         ui->infoAnimation->callback = &infoFaded;
-    }
-    else {
+    } else {
         ui->infoAnimation->animating = 0;
     }
 }
@@ -1754,8 +1718,7 @@ void rowNameFaded(OffblastUi *ui) {
         ui->rowNameAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
         ui->rowNameAnimation->animating = 1;
         ui->rowNameAnimation->callback = &rowNameFaded;
-    }
-    else {
+    } else {
         ui->rowNameAnimation->animating = 0;
     }
 }
@@ -1770,11 +1733,9 @@ uint32_t animationRunning(OffblastUi *ui) {
 
     if (ui->horizontalAnimation->animating != 0) {
         result++;
-    }
-    else if (ui->verticalAnimation->animating != 0) {
+    } else if (ui->verticalAnimation->animating != 0) {
         result++;
-    }
-    else if (ui->infoAnimation->animating != 0) {
+    } else if (ui->infoAnimation->animating != 0) {
         result++;
     }
 
@@ -1782,97 +1743,69 @@ uint32_t animationRunning(OffblastUi *ui) {
 }
 
 void animationTick(Animation *theAnimation, OffblastUi *ui) {
-        if (theAnimation->animating && SDL_GetTicks() > 
-                theAnimation->startTick + theAnimation->durationMs) 
-        {
-            theAnimation->animating = 0;
-            theAnimation->callback(ui);
-        }
+    if (theAnimation->animating && SDL_GetTicks() >
+                                   theAnimation->startTick + theAnimation->durationMs) {
+        theAnimation->animating = 0;
+        theAnimation->callback(ui);
+    }
 }
 
 const char *platformString(char *key) {
     if (strcmp(key, "32x") == 0) {
         return "Sega 32X";
-    }
-    else if (strcmp(key, "arcade") == 0) {
+    } else if (strcmp(key, "arcade") == 0) {
         return "Arcade";
-    }
-    else if (strcmp(key, "atari_2600") == 0) {
+    } else if (strcmp(key, "atari_2600") == 0) {
         return "Atari 2600";
-    }
-    else if (strcmp(key, "atari_5200") == 0) {
+    } else if (strcmp(key, "atari_5200") == 0) {
         return "Atari 5200";
-    }
-    else if (strcmp(key, "atari_7800") == 0) {
+    } else if (strcmp(key, "atari_7800") == 0) {
         return "Atari 7800";
-    }
-    else if (strcmp(key, "atari_8-bit_family") == 0) {
+    } else if (strcmp(key, "atari_8-bit_family") == 0) {
         return "Atari 8-Bit Family";
-    }
-    else if (strcmp(key, "dreamcast") == 0) {
+    } else if (strcmp(key, "dreamcast") == 0) {
         return "Sega Dreamcast";
-    }
-    else if (strcmp(key, "game_boy_advance") == 0) {
+    } else if (strcmp(key, "game_boy_advance") == 0) {
         return "Game Boy Advance";
-    }
-    else if (strcmp(key, "game_boy_color") == 0) {
+    } else if (strcmp(key, "game_boy_color") == 0) {
         return "Game Boy Color";
-    }
-    else if (strcmp(key, "game_boy") == 0) {
+    } else if (strcmp(key, "game_boy") == 0) {
         return "Game Boy";
-    }
-    else if (strcmp(key, "gamecube") == 0) {
+    } else if (strcmp(key, "gamecube") == 0) {
         return "Gamecube";
-    }
-    else if (strcmp(key, "game_gear") == 0) {
+    } else if (strcmp(key, "game_gear") == 0) {
         return "Game Gear";
-    }
-    else if (strcmp(key, "master_system") == 0) {
+    } else if (strcmp(key, "master_system") == 0) {
         return "Master System";
-    }
-    else if (strcmp(key, "mega_drive") == 0) {
+    } else if (strcmp(key, "mega_drive") == 0) {
         return "Mega Drive";
-    }
-    else if (strcmp(key, "nintendo_64") == 0) {
+    } else if (strcmp(key, "nintendo_64") == 0) {
         return "Nintendo 64";
-    }
-    else if (strcmp(key, "nintendo_ds") == 0) {
+    } else if (strcmp(key, "nintendo_ds") == 0) {
         return "Nintendo DS";
-    }
-    else if (strcmp(key, "nintendo_entertainment_system") == 0) {
+    } else if (strcmp(key, "nintendo_entertainment_system") == 0) {
         return "NES";
-    }
-    else if (strcmp(key, "pc") == 0) {
+    } else if (strcmp(key, "pc") == 0) {
         return "PC";
-    }
-    else if (strcmp(key, "playstation_3") == 0) {
+    } else if (strcmp(key, "playstation_3") == 0) {
         return "Playstation 3";
-    }
-    else if (strcmp(key, "playstation_2") == 0) {
+    } else if (strcmp(key, "playstation_2") == 0) {
         return "Playstation 2";
-    }
-    else if (strcmp(key, "playstation") == 0) {
+    } else if (strcmp(key, "playstation") == 0) {
         return "Playstation";
-    }
-    else if (strcmp(key, "playstation_portable") == 0) {
+    } else if (strcmp(key, "playstation_portable") == 0) {
         return "Playstation Portable";
-    }
-    else if (strcmp(key, "sega_cd") == 0) {
+    } else if (strcmp(key, "sega_cd") == 0) {
         return "Sega CD";
-    }
-    else if (strcmp(key, "sega_saturn") == 0) {
+    } else if (strcmp(key, "sega_saturn") == 0) {
         return "Saturn";
-    }
-    else if (strcmp(key, "super_nintendo_entertainment_system") == 0) {
+    } else if (strcmp(key, "super_nintendo_entertainment_system") == 0) {
         return "SNES";
-    }
-    else if (strcmp(key, "turbografx-16") == 0) {
+    } else if (strcmp(key, "turbografx-16") == 0) {
         return "TurboGrafx-16";
-    }
-    else if (strcmp(key, "wii") == 0) {
+    } else if (strcmp(key, "wii") == 0) {
         return "Wii";
-    }
-    else if (strcmp(key, "wii_u") == 0) {
+    } else if (strcmp(key, "wii_u") == 0) {
         return "Wii-U";
     }
 
@@ -1886,7 +1819,7 @@ char *getCoverPath(uint32_t signature) {
     assert(homePath);
 
     char *coverArtPath;
-    asprintf(&coverArtPath, "%s/.offblast/covers/%u.jpg", homePath, signature); 
+    asprintf(&coverArtPath, "%s/.offblast/covers/%u.jpg", homePath, signature);
 
     return coverArtPath;
 }
@@ -1894,15 +1827,14 @@ char *getCoverPath(uint32_t signature) {
 
 void *downloadCover(void *arg) {
 
-    UiTile* tileToRender = (UiTile *)arg;
-    char *coverArtPath = getCoverPath(tileToRender->target->targetSignature); 
+    UiTile *tileToRender = (UiTile *) arg;
+    char *coverArtPath = getCoverPath(tileToRender->target->targetSignature);
     FILE *fd = fopen(coverArtPath, "wb");
     free(coverArtPath);
 
     if (!fd) {
         printf("Can't open file for write\n");
-    }
-    else {
+    } else {
 
         curl_global_init(CURL_GLOBAL_DEFAULT);
         CURL *curl = curl_easy_init();
@@ -1913,11 +1845,11 @@ void *downloadCover(void *arg) {
         //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
         curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
-        char *url = (char *) 
-            tileToRender->target->coverUrl;
+        char *url = (char *)
+                tileToRender->target->coverUrl;
 
-        printf("Downloading Art for %s\n", 
-                tileToRender->target->name);
+        printf("Downloading Art for %s\n",
+               tileToRender->target->name);
 
         curl_easy_setopt(curl, CURLOPT_URL, url);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, fd);
