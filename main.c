@@ -141,6 +141,15 @@ const char *platformString(char *key);
 void *downloadCover(void *arg);
 char *getCoverPath();
 
+unsigned int power_two_floor(unsigned int val) {
+    unsigned int power = 2, nextVal = power * 2;
+
+    while ((nextVal *= 2) <= val)
+        power *= 2;
+
+    return power * 2;
+}
+
 void changeRow(
         OffblastUi *ui,
         uint32_t direction);
@@ -1402,8 +1411,14 @@ int main (int argc, char** argv) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-        glTexImage2D(GL_TEXTURE_2D, 0, texture_format, fpsSurface->w, fpsSurface->h,
-                0, texture_format, GL_UNSIGNED_BYTE, fpsSurface->pixels);
+        int w = power_two_floor(fpsSurface->w) * 2;
+        int h = power_two_floor(fpsSurface->h) * 2;
+
+        SDL_Surface *s = SDL_CreateRGBSurface(0, w, h, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
+        SDL_BlitSurface(fpsSurface, NULL, s, NULL);
+
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h,
+                     0, texture_format, GL_UNSIGNED_BYTE, s->pixels);
         //glGenerateMipmap(GL_TEXTURE_2D);
 
         SDL_FreeSurface(fpsSurface);
