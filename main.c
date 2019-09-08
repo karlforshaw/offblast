@@ -2,17 +2,17 @@
 #define PHI 1.618033988749895
 
 #define COLS_ON_SCREEN 5
-#define COLS_TOTAL 10 
+#define COLS_TOTAL 10
 #define ROWS_TOTAL 4
 #define MAX_LAUNCH_COMMAND_LENGTH 512
-#define MAX_PLATFORMS 50 
+#define MAX_PLATFORMS 50
 
 #define LOAD_STATE_UNKNOWN 0
 #define LOAD_STATE_DOWNLOADING 1
 #define LOAD_STATE_DOWNLOADED 2
 #define LOAD_STATE_LOADED 3
 
-#define NAVIGATION_MOVE_DURATION 250 
+#define NAVIGATION_MOVE_DURATION 250
 
 // TODO GRADIENT LAYERS
 //      * move to an opengl renderer
@@ -49,7 +49,7 @@
 #include <curl/curl.h>
 #include <math.h>
 #include <pthread.h>
-        
+
 #define GL3_PROTOTYPES 1
 #include <GL/glew.h>
 
@@ -60,8 +60,8 @@ typedef struct UiTile{
     struct LaunchTarget *target;
     SDL_Texture *texture;
     uint8_t loadState;
-    struct UiTile *next; 
-    struct UiTile *previous; 
+    struct UiTile *next;
+    struct UiTile *previous;
 } UiTile;
 
 typedef struct UiRow {
@@ -763,6 +763,8 @@ int main (int argc, char** argv) {
             fpsVertexPositions, GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
+    GLint len;
+    char *logString;
 
     const char *vertexShaderStr = 
         "#version 330\n"
@@ -780,7 +782,7 @@ int main (int argc, char** argv) {
 
     const char *fragmentShaderStr = 
         "#version 330\n"
-        "smooth in vec4 theColor;\n"
+        "smooth in vec3 theColor;\n"
         "in vec2 TexCoord;\n"
         "out vec4 outputColor;\n"
         "uniform sampler2D ourTexture;\n"
@@ -797,10 +799,9 @@ int main (int argc, char** argv) {
     glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &compStatus);
     printf("Vertex Shader Compilation: %d\n", compStatus);
     if (!compStatus) {
-        GLint len;
-        glGetShaderiv(vertexShader, GL_INFO_LOG_LENGTH, 
+        glGetShaderiv(vertexShader, GL_INFO_LOG_LENGTH,
                 &len);
-        char *logString = calloc(1, len+1);
+        logString = calloc(1, len+1);
         glGetShaderInfoLog(vertexShader, len, NULL, logString);
         printf("%s\n", logString);
     }
@@ -811,6 +812,13 @@ int main (int argc, char** argv) {
     glCompileShader(fragmentShader);
     glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &compStatus);
     printf("Fragment Shader Compilation: %d\n", compStatus);
+    if(!compStatus){
+        glGetShaderiv(vertexShader, GL_INFO_LOG_LENGTH,
+                &len);
+        logString = calloc(1, len+1);
+        glGetShaderInfoLog(fragmentShader, len, NULL, logString);
+        printf("%s\n", logString);
+    }
     assert(compStatus);
 
     GLuint program = glCreateProgram();
@@ -821,6 +829,12 @@ int main (int argc, char** argv) {
     GLint programStatus;
     glGetProgramiv(program, GL_LINK_STATUS, &programStatus);
     printf("GL Program Status: %d\n", programStatus);
+    if(!programStatus){
+        glGetProgramiv(program,GL_INFO_LOG_LENGTH, &len);
+        logString = calloc(1, len+1);
+        glGetProgramInfoLog(program, 512, NULL, logString);
+        printf("%s", logString);
+    }
     assert(programStatus);
 
     glDetachShader(program, vertexShader);
