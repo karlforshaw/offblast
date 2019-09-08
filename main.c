@@ -723,6 +723,9 @@ int main (int argc, char** argv) {
 
     SDL_GLContext glContext = SDL_GL_CreateContext(window);
     glewInit();
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CW);
 
     OffblastUi *ui = calloc(1, sizeof(OffblastUi));
     needsReRender(window, ui);
@@ -739,40 +742,52 @@ int main (int argc, char** argv) {
     // Create the vertex data and buffers for each layer
     // FPS INFO 
     const float fpsVertexPositions[] = {
-        0.75f, 0.75f, 0.0f, 1.0f,
-        0.75f, -0.75f, 0.0f, 1.0f,
-        -0.75f, -0.75f, 0.0f, 1.0f,
-        -0.75f, -0.75f, 0.0f, 1.0f,
-        -0.75f, 0.75f, 0.0f, 1.0f,
-        0.75f, 0.75f, 0.0f, 1.0f,
+        // xyz                  // rgb              //tex coord
+        -0.25f, -0.25f, 0.0f,   1.0f, 0.0f, 0.0f,   0.0f, 0.0f,
+        -0.25f, 0.25f, 0.0f,    0.0f, 1.0f, 0.0f,   0.0f, 1.0f,
+        0.25f, 0.25f, 0.0f,     0.0f, 0.0f, 1.0f,   1.0f, 1.0f,
+
+        0.25f, 0.25f, 0.0f,     0.0f, 0.0f, 1.0f,   1.0f, 1.0f,
+        0.25f, -0.25f, 0.0f,    0.0f, 1.0f, 0.0f,   1.0f, 0.0f,
+        -0.25f, -0.25f, 0.0f,   1.0f, 0.0f, 0.0f,   0.0f, 0.0f,
     };
 
     GLuint fpsVertexBufferObject;
     GLuint vao;
 
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
     glGenBuffers(1, &fpsVertexBufferObject);
     glBindBuffer(GL_ARRAY_BUFFER, fpsVertexBufferObject);
     glBufferData(GL_ARRAY_BUFFER, sizeof(fpsVertexPositions), 
             fpsVertexPositions, GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
 
     const char *vertexShaderStr = 
         "#version 330\n"
-        "layout(location = 0) in vec4 position;\n"
+        "layout(location = 0) in vec3 position;\n"
+        "layout(location = 1) in vec3 color;\n"
+        "layout(location = 2) in vec2 aTexcoord;\n"
+        "smooth out vec3 theColor;\n"
+        "out vec2 TexCoord;\n"
         "void main()\n"
         "{\n"
-        "   gl_Position = position;\n"
+        "   gl_Position = vec4(position, 1.0);\n"
+        "   theColor = color;\n"
+        "   TexCoord = aTexcoord;\n"
         "}\n";
 
     const char *fragmentShaderStr = 
         "#version 330\n"
+        "smooth in vec4 theColor;\n"
+        "in vec2 TexCoord;\n"
         "out vec4 outputColor;\n"
+        "uniform sampler2D ourTexture;\n"
         "void main()\n"
         "{\n"
-        "   outputColor = vec4(1.0f, 0.7f, 0.6f, 0.8f);\n"
+        "   //outputColor = theColor;\n"
+        "   outputColor = texture(ourTexture, TexCoord);\n"
         "}\n";
 
     GLint compStatus = GL_FALSE; 
@@ -781,6 +796,14 @@ int main (int argc, char** argv) {
     glCompileShader(vertexShader);
     glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &compStatus);
     printf("Vertex Shader Compilation: %d\n", compStatus);
+    if (!compStatus) {
+        GLint len;
+        glGetShaderiv(vertexShader, GL_INFO_LOG_LENGTH, 
+                &len);
+        char *logString = calloc(1, len+1);
+        glGetShaderInfoLog(vertexShader, len, NULL, logString);
+        printf("%s\n", logString);
+    }
     assert(compStatus);
 
     GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
@@ -1022,21 +1045,6 @@ int main (int argc, char** argv) {
         // XXX SDL RENDER
         //SDL_SetRenderDrawColor(ui->renderer, 0x03, 0x03, 0x03, 0xFF);
         //SDL_RenderClear(ui->renderer);
-        glClearColor(1.0, 0.0, 0.0, 1.0);
-        glClear(GL_COLOR_BUFFER_BIT);
-        glUseProgram(program);
-
-        // XXX KARL
-        // gonna print the fps layer here
-        glBindBuffer(GL_ARRAY_BUFFER, fpsVertexBufferObject);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0);
-        glDrawArrays(GL_TRIANGLES, 0, 6); // DRAW SIX VERTICES
-
-        glDisableVertexAttribArray(0);
-        glUseProgram(0);
-
-        SDL_GL_SwapWindow(window);
 
 
         // Blocks
@@ -1328,13 +1336,14 @@ int main (int argc, char** argv) {
         animationTick(ui->infoAnimation, ui);
         animationTick(ui->rowNameAnimation, ui);
 
+#endif
         // DEBUG FPS INFO
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "Frame Time: %u", frameTime);
         SDL_Color fpsColor = {255,255,255,255};
 
-        SDL_Surface *fpsSurface = TTF_RenderText_Solid(
+        SDL_Surface *fpsSurface = TTF_RenderText_Blended(
                 ui->debugFont,
                 fpsString,
                 fpsColor);
@@ -1346,25 +1355,59 @@ int main (int argc, char** argv) {
             return 1;
         }
 
-        SDL_Texture* fpsTexture = SDL_CreateTextureFromSurface(
-                ui->renderer, fpsSurface);
+        // XXX 
+
+        GLuint texture;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fpsSurface->w, fpsSurface->h,
+                0, GL_RGBA, GL_UNSIGNED_BYTE, fpsSurface->pixels);
+        //glGenerateMipmap(GL_TEXTURE_2D);
 
         SDL_FreeSurface(fpsSurface);
 
+        /*
         SDL_Rect fpsRect = {
             goldenRatioLarge(ui->winWidth, 9),
             goldenRatioLarge(ui->winHeight, 9),
             0, 0};
 
         SDL_QueryTexture(fpsTexture, NULL, NULL, &fpsRect.w, &fpsRect.h);
-
-        //SDL_RenderCopy(ui->renderer, fpsTexture, NULL, &fpsRect);
-        //
         SDL_DestroyTexture(fpsTexture);
-#endif
+        */
 
 
         //SDL_RenderPresent(ui->renderer);
+        glClearColor(0.9, 0.9, 0.9, 1.0);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        GLint texUni = glGetUniformLocation(program, "ourTexture");
+        glUseProgram(program);
+        glUniform1i(texUni, texture);
+
+        // XXX KARL
+        // gonna print the fps layer here
+        glBindBuffer(GL_ARRAY_BUFFER, fpsVertexBufferObject);
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8*sizeof(float), 0);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8*sizeof(float), 
+                (void*)(3*sizeof(float)));
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8*sizeof(float), 
+                (void*)(6*sizeof(float)));
+
+        //glBindTexture(GL_TEXTURE_2D, texture);
+        //glActiveTexture(GL_TEXTURE0);
+        glDrawArrays(GL_TRIANGLES, 0, 6); // DRAW SIX VERTICES
+
+        glDisableVertexAttribArray(0);
+        glDisableVertexAttribArray(1);
+        glDisableVertexAttribArray(2);
+        glUseProgram(0);
+
         SDL_GL_SwapWindow(window);
 
         if (SDL_GetTicks() - lastTick < renderFrequency) {
