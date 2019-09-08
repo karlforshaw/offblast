@@ -73,6 +73,8 @@ typedef struct UiRow {
     struct UiRow *previousRow;
 } UiRow;
 
+typedef float UiRect[6][6]; 
+
 struct OffblastUi;
 typedef struct Animation {
     uint32_t animating;
@@ -99,6 +101,11 @@ typedef struct OffblastUi {
         TTF_Font *titleFont;
         TTF_Font *infoFont;
         TTF_Font *debugFont;
+
+        GLuint fpsVbo;
+
+        UiRect *fpsVertices;
+        UiRect *titleVertices;
 
         SDL_Texture *titleTexture;
         SDL_Texture *infoTexture;
@@ -140,6 +147,8 @@ void animationTick(Animation *theAnimation, OffblastUi *ui);
 const char *platformString(char *key);
 void *downloadCover(void *arg);
 char *getCoverPath();
+UiRect *createRect(uint32_t winWidth, uint32_t winHeight, 
+        uint32_t rectWidth, uint32_t rectHeight);
 
 void changeRow(
         OffblastUi *ui,
@@ -148,6 +157,14 @@ void changeRow(
 void changeColumn(
         OffblastUi *ui,
         uint32_t direction);
+
+uint32_t powTwoFloor(uint32_t val) {
+    uint32_t pow = 2;
+    while (val > pow)
+        pow *= 2;
+
+    return pow;
+}
 
 int main (int argc, char** argv) {
 
@@ -726,67 +743,40 @@ int main (int argc, char** argv) {
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CW);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     OffblastUi *ui = calloc(1, sizeof(OffblastUi));
     needsReRender(window, ui);
-
-    // TODO remove
-    //ui->renderer = SDL_CreateRenderer(window, -1, 
-     //       SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
     ui->horizontalAnimation = calloc(1, sizeof(Animation));
     ui->verticalAnimation = calloc(1, sizeof(Animation));
     ui->infoAnimation = calloc(1, sizeof(Animation));
     ui->rowNameAnimation = calloc(1, sizeof(Animation));
 
-    // Create the vertex data and buffers for each layer
-    // FPS INFO 
-    const float fpsVertexPositions[] = {
-        // xyz                  // rgb              //tex coord
-        -0.25f, -0.25f, 0.0f,   1.0f, 0.0f, 0.0f,   0.0f, 0.0f,
-        -0.25f, 0.25f, 0.0f,    0.0f, 1.0f, 0.0f,   0.0f, 1.0f,
-        0.25f, 0.25f, 0.0f,     0.0f, 0.0f, 1.0f,   1.0f, 1.0f,
-
-        0.25f, 0.25f, 0.0f,     0.0f, 0.0f, 1.0f,   1.0f, 1.0f,
-        0.25f, -0.25f, 0.0f,    0.0f, 1.0f, 0.0f,   1.0f, 0.0f,
-        -0.25f, -0.25f, 0.0f,   1.0f, 0.0f, 0.0f,   0.0f, 0.0f,
-    };
-
-    GLuint fpsVertexBufferObject;
     GLuint vao;
-
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
-    glGenBuffers(1, &fpsVertexBufferObject);
-    glBindBuffer(GL_ARRAY_BUFFER, fpsVertexBufferObject);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(fpsVertexPositions), 
-            fpsVertexPositions, GL_STATIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-
 
     const char *vertexShaderStr = 
         "#version 330\n"
-        "layout(location = 0) in vec3 position;\n"
-        "layout(location = 1) in vec3 color;\n"
-        "layout(location = 2) in vec2 aTexcoord;\n"
-        "smooth out vec3 theColor;\n"
+        "layout(location = 0) in vec4 position;\n"
+        "layout(location = 1) in vec2 aTexcoord;\n"
         "out vec2 TexCoord;\n"
         "void main()\n"
         "{\n"
-        "   gl_Position = vec4(position, 1.0);\n"
-        "   theColor = color;\n"
+        "   gl_Position = position;\n"
         "   TexCoord = aTexcoord;\n"
         "}\n";
 
     const char *fragmentShaderStr = 
         "#version 330\n"
-        "smooth in vec3 theColor;\n"
         "in vec2 TexCoord;\n"
         "out vec4 outputColor;\n"
         "uniform sampler2D ourTexture;\n"
         "void main()\n"
         "{\n"
-        "   //outputColor = theColor;\n"
+        "   //outputColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);\n"
         "   outputColor = texture(ourTexture, TexCoord);\n"
         "}\n";
 
@@ -823,8 +813,6 @@ int main (int argc, char** argv) {
     printf("GL Program Status: %d\n", programStatus);
     assert(programStatus);
 
-    GLint texUni = glGetUniformLocation(program, "ourTexture");
-    glUniform1i(texUni, GL_TEXTURE0);
 
     glDetachShader(program, vertexShader);
     glDetachShader(program, fragmentShader);
@@ -834,7 +822,9 @@ int main (int argc, char** argv) {
     GLuint fpsTexture;
     glGenTextures(1, &fpsTexture);
     printf("fpsTexture is %u\n", fpsTexture);
-    glActiveTexture(GL_TEXTURE0);
+
+    GLint texUni = glGetUniformLocation(program, "ourTexture");
+    printf("uniform is %u\n", texUni);
 
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
@@ -1348,8 +1338,8 @@ int main (int argc, char** argv) {
         // DEBUG FPS INFO
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
-        asprintf(&fpsString, "Frame Time: %u", frameTime);
-        SDL_Color fpsColor = {255,0,2,255};
+        asprintf(&fpsString, "frame time: %u", frameTime);
+        SDL_Color fpsColor = {255,255,255,255};
 
         SDL_Surface *fpsSurface = TTF_RenderText_Blended(
                 ui->debugFont,
@@ -1363,24 +1353,14 @@ int main (int argc, char** argv) {
             return 1;
         }
 
-        // XXX 
-        uint32_t colors = fpsSurface->format->BytesPerPixel;
-        GLint texture_format = GL_RGBA;
-        if (colors == 4) {   // alpha
-            if (fpsSurface->format->Rmask == 0x000000ff) {
-                texture_format = GL_RGBA;
-            }
-            else {
-                texture_format = GL_BGRA;
-            }
-        } else {             // no alpha
-            if (fpsSurface->format->Rmask == 0x000000ff) {
-                texture_format = GL_RGB;
-            }
-            else {
-                texture_format = GL_BGR;
-            }
-        }
+        uint32_t newWidth = powTwoFloor(fpsSurface->w);
+        uint32_t newHeight = powTwoFloor(fpsSurface->h);
+
+        SDL_Surface *newSurface = SDL_CreateRGBSurface(
+                0, newWidth, newHeight, 32,
+                0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
+
+        SDL_BlitSurface(fpsSurface, NULL, newSurface, NULL);
 
         glBindTexture(GL_TEXTURE_2D, fpsTexture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -1388,11 +1368,12 @@ int main (int argc, char** argv) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-        glTexImage2D(GL_TEXTURE_2D, 0, texture_format, fpsSurface->w, fpsSurface->h,
-                0, texture_format, GL_UNSIGNED_BYTE, fpsSurface->pixels);
-        //glGenerateMipmap(GL_TEXTURE_2D);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight,
+                0, GL_BGRA, GL_UNSIGNED_BYTE, newSurface->pixels);
 
         SDL_FreeSurface(fpsSurface);
+        SDL_FreeSurface(newSurface);
+
 
         /*
         SDL_Rect fpsRect = {
@@ -1406,30 +1387,28 @@ int main (int argc, char** argv) {
 
 
         //SDL_RenderPresent(ui->renderer);
-        glClearColor(0.9, 0.9, 0.9, 1.0);
+        glClearColor(0.0, 0.0, 0.0, 1.0);
         glClear(GL_COLOR_BUFFER_BIT);
 
 
         // XXX KARL
         // gonna print the fps layer here
         glUseProgram(program);
-        glBindBuffer(GL_ARRAY_BUFFER, fpsVertexBufferObject);
+        glBindBuffer(GL_ARRAY_BUFFER, ui->fpsVbo);
+
         glEnableVertexAttribArray(0);
         glEnableVertexAttribArray(1);
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8*sizeof(float), 0);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8*sizeof(float), 
-                (void*)(3*sizeof(float)));
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8*sizeof(float), 
-                (void*)(6*sizeof(float)));
 
-        glDrawArrays(GL_TRIANGLES, 0, 6); // DRAW SIX VERTICES
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+                (void*)(4*sizeof(float)));
+
+        glDrawArrays(GL_TRIANGLES, 0, 6);
 
         glDisableVertexAttribArray(0);
         glDisableVertexAttribArray(1);
-        glDisableVertexAttribArray(2);
         glUseProgram(0);
-
+    
         SDL_GL_SwapWindow(window);
 
         if (SDL_GetTicks() - lastTick < renderFrequency) {
@@ -1551,12 +1530,42 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
         }
 
         ui->debugFont = TTF_OpenFont(
-                "fonts/Roboto-Regular.ttf", goldenRatioLarge(ui->winWidth, 11));
+                "fonts/Roboto-Regular.ttf", ui->infoPointSize);
+                //"fonts/Roboto-Regular.ttf", 24);
 
         if (!ui->debugFont) {
             printf("Font initialization Failed, %s\n", TTF_GetError());
             return 1;
         }
+
+        // Create fps layer
+        int debugSampleW = 0, debugSampleH = 0;
+        TTF_SizeText(ui->debugFont, "frame time: xxx", 
+                &debugSampleW, &debugSampleH);
+        debugSampleW = powTwoFloor(debugSampleW);
+        debugSampleH = powTwoFloor(debugSampleH);
+        ui->fpsVertices = createRect(ui->winWidth, ui->winHeight, 
+                debugSampleW, debugSampleH);
+
+        if (ui->fpsVbo == 0) {
+            printf("new vbo!!!!\n");
+            glGenBuffers(1, &ui->fpsVbo);
+            glBindBuffer(GL_ARRAY_BUFFER, ui->fpsVbo);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
+                    ui->fpsVertices, GL_STATIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+        else {
+
+            glBindBuffer(GL_ARRAY_BUFFER, ui->fpsVbo);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
+                    &ui->fpsVertices[0]);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        }
+
+        //ui->titleVertices = createRect(ui->winWidth, ui->winHeight, 256, 32);
+
 
         SDL_DestroyTexture(ui->infoTexture);
         ui->infoTexture = NULL;
@@ -1908,3 +1917,57 @@ void *downloadCover(void *arg) {
     return NULL;
 }
 
+UiRect *createRect(uint32_t winWidth, uint32_t winHeight, 
+        uint32_t rectWidth, uint32_t rectHeight) 
+{
+    float left = -1.0;
+    float right = left + (1/(float)winWidth*rectWidth);
+    float bottom = -1.0;
+    float top = bottom + (1/(float)winHeight*rectHeight);
+
+    UiRect *rect = (UiRect*) calloc(1, sizeof(UiRect));
+
+    (*rect)[0][0] = left;
+    (*rect)[0][1] = bottom;
+    (*rect)[0][2] = 0.0f;
+    (*rect)[0][3] = 1.0f;
+    (*rect)[0][4] = 0.0f;
+    (*rect)[0][5] = 1.0f;
+
+    (*rect)[1][0] = left;
+    (*rect)[1][1] = top;
+    (*rect)[1][2] = 0.0f;
+    (*rect)[1][3] = 1.0f;
+    (*rect)[1][4] = 0.0f;
+    (*rect)[1][5] = 0.0f;
+
+    (*rect)[2][0] = right;
+    (*rect)[2][1] = top;
+    (*rect)[2][2] = 0.0f;
+    (*rect)[2][3] = 1.0f;
+    (*rect)[2][4] = 1.0f;
+    (*rect)[2][5] = 0.0f;
+
+    (*rect)[3][0] = right;
+    (*rect)[3][1] = top;
+    (*rect)[3][2] = 0.0f;
+    (*rect)[3][3] = 1.0f;
+    (*rect)[3][4] = 1.0f;
+    (*rect)[3][5] = 0.0f;
+
+    (*rect)[4][0] = right;
+    (*rect)[4][1] = bottom;
+    (*rect)[4][2] = 0.0f;
+    (*rect)[4][3] = 1.0f;
+    (*rect)[4][4] = 1.0f;
+    (*rect)[4][5] = 1.0f;
+
+    (*rect)[5][0] = left;
+    (*rect)[5][1] = bottom;
+    (*rect)[5][2] = 0.0f;
+    (*rect)[5][3] = 1.0f;
+    (*rect)[5][4] = 0.0f;
+    (*rect)[5][5] = 1.0f;
+
+    return rect;
+}
