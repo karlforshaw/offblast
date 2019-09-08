@@ -837,10 +837,18 @@ int main (int argc, char** argv) {
     }
     assert(programStatus);
 
+    GLint texUni = glGetUniformLocation(program, "ourTexture");
+    glUniform1i(texUni, GL_TEXTURE0);
+
     glDetachShader(program, vertexShader);
     glDetachShader(program, fragmentShader);
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
+
+    GLuint fpsTexture;
+    glGenTextures(1, &fpsTexture);
+    printf("fpsTexture is %u\n", fpsTexture);
+    glActiveTexture(GL_TEXTURE0);
 
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
@@ -1355,7 +1363,7 @@ int main (int argc, char** argv) {
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "Frame Time: %u", frameTime);
-        SDL_Color fpsColor = {255,255,255,255};
+        SDL_Color fpsColor = {255,0,2,255};
 
         SDL_Surface *fpsSurface = TTF_RenderText_Blended(
                 ui->debugFont,
@@ -1370,14 +1378,32 @@ int main (int argc, char** argv) {
         }
 
         // XXX 
+        uint32_t colors = fpsSurface->format->BytesPerPixel;
+        GLint texture_format = GL_RGBA;
+        if (colors == 4) {   // alpha
+            if (fpsSurface->format->Rmask == 0x000000ff) {
+                texture_format = GL_RGBA;
+            }
+            else {
+                texture_format = GL_BGRA;
+            }
+        } else {             // no alpha
+            if (fpsSurface->format->Rmask == 0x000000ff) {
+                texture_format = GL_RGB;
+            }
+            else {
+                texture_format = GL_BGR;
+            }
+        }
 
-        GLuint texture;
-        glGenTextures(1, &texture);
-        glBindTexture(GL_TEXTURE_2D, texture);
+        glBindTexture(GL_TEXTURE_2D, fpsTexture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fpsSurface->w, fpsSurface->h,
-                0, GL_RGBA, GL_UNSIGNED_BYTE, fpsSurface->pixels);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glTexImage2D(GL_TEXTURE_2D, 0, texture_format, fpsSurface->w, fpsSurface->h,
+                0, texture_format, GL_UNSIGNED_BYTE, fpsSurface->pixels);
         //glGenerateMipmap(GL_TEXTURE_2D);
 
         SDL_FreeSurface(fpsSurface);
@@ -1397,12 +1423,10 @@ int main (int argc, char** argv) {
         glClearColor(0.9, 0.9, 0.9, 1.0);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        GLint texUni = glGetUniformLocation(program, "ourTexture");
-        glUseProgram(program);
-        glUniform1i(texUni, texture);
 
         // XXX KARL
         // gonna print the fps layer here
+        glUseProgram(program);
         glBindBuffer(GL_ARRAY_BUFFER, fpsVertexBufferObject);
         glEnableVertexAttribArray(0);
         glEnableVertexAttribArray(1);
@@ -1413,8 +1437,6 @@ int main (int argc, char** argv) {
         glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8*sizeof(float), 
                 (void*)(6*sizeof(float)));
 
-        //glBindTexture(GL_TEXTURE_2D, texture);
-        //glActiveTexture(GL_TEXTURE0);
         glDrawArrays(GL_TRIANGLES, 0, 6); // DRAW SIX VERTICES
 
         glDisableVertexAttribArray(0);
