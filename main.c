@@ -15,7 +15,9 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // TODO GRADIENT LAYERS
-//      * move to an opengl renderer
+//      - move to an opengl renderer
+//      - Ok, I can render text now, so let's see if I can get the title
+//          and info layers on the screen
 //      * would certainly pretty things up
 //      * would be cool if we could do it on the BG too
 //
@@ -103,10 +105,12 @@ typedef struct OffblastUi {
         TTF_Font *debugFont;
 
         GLuint fpsVbo;
+        GLuint titleVbo;
 
         UiRect *fpsVertices;
         UiRect *titleVertices;
 
+        // TODO remove all these
         SDL_Texture *titleTexture;
         SDL_Texture *infoTexture;
         SDL_Texture *descriptionTexture;
@@ -1375,24 +1379,9 @@ int main (int argc, char** argv) {
         SDL_FreeSurface(newSurface);
 
 
-        /*
-        SDL_Rect fpsRect = {
-            goldenRatioLarge(ui->winWidth, 9),
-            goldenRatioLarge(ui->winHeight, 9),
-            0, 0};
-
-        SDL_QueryTexture(fpsTexture, NULL, NULL, &fpsRect.w, &fpsRect.h);
-        SDL_DestroyTexture(fpsTexture);
-        */
-
-
-        //SDL_RenderPresent(ui->renderer);
         glClearColor(0.0, 0.0, 0.0, 1.0);
         glClear(GL_COLOR_BUFFER_BIT);
 
-
-        // XXX KARL
-        // gonna print the fps layer here
         glUseProgram(program);
         glBindBuffer(GL_ARRAY_BUFFER, ui->fpsVbo);
 
@@ -1408,6 +1397,10 @@ int main (int argc, char** argv) {
         glDisableVertexAttribArray(0);
         glDisableVertexAttribArray(1);
         glUseProgram(0);
+
+
+
+
     
         SDL_GL_SwapWindow(window);
 
@@ -1538,7 +1531,8 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
             return 1;
         }
 
-        // Create fps layer
+        // Create fps layer TODO does this need to move to wherever the
+        // ones that generate layers for the other text is?
         int debugSampleW = 0, debugSampleH = 0;
         TTF_SizeText(ui->debugFont, "frame time: xxx", 
                 &debugSampleW, &debugSampleH);
@@ -1548,7 +1542,6 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
                 debugSampleW, debugSampleH);
 
         if (ui->fpsVbo == 0) {
-            printf("new vbo!!!!\n");
             glGenBuffers(1, &ui->fpsVbo);
             glBindBuffer(GL_ARRAY_BUFFER, ui->fpsVbo);
             glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
@@ -1556,15 +1549,12 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
         else {
-
             glBindBuffer(GL_ARRAY_BUFFER, ui->fpsVbo);
             glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
                     &ui->fpsVertices[0]);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
-
         }
 
-        //ui->titleVertices = createRect(ui->winWidth, ui->winHeight, 256, 32);
 
 
         SDL_DestroyTexture(ui->infoTexture);
