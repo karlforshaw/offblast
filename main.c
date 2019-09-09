@@ -170,67 +170,6 @@ void generateTextLayer(
         OffblastUi *ui, TextLayer *layer, char *text, uint32_t wrapWidth, 
         uint32_t updateVertices);
 
-void generateTextLayer(
-        OffblastUi *ui, TextLayer *layer, char *text, uint32_t wrapWidth, 
-        uint32_t updateVertices) 
-{
-    SDL_Color color = {255,255,255,255};
-
-    SDL_Surface *surface;
-    if (wrapWidth == OFFBLAST_NOWRAP) {
-        surface = TTF_RenderText_Blended(layer->font, text, color);
-    }
-    else {
-        surface = TTF_RenderText_Blended_Wrapped(layer->font, text, 
-                color, wrapWidth);
-    }
-
-    if (!surface) {
-        printf("Text render failed, %s\n", TTF_GetError());
-        return;
-    }
-
-    uint32_t newWidth = powTwoFloor(surface->w);
-    uint32_t newHeight = powTwoFloor(surface->h);
-
-    SDL_Surface *newSurface = SDL_CreateRGBSurface(
-            0, newWidth, newHeight, 32,
-            0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
-
-    SDL_BlitSurface(surface, NULL, newSurface, NULL);
-
-    glBindTexture(GL_TEXTURE_2D, layer->textureHandle);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight,
-            0, GL_BGRA, GL_UNSIGNED_BYTE, newSurface->pixels);
-
-    SDL_FreeSurface(surface);
-    SDL_FreeSurface(newSurface);
-
-    if (updateVertices) {
-
-        updateRect(&layer->vertices, ui->winWidth, ui->winHeight, 
-                newWidth, newHeight);
-
-        if (layer->vbo == 0) {
-            glGenBuffers(1, &layer->vbo);
-            glBindBuffer(GL_ARRAY_BUFFER, layer->vbo);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
-                    &layer->vertices, GL_STATIC_DRAW);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-        }
-        else {
-            glBindBuffer(GL_ARRAY_BUFFER, layer->vbo);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
-                    &layer->vertices);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-        }
-    }
-}
 
 void changeRow(
         OffblastUi *ui,
@@ -833,6 +772,7 @@ int main (int argc, char** argv) {
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
 
+    // § shaders
     const char *vertexShaderStr = 
         "#version 330\n"
         "layout(location = 0) in vec4 position;\n"
@@ -850,10 +790,12 @@ int main (int argc, char** argv) {
         "in vec2 TexCoord;\n"
         "out vec4 outputColor;\n"
         "uniform sampler2D ourTexture;\n"
+        "uniform float myAlpha;\n"
         "void main()\n"
         "{\n"
         "   //outputColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);\n"
-        "   outputColor = texture(ourTexture, TexCoord);\n"
+        "   //outputColor = mix(texture(ourTexture, TexCoord), vec4(1,1,1,1), 0.5);\n"
+        "   outputColor = myAlpha*texture(ourTexture, TexCoord);\n"
         "}\n";
 
     GLint compStatus = GL_FALSE; 
@@ -1252,8 +1194,7 @@ int main (int argc, char** argv) {
         SDL_RenderFillRect(ui->renderer, &infoLayer);
 #endif
 
-
-        // XXX info area
+        // § INFO AREA
         if (!ui->titleLayer.textureValid) {
             generateTextLayer(
                     ui, &ui->titleLayer,ui->movingToTarget->name, 
@@ -1296,40 +1237,35 @@ int main (int argc, char** argv) {
         float alpha = 1.0;
         if (ui->infoAnimation->animating == 1) {
             uint8_t change = easeInOutCirc(
-                        (double)SDL_GetTicks() - ui->infoAnimation->startTick,
-                        1.0,
-                        255.0,
-                        (double)ui->infoAnimation->durationMs);
+                    (double)SDL_GetTicks() - ui->infoAnimation->startTick,
+                    1.0,
+                    0.1,
+                    (double)ui->infoAnimation->durationMs);
 
             if (ui->infoAnimation->direction == 0) {
-                change = 256 - change;
-            }
-            else {
-                if (change == 0) change = 255;
+                change = 1 - change;
             }
 
-            alpha = 1/(float)change;
+            alpha = change;
         }
 
         float rowNameAlpha = 1;
         if (ui->rowNameAnimation->animating == 1) {
             uint8_t change = easeInOutCirc(
-                        (double)SDL_GetTicks() - ui->rowNameAnimation->startTick,
-                        1.0,
-                        255.0,
-                        (double)ui->rowNameAnimation->durationMs);
+                    (double)SDL_GetTicks() - ui->rowNameAnimation->startTick,
+                    1.0,
+                    0.1,
+                    (double)ui->rowNameAnimation->durationMs);
 
             if (ui->rowNameAnimation->direction == 0) {
-                change = 256 - change;
-            }
-            else {
-                if (change == 0) change = 255;
+                change = 1 - change;
             }
 
-            rowNameAlpha = 1/(float)change;
+            rowNameAlpha = change;
         }
 
         GLint translateUni = glGetUniformLocation(program, "myOffset");
+        GLint alphaUni = glGetUniformLocation(program, "myAlpha");
         glUseProgram(program);
 
         float marginNormalized = (2.0f/ui->winWidth) * (float)ui->winMargin;
@@ -1342,11 +1278,15 @@ int main (int argc, char** argv) {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                 (void*)(4*sizeof(float)));
-        // XXX I can't really do this positioning until I've got the size
-        // pixel size of the layer easily accessible
-        float newY  = (2.0f/ui->winHeight) * 
-            goldenRatioLargef(ui->winHeight, 4);
-        glUniform2f(translateUni, marginNormalized, 2-newY);
+
+        float pixelY = 
+            ui->winHeight - goldenRatioLargef(ui->winHeight, 4)
+                - ui->titleLayer.pixelHeight;
+        float newY  = (2.0f/ui->winHeight) * pixelY;
+
+        glUniform2f(translateUni, marginNormalized, newY);
+        glUniform1f(alphaUni, alpha);
+
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         // Draw Info
@@ -1357,8 +1297,13 @@ int main (int argc, char** argv) {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                 (void*)(4*sizeof(float)));
-        //newY -= (2/ui->winHeightPadding) * (height + padding)
-        glUniform2f(translateUni, marginNormalized, 0.5f);
+
+        pixelY -= ui->infoPointSize;
+        newY = (2.0f/ui->winHeight) * pixelY;
+
+        glUniform1f(alphaUni, alpha);
+        glUniform2f(translateUni, marginNormalized, newY);
+
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         // Draw Description
@@ -1369,7 +1314,15 @@ int main (int argc, char** argv) {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                 (void*)(4*sizeof(float)));
+
+        pixelY -= ui->descriptionLayer.pixelHeight + ui->boxPad;
+        newY = (2.0f/ui->winHeight) * pixelY;
+
+        glUniform1f(alphaUni, alpha);
+        glUniform2f(translateUni, marginNormalized, newY);
+
         glDrawArrays(GL_TRIANGLES, 0, 6);
+
 
         // Draw Row Name
         glBindTexture(GL_TEXTURE_2D, ui->rowNameLayer.textureHandle);
@@ -1379,7 +1332,15 @@ int main (int argc, char** argv) {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                 (void*)(4*sizeof(float)));
+        pixelY = ui->winHeight - goldenRatioLargef(ui->winHeight, 1)
+            + ui->rowNameLayer.pixelHeight;
+        newY = (2.0f/ui->winHeight) * pixelY;
+
+        glUniform2f(translateUni, marginNormalized, newY);
+        glUniform1f(alphaUni, rowNameAlpha);
+
         glDrawArrays(GL_TRIANGLES, 0, 6);
+
 
 
         uint32_t frameTime = SDL_GetTicks() - lastTick;
@@ -1396,23 +1357,13 @@ int main (int argc, char** argv) {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                 (void*)(4*sizeof(float)));
+        glUniform2f(translateUni, 0, 0);
+        glUniform1f(alphaUni, 1.0f);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         glDisableVertexAttribArray(0);
         glDisableVertexAttribArray(1);
         glUseProgram(0);
-
-        // TODO the offset for all of these is ui->winMargin
-        // TODO translate all of these 
-        /*
-        infoRect.y = (titleRect.y + 
-            ui->titlePointSize + 
-            goldenRatioLarge((double) ui->titlePointSize, 2));
-        descRect.y = (infoRect.y + 
-            ui->infoPointSize + 
-            goldenRatioLarge((double) ui->infoPointSize, 2));
-        rowNameRect.y = ui->winFold - ui->infoPointSize - ui->boxPad;
-        */
 
         animationTick(ui->horizontalAnimation, ui);
         animationTick(ui->verticalAnimation, ui);
@@ -1522,7 +1473,7 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
         // TODO Find a better way to enfoce this
         ui->descriptionHeight = goldenRatioLarge(ui->winWidth, 3);
 
-        ui->titlePointSize = goldenRatioLarge(ui->winWidth, 6);
+        ui->titlePointSize = goldenRatioLarge(ui->winWidth, 7);
         ui->titleFont = TTF_OpenFont(
                 "fonts/Roboto-Regular.ttf", ui->titlePointSize);
         if (!ui->titleFont) {
@@ -1531,7 +1482,7 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
         }
         ui->titleLayer.font = ui->titleFont;
 
-        ui->infoPointSize = goldenRatioLarge(ui->winWidth, 8);
+        ui->infoPointSize = goldenRatioLarge(ui->winWidth, 9);
         ui->infoFont = TTF_OpenFont(
                 "fonts/Roboto-Regular.ttf", ui->infoPointSize);
 
@@ -1906,9 +1857,9 @@ void updateRect(UiRect *vertices, uint32_t winWidth, uint32_t winHeight,
         uint32_t rectWidth, uint32_t rectHeight) 
 {
     float left = -1.0;
-    float right = left + (1/(float)winWidth*rectWidth);
+    float right = left + (2/(float)winWidth*rectWidth);
     float bottom = -1.0;
-    float top = bottom + (1/(float)winHeight*rectHeight);
+    float top = bottom + (2/(float)winHeight*rectHeight);
 
     (*vertices)[0][0] = left;
     (*vertices)[0][1] = bottom;
@@ -1960,4 +1911,70 @@ uint32_t powTwoFloor(uint32_t val) {
         pow *= 2;
 
     return pow;
+}
+
+void generateTextLayer(
+        OffblastUi *ui, TextLayer *layer, char *text, uint32_t wrapWidth, 
+        uint32_t updateVertices) 
+{
+    SDL_Color color = {255,255,255,255};
+
+    SDL_Surface *surface;
+    if (wrapWidth == OFFBLAST_NOWRAP) {
+        surface = TTF_RenderText_Blended(layer->font, text, color);
+    }
+    else {
+        surface = TTF_RenderText_Blended_Wrapped(layer->font, text, 
+                color, wrapWidth);
+    }
+
+    if (!surface) {
+        printf("Text render failed, %s\n", TTF_GetError());
+        return;
+    }
+
+    uint32_t newWidth = powTwoFloor(surface->w);
+    uint32_t newHeight = powTwoFloor(surface->h);
+
+    SDL_Surface *newSurface = SDL_CreateRGBSurface(
+            0, newWidth, newHeight, 32,
+            0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
+
+    SDL_Rect destRect = {0, newHeight - surface->h, 0, 0};
+    SDL_BlitSurface(surface, NULL, newSurface, &destRect);
+
+    layer->pixelWidth = surface->w;
+    layer->pixelHeight = surface->h;
+
+    glBindTexture(GL_TEXTURE_2D, layer->textureHandle);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight,
+            0, GL_BGRA, GL_UNSIGNED_BYTE, newSurface->pixels);
+
+    SDL_FreeSurface(surface);
+    SDL_FreeSurface(newSurface);
+
+    if (updateVertices) {
+
+        updateRect(&layer->vertices, ui->winWidth, ui->winHeight, 
+                newWidth, newHeight);
+
+        if (layer->vbo == 0) {
+            glGenBuffers(1, &layer->vbo);
+            glBindBuffer(GL_ARRAY_BUFFER, layer->vbo);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
+                    &layer->vertices, GL_STATIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+        else {
+            glBindBuffer(GL_ARRAY_BUFFER, layer->vbo);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
+                    &layer->vertices);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+    }
 }
