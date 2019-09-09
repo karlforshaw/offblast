@@ -12,6 +12,8 @@
 #define LOAD_STATE_DOWNLOADED 2
 #define LOAD_STATE_LOADED 3
 
+#define OFFBLAST_NOWRAP 0
+
 #define NAVIGATION_MOVE_DURATION 250 
 
 // TODO GRADIENT LAYERS
@@ -88,45 +90,57 @@ typedef struct Animation {
 } Animation;
 
 typedef struct OffblastUi {
-        int32_t winWidth;
-        int32_t winHeight;
-        int32_t winFold;
-        int32_t winMargin;
-        int32_t boxWidth;
-        int32_t boxHeight;
-        int32_t boxPad;
-        int32_t descriptionWidth;
-        int32_t descriptionHeight;
-        double titlePointSize;
-        double infoPointSize;
 
-        TTF_Font *titleFont;
-        TTF_Font *infoFont;
-        TTF_Font *debugFont;
+    int32_t winWidth;
+    int32_t winHeight;
+    int32_t winFold;
+    int32_t winMargin;
+    int32_t boxWidth;
+    int32_t boxHeight;
+    int32_t boxPad;
+    int32_t descriptionWidth;
+    int32_t descriptionHeight;
+    double titlePointSize;
+    double infoPointSize;
 
-        GLuint fpsVbo;
-        GLuint titleVbo;
+    TTF_Font *titleFont;
+    TTF_Font *infoFont;
+    TTF_Font *debugFont;
 
-        UiRect *fpsVertices;
-        UiRect *titleVertices;
+    GLuint fpsVbo;
+    GLuint titleVbo;
+    GLuint infoVbo;
+    GLuint descriptionVbo;
+    GLuint rowNameVbo;
 
-        // TODO remove all these
-        SDL_Texture *titleTexture;
-        SDL_Texture *infoTexture;
-        SDL_Texture *descriptionTexture;
-        SDL_Texture *rowNameTexture;
-        SDL_Renderer *renderer;
+    UiRect *fpsVertices;
+    UiRect *titleVertices;
+    UiRect *infoVertices;
+    UiRect *descriptionVertices;
+    UiRect *rowNameVertices;
 
-        Animation *horizontalAnimation;
-        Animation *verticalAnimation;
-        Animation *infoAnimation;
-        Animation *rowNameAnimation;
+    GLuint titleTexture;
+    GLuint infoTexture;
+    GLuint descriptionTexture;
+    GLuint rowNameTexture;
 
-        uint32_t numRows;
-        UiRow *rowCursor;
-        UiRow *rows;
-        LaunchTarget *movingToTarget;
-        UiRow *movingToRow;
+    uint32_t titleTextureInvalid;
+    uint32_t infoTextureInvalid;
+    uint32_t descriptionTextureInvalid;
+    uint32_t rowNameTextureInvalid;
+
+    SDL_Renderer *renderer;
+
+    Animation *horizontalAnimation;
+    Animation *verticalAnimation;
+    Animation *infoAnimation;
+    Animation *rowNameAnimation;
+
+    uint32_t numRows;
+    UiRow *rowCursor;
+    UiRow *rows;
+    LaunchTarget *movingToTarget;
+    UiRow *movingToRow;
 } OffblastUi;
 
 typedef struct Launcher {
@@ -136,6 +150,7 @@ typedef struct Launcher {
 
 
 uint32_t megabytes(uint32_t n);
+uint32_t powTwoFloor(uint32_t val);
 uint32_t needsReRender(SDL_Window *window, OffblastUi *ui);
 double easeOutCirc(double t, double b, double c, double d);
 double easeInOutCirc (double t, double b, double c, double d);
@@ -154,6 +169,67 @@ char *getCoverPath();
 UiRect *createRect(uint32_t winWidth, uint32_t winHeight, 
         uint32_t rectWidth, uint32_t rectHeight);
 
+void generateTextLayer(
+        OffblastUi *ui, GLuint texture, GLuint *vbo, UiRect **vertices, 
+        TTF_Font *font, char *text, uint32_t wrapWidth, 
+        uint32_t updateVertices);
+
+void generateTextLayer(
+        OffblastUi *ui, GLuint texture, GLuint *vbo, UiRect **vertices, 
+        TTF_Font *font, char *text, uint32_t wrapWidth, 
+        uint32_t updateVertices) 
+{
+    SDL_Color color = {255,255,255,255};
+    SDL_Surface *surface = TTF_RenderText_Blended(font, text, color);
+
+    if (!surface) {
+        printf("Text render failed, %s\n", TTF_GetError());
+        return;
+    }
+
+    uint32_t newWidth = powTwoFloor(surface->w);
+    uint32_t newHeight = powTwoFloor(surface->h);
+
+    SDL_Surface *newSurface = SDL_CreateRGBSurface(
+            0, newWidth, newHeight, 32,
+            0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
+
+    SDL_BlitSurface(surface, NULL, newSurface, NULL);
+
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight,
+            0, GL_BGRA, GL_UNSIGNED_BYTE, newSurface->pixels);
+
+    SDL_FreeSurface(surface);
+    SDL_FreeSurface(newSurface);
+
+    if (updateVertices) {
+
+        if (*vertices != NULL) free(*vertices);
+        *vertices = createRect(ui->winWidth, ui->winHeight, 
+                newWidth, newHeight);
+
+        if (*vbo == 0) {
+            glGenBuffers(1, vbo);
+            glBindBuffer(GL_ARRAY_BUFFER, *vbo);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
+                    *vertices, GL_STATIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+        else {
+            glBindBuffer(GL_ARRAY_BUFFER, *vbo);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
+                    *vertices);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+    }
+}
+
 void changeRow(
         OffblastUi *ui,
         uint32_t direction);
@@ -162,13 +238,6 @@ void changeColumn(
         OffblastUi *ui,
         uint32_t direction);
 
-uint32_t powTwoFloor(uint32_t val) {
-    uint32_t pow = 2;
-    while (val > pow)
-        pow *= 2;
-
-    return pow;
-}
 
 int main (int argc, char** argv) {
 
@@ -825,7 +894,11 @@ int main (int argc, char** argv) {
 
     GLuint fpsTexture;
     glGenTextures(1, &fpsTexture);
-    printf("fpsTexture is %u\n", fpsTexture);
+    glGenTextures(1, &ui->titleTexture);
+    glGenTextures(1, &ui->infoTexture);
+    glGenTextures(1, &ui->descriptionTexture);
+    glGenTextures(1, &ui->rowNameTexture);
+
 
     GLint texUni = glGetUniformLocation(program, "ourTexture");
     printf("uniform is %u\n", texUni);
@@ -1165,6 +1238,7 @@ int main (int argc, char** argv) {
             rowToRender = rowToRender->nextRow;
         }
 
+
         SDL_Rect infoLayer = {
             0, 0,
             ui->winWidth,
@@ -1172,88 +1246,54 @@ int main (int argc, char** argv) {
         };
         SDL_SetRenderDrawColor(ui->renderer, 0x00, 0x00, 0x00, 0xFF);
         SDL_RenderFillRect(ui->renderer, &infoLayer);
+#endif
 
-        // Target Info 
-        if (ui->titleTexture == NULL) {
-            SDL_Color titleColor = {255,255,255,255};
-            SDL_Surface *titleSurface = TTF_RenderText_Blended(
-                    ui->titleFont, ui->movingToTarget->name, titleColor);
 
-            if (!titleSurface) {
-                printf("Title Font render failed, %s\n", TTF_GetError());
-                return 1;
-            }
-
-            ui->titleTexture = 
-                SDL_CreateTextureFromSurface(ui->renderer, titleSurface);
-            SDL_FreeSurface(titleSurface);
+        // XXX info area
+        if (ui->titleTextureInvalid) {
+            generateTextLayer(
+                    ui, ui->titleTexture, &ui->titleVbo,  &ui->titleVertices, 
+                    ui->titleFont, ui->movingToTarget->name, OFFBLAST_NOWRAP,
+                    1);
+            ui->titleTextureInvalid = 0;
         }
 
-        if (ui->infoTexture == NULL) {
-
-            SDL_Color color = {220,220,220,255};
-
-            char *tempString;
-            asprintf(&tempString, "%.4s  |  %s  |  %u%%", 
+        if (ui->infoTextureInvalid) {
+            char *infoString;
+            asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
                     ui->movingToTarget->date, 
                     platformString(ui->movingToTarget->platform),
                     ui->movingToTarget->ranking);
 
-            SDL_Surface *infoSurface = TTF_RenderText_Blended(
-                    ui->infoFont, tempString, color);
-            free(tempString);
+            generateTextLayer(
+                    ui, ui->infoTexture, &ui->infoVbo, &ui->infoVertices, 
+                    ui->infoFont, infoString, OFFBLAST_NOWRAP, 1);
+            ui->infoTextureInvalid = 0;
 
-            if (!infoSurface) {
-                printf("Info Font render failed, %s\n", TTF_GetError());
-                return 1;
-            }
-
-            ui->infoTexture = 
-                SDL_CreateTextureFromSurface(ui->renderer, infoSurface);
-            SDL_FreeSurface(infoSurface);
-    
+            free(infoString);
         }
 
-        if (ui->descriptionTexture == NULL) {
-
-            SDL_Color color = {220,220,220,255};
-
+        if (ui->descriptionTextureInvalid) {
             OffblastBlob *descriptionBlob = (OffblastBlob*)
                 &descriptionFile->memory[ui->movingToTarget->descriptionOffset];
 
-            SDL_Surface *surface = TTF_RenderText_Blended_Wrapped(
-                    ui->infoFont, 
-                    descriptionBlob->content,
-                    color,
-                    ui->descriptionWidth);
-
-            if (!surface) {
-                printf("Description Font render failed, %s\n", TTF_GetError());
-                return 1;
-            }
-
-            ui->descriptionTexture = 
-                SDL_CreateTextureFromSurface(ui->renderer, surface);
-            SDL_FreeSurface(surface);
+            generateTextLayer(
+                    ui, ui->descriptionTexture, &ui->descriptionVbo, 
+                    &ui->descriptionVertices, ui->infoFont, 
+                    descriptionBlob->content, ui->descriptionWidth, 1);
+            ui->descriptionTextureInvalid = 0;
         }
 
-        if (ui->rowNameTexture == NULL) {
-            SDL_Color color = {255,255,255,255};
-            SDL_Surface *surface = TTF_RenderText_Blended(
-                    ui->infoFont, ui->movingToRow->name, color);
-
-            if (!surface) {
-                printf("Row Name Font render failed, %s\n", TTF_GetError());
-                return 1;
-            }
-
-            ui->rowNameTexture = 
-                SDL_CreateTextureFromSurface(ui->renderer, surface);
-            SDL_FreeSurface(surface);
+        if (ui->rowNameTextureInvalid) {
+            generateTextLayer(
+                    ui, ui->rowNameTexture, &ui->rowNameVbo, 
+                    &ui->rowNameVertices, ui->infoFont, ui->movingToRow->name, 
+                    OFFBLAST_NOWRAP, 1);
+            ui->rowNameTextureInvalid = 0;
         }
 
 
-
+        float alpha = 1.0;
         if (ui->infoAnimation->animating == 1) {
             uint8_t change = easeInOutCirc(
                         (double)SDL_GetTicks() - ui->infoAnimation->startTick,
@@ -1268,16 +1308,10 @@ int main (int argc, char** argv) {
                 if (change == 0) change = 255;
             }
 
-            SDL_SetTextureAlphaMod(ui->titleTexture, change);
-            SDL_SetTextureAlphaMod(ui->infoTexture, change);
-            SDL_SetTextureAlphaMod(ui->descriptionTexture, change);
-        }
-        else {
-            SDL_SetTextureAlphaMod(ui->titleTexture, 255);
-            SDL_SetTextureAlphaMod(ui->infoTexture, 255);
-            SDL_SetTextureAlphaMod(ui->descriptionTexture, 255);
+            alpha = 1/(float)change;
         }
 
+        float rowNameAlpha = 1;
         if (ui->rowNameAnimation->animating == 1) {
             uint8_t change = easeInOutCirc(
                         (double)SDL_GetTicks() - ui->rowNameAnimation->startTick,
@@ -1292,33 +1326,29 @@ int main (int argc, char** argv) {
                 if (change == 0) change = 255;
             }
 
-            SDL_SetTextureAlphaMod(ui->rowNameTexture, change);
-        }
-        else {
-            SDL_SetTextureAlphaMod(ui->rowNameTexture, 255);
+            rowNameAlpha = 1/(float)change;
         }
 
-        SDL_Rect titleRect = {0, 0, 0, 0}; 
-        SDL_QueryTexture(ui->titleTexture, NULL, NULL, 
-                &titleRect.w, &titleRect.h);
+        glUseProgram(program);
 
-        SDL_Rect infoRect = {0, 0, 0, 0}; 
-        SDL_QueryTexture(ui->infoTexture, NULL, NULL, 
-                &infoRect.w, &infoRect.h);
+        glBindTexture(GL_TEXTURE_2D, ui->titleTexture);
+        glBindBuffer(GL_ARRAY_BUFFER, ui->titleVbo);
 
-        SDL_Rect descRect = {0, 0, 0, 0}; 
-        SDL_QueryTexture(ui->descriptionTexture, NULL, NULL, 
-                &descRect.w, &descRect.h);
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+                (void*)(4*sizeof(float)));
 
-        SDL_Rect rowNameRect = {0, 0, 0, 0}; 
-        SDL_QueryTexture(ui->rowNameTexture, NULL, NULL, 
-                &rowNameRect.w, &rowNameRect.h);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        titleRect.x = ui->winMargin;
-        infoRect.x = ui->winMargin;
-        descRect.x = ui->winMargin;
-        rowNameRect.x = ui->winMargin;
+        glDisableVertexAttribArray(0);
+        glDisableVertexAttribArray(1);
+        glUseProgram(0);
 
+        // TODO the offset for all of these is ui->winMargin
+        // TODO translate all of these 
+        /*
         titleRect.y = goldenRatioLarge((double) ui->winHeight, 5);
         infoRect.y = (titleRect.y + 
             ui->titlePointSize + 
@@ -1327,19 +1357,15 @@ int main (int argc, char** argv) {
             ui->infoPointSize + 
             goldenRatioLarge((double) ui->infoPointSize, 2));
         rowNameRect.y = ui->winFold - ui->infoPointSize - ui->boxPad;
-
-        SDL_RenderCopy(ui->renderer, ui->titleTexture, NULL, &titleRect);
-        SDL_RenderCopy(ui->renderer, ui->infoTexture, NULL, &infoRect);
-        SDL_RenderCopy(ui->renderer, ui->descriptionTexture, NULL, &descRect);
-        SDL_RenderCopy(ui->renderer, ui->rowNameTexture, NULL, &rowNameRect);
+        */
 
         animationTick(ui->horizontalAnimation, ui);
         animationTick(ui->verticalAnimation, ui);
         animationTick(ui->infoAnimation, ui);
         animationTick(ui->rowNameAnimation, ui);
 
-#endif
         // DEBUG FPS INFO
+        // TODO use generate text layer?
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "frame time: %u", frameTime);
@@ -1524,7 +1550,6 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
 
         ui->debugFont = TTF_OpenFont(
                 "fonts/Roboto-Regular.ttf", ui->infoPointSize);
-                //"fonts/Roboto-Regular.ttf", 24);
 
         if (!ui->debugFont) {
             printf("Font initialization Failed, %s\n", TTF_GetError());
@@ -1533,6 +1558,9 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
 
         // Create fps layer TODO does this need to move to wherever the
         // ones that generate layers for the other text is?
+        // use generateTextLayer
+        // we should instead invalidate it every frame, but only update the
+        // vertex array when the window size has changed
         int debugSampleW = 0, debugSampleH = 0;
         TTF_SizeText(ui->debugFont, "frame time: xxx", 
                 &debugSampleW, &debugSampleH);
@@ -1551,20 +1579,14 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
         else {
             glBindBuffer(GL_ARRAY_BUFFER, ui->fpsVbo);
             glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
-                    &ui->fpsVertices[0]);
+                    ui->fpsVertices);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
 
-
-
-        SDL_DestroyTexture(ui->infoTexture);
-        ui->infoTexture = NULL;
-        SDL_DestroyTexture(ui->titleTexture);
-        ui->titleTexture = NULL;
-        SDL_DestroyTexture(ui->descriptionTexture);
-        ui->descriptionTexture = NULL;
-        SDL_DestroyTexture(ui->rowNameTexture);
-        ui->rowNameTexture = NULL;
+        ui->infoTextureInvalid = 1;
+        ui->titleTextureInvalid = 1;
+        ui->descriptionTextureInvalid = 1;
+        ui->rowNameTextureInvalid = 1;
 
         updated = 1;
     }
@@ -1692,15 +1714,10 @@ void infoFaded(OffblastUi *ui) {
 
     if (ui->infoAnimation->direction == 0) {
 
-        SDL_DestroyTexture(ui->titleTexture);
-        SDL_DestroyTexture(ui->infoTexture);
-        SDL_DestroyTexture(ui->descriptionTexture);
-        SDL_DestroyTexture(ui->rowNameTexture);
-
-        ui->titleTexture = NULL;
-        ui->infoTexture = NULL;
-        ui->descriptionTexture = NULL;
-        ui->rowNameTexture = NULL;
+        ui->titleTextureInvalid = 1;
+        ui->infoTextureInvalid = 1;
+        ui->descriptionTextureInvalid = 1;
+        ui->rowNameTextureInvalid = 1;
 
         ui->infoAnimation->startTick = SDL_GetTicks();
         ui->infoAnimation->direction = 1;
@@ -1716,8 +1733,7 @@ void infoFaded(OffblastUi *ui) {
 void rowNameFaded(OffblastUi *ui) {
     if (ui->rowNameAnimation->direction == 0) {
 
-        SDL_DestroyTexture(ui->rowNameTexture);
-        ui->rowNameTexture = NULL;
+        ui->rowNameTextureInvalid = 1;
 
         ui->rowNameAnimation->startTick = SDL_GetTicks();
         ui->rowNameAnimation->direction = 1;
@@ -1960,4 +1976,12 @@ UiRect *createRect(uint32_t winWidth, uint32_t winHeight,
     (*rect)[5][5] = 1.0f;
 
     return rect;
+}
+
+uint32_t powTwoFloor(uint32_t val) {
+    uint32_t pow = 2;
+    while (val > pow)
+        pow *= 2;
+
+    return pow;
 }
