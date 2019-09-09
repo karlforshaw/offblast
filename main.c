@@ -180,7 +180,15 @@ void generateTextLayer(
         uint32_t updateVertices) 
 {
     SDL_Color color = {255,255,255,255};
-    SDL_Surface *surface = TTF_RenderText_Blended(font, text, color);
+
+    SDL_Surface *surface;
+    if (wrapWidth == OFFBLAST_NOWRAP) {
+        surface = TTF_RenderText_Blended(font, text, color);
+    }
+    else {
+        surface = TTF_RenderText_Blended_Wrapped(font, text, 
+                color, wrapWidth);
+    }
 
     if (!surface) {
         printf("Text render failed, %s\n", TTF_GetError());
