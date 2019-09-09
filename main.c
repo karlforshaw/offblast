@@ -18,8 +18,12 @@
 
 // TODO GRADIENT LAYERS
 //      - move to an opengl renderer
-//      - Ok, I can render text now, so let's see if I can get the title
-//          and info layers on the screen
+//          - textLayer struct, because I need some pixel information
+//              in order to translate the layers to their position in clip 
+//              space
+//          - text layer translation
+    //      - text layer alpha
+//      - move FPS to a split method of generatetexture and the other function
 //      * would certainly pretty things up
 //      * would be cool if we could do it on the BG too
 //
@@ -89,6 +93,14 @@ typedef struct Animation {
     void (* callback)(struct OffblastUi*);
 } Animation;
 
+typedef struct TextLayer {
+    uint32_t textureValid;
+    GLuint textureHandle;
+    GLuint vbo;
+    UiRect *fpsVertices;
+    TTF_Font *font;
+} TextLayer;
+
 typedef struct OffblastUi {
 
     int32_t winWidth;
@@ -156,6 +168,7 @@ double easeOutCirc(double t, double b, double c, double d);
 double easeInOutCirc (double t, double b, double c, double d);
 char *getCsvField(char *line, int fieldNo);
 double goldenRatioLarge(double in, uint32_t exponent);
+float goldenRatioLargef(float in, uint32_t exponent);
 void horizontalMoveDone(OffblastUi *ui);
 void verticalMoveDone(OffblastUi *ui);
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
@@ -843,10 +856,11 @@ int main (int argc, char** argv) {
         "#version 330\n"
         "layout(location = 0) in vec4 position;\n"
         "layout(location = 1) in vec2 aTexcoord;\n"
+        "uniform vec2 myOffset;\n"
         "out vec2 TexCoord;\n"
         "void main()\n"
         "{\n"
-        "   gl_Position = position;\n"
+        "   gl_Position = position + vec4(myOffset.x, myOffset.y, 0.0f, 0.0f);\n"
         "   TexCoord = aTexcoord;\n"
         "}\n";
 
@@ -910,6 +924,7 @@ int main (int argc, char** argv) {
 
     GLint texUni = glGetUniformLocation(program, "ourTexture");
     printf("uniform is %u\n", texUni);
+
 
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
@@ -1336,7 +1351,10 @@ int main (int argc, char** argv) {
             rowNameAlpha = 1/(float)change;
         }
 
+        GLint translateUni = glGetUniformLocation(program, "myOffset");
         glUseProgram(program);
+
+        float marginNormalized = (2.0f/ui->winWidth) * (float)ui->winMargin;
 
         // Draw Title
         glBindTexture(GL_TEXTURE_2D, ui->titleTexture);
@@ -1346,6 +1364,11 @@ int main (int argc, char** argv) {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                 (void*)(4*sizeof(float)));
+        // XXX I can't really do this positioning until I've got the size
+        // pixel size of the layer easily accessible
+        float newY  = (2.0f/ui->winHeight) * 
+            goldenRatioLargef(ui->winHeight, 4);
+        glUniform2f(translateUni, marginNormalized, 2-newY);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         // Draw Info
@@ -1356,6 +1379,8 @@ int main (int argc, char** argv) {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                 (void*)(4*sizeof(float)));
+        //newY -= (2/ui->winHeightPadding) * (height + padding)
+        glUniform2f(translateUni, marginNormalized, 0.5f);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         // Draw Description
@@ -1383,7 +1408,6 @@ int main (int argc, char** argv) {
         // TODO the offset for all of these is ui->winMargin
         // TODO translate all of these 
         /*
-        titleRect.y = goldenRatioLarge((double) ui->winHeight, 5);
         infoRect.y = (titleRect.y + 
             ui->titlePointSize + 
             goldenRatioLarge((double) ui->titlePointSize, 2));
@@ -1571,7 +1595,7 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
             return 1;
         }
 
-        ui->infoPointSize = goldenRatioLarge(ui->winWidth, 9);
+        ui->infoPointSize = goldenRatioLarge(ui->winWidth, 8);
         ui->infoFont = TTF_OpenFont(
                 "fonts/Roboto-Regular.ttf", ui->infoPointSize);
 
@@ -1717,6 +1741,15 @@ double goldenRatioLarge(double in, uint32_t exponent) {
     }
     else {
         return goldenRatioLarge(1/PHI * in, --exponent); 
+    }
+}
+
+float goldenRatioLargef(float in, uint32_t exponent) {
+    if (exponent == 0) {
+        return in;
+    }
+    else {
+        return goldenRatioLargef(1/PHI * in, --exponent); 
     }
 }
 
