@@ -24,7 +24,7 @@
 //          - text layer translation
     //      - text layer alpha
 //      - move FPS to a split method of generatetexture and the other function
-//      * would certainly pretty things up
+//      * shader loader
 //      * would be cool if we could do it on the BG too
 //
 // TODO COVER ART 
@@ -97,7 +97,9 @@ typedef struct TextLayer {
     uint32_t textureValid;
     GLuint textureHandle;
     GLuint vbo;
-    UiRect *fpsVertices;
+    UiRect vertices;
+    uint32_t pixelWidth;
+    uint32_t pixelHeight;
     TTF_Font *font;
 } TextLayer;
 
@@ -119,29 +121,11 @@ typedef struct OffblastUi {
     TTF_Font *infoFont;
     TTF_Font *debugFont;
 
-    GLuint fpsVbo;
-    GLuint titleVbo;
-    GLuint infoVbo;
-    GLuint descriptionVbo;
-    GLuint rowNameVbo;
-
-    UiRect *fpsVertices;
-    UiRect *titleVertices;
-    UiRect *infoVertices;
-    UiRect *descriptionVertices;
-    UiRect *rowNameVertices;
-
-    GLuint titleTexture;
-    GLuint infoTexture;
-    GLuint descriptionTexture;
-    GLuint rowNameTexture;
-
-    uint32_t titleTextureInvalid;
-    uint32_t infoTextureInvalid;
-    uint32_t descriptionTextureInvalid;
-    uint32_t rowNameTextureInvalid;
-
-    SDL_Renderer *renderer;
+    TextLayer debugLayer;
+    TextLayer titleLayer;
+    TextLayer infoLayer;
+    TextLayer descriptionLayer;
+    TextLayer rowNameLayer;
 
     Animation *horizontalAnimation;
     Animation *verticalAnimation;
@@ -179,27 +163,25 @@ void animationTick(Animation *theAnimation, OffblastUi *ui);
 const char *platformString(char *key);
 void *downloadCover(void *arg);
 char *getCoverPath();
-UiRect *createRect(uint32_t winWidth, uint32_t winHeight, 
+void updateRect(UiRect *vertices, uint32_t winWidth, uint32_t winHeight, 
         uint32_t rectWidth, uint32_t rectHeight);
 
 void generateTextLayer(
-        OffblastUi *ui, GLuint texture, GLuint *vbo, UiRect **vertices, 
-        TTF_Font *font, char *text, uint32_t wrapWidth, 
+        OffblastUi *ui, TextLayer *layer, char *text, uint32_t wrapWidth, 
         uint32_t updateVertices);
 
 void generateTextLayer(
-        OffblastUi *ui, GLuint texture, GLuint *vbo, UiRect **vertices, 
-        TTF_Font *font, char *text, uint32_t wrapWidth, 
+        OffblastUi *ui, TextLayer *layer, char *text, uint32_t wrapWidth, 
         uint32_t updateVertices) 
 {
     SDL_Color color = {255,255,255,255};
 
     SDL_Surface *surface;
     if (wrapWidth == OFFBLAST_NOWRAP) {
-        surface = TTF_RenderText_Blended(font, text, color);
+        surface = TTF_RenderText_Blended(layer->font, text, color);
     }
     else {
-        surface = TTF_RenderText_Blended_Wrapped(font, text, 
+        surface = TTF_RenderText_Blended_Wrapped(layer->font, text, 
                 color, wrapWidth);
     }
 
@@ -217,7 +199,7 @@ void generateTextLayer(
 
     SDL_BlitSurface(surface, NULL, newSurface, NULL);
 
-    glBindTexture(GL_TEXTURE_2D, texture);
+    glBindTexture(GL_TEXTURE_2D, layer->textureHandle);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -231,21 +213,20 @@ void generateTextLayer(
 
     if (updateVertices) {
 
-        if (*vertices != NULL) free(*vertices);
-        *vertices = createRect(ui->winWidth, ui->winHeight, 
+        updateRect(&layer->vertices, ui->winWidth, ui->winHeight, 
                 newWidth, newHeight);
 
-        if (*vbo == 0) {
-            glGenBuffers(1, vbo);
-            glBindBuffer(GL_ARRAY_BUFFER, *vbo);
+        if (layer->vbo == 0) {
+            glGenBuffers(1, &layer->vbo);
+            glBindBuffer(GL_ARRAY_BUFFER, layer->vbo);
             glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
-                    *vertices, GL_STATIC_DRAW);
+                    &layer->vertices, GL_STATIC_DRAW);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
         else {
-            glBindBuffer(GL_ARRAY_BUFFER, *vbo);
+            glBindBuffer(GL_ARRAY_BUFFER, layer->vbo);
             glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
-                    *vertices);
+                    &layer->vertices);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
     }
@@ -916,12 +897,13 @@ int main (int argc, char** argv) {
 
     GLuint fpsTexture;
     glGenTextures(1, &fpsTexture);
-    glGenTextures(1, &ui->titleTexture);
-    glGenTextures(1, &ui->infoTexture);
-    glGenTextures(1, &ui->descriptionTexture);
-    glGenTextures(1, &ui->rowNameTexture);
+    glGenTextures(1, &ui->titleLayer.textureHandle);
+    glGenTextures(1, &ui->infoLayer.textureHandle);
+    glGenTextures(1, &ui->descriptionLayer.textureHandle);
+    glGenTextures(1, &ui->rowNameLayer.textureHandle);
 
 
+    // TODO do we need this?
     GLint texUni = glGetUniformLocation(program, "ourTexture");
     printf("uniform is %u\n", texUni);
 
@@ -1272,15 +1254,14 @@ int main (int argc, char** argv) {
 
 
         // XXX info area
-        if (ui->titleTextureInvalid) {
+        if (!ui->titleLayer.textureValid) {
             generateTextLayer(
-                    ui, ui->titleTexture, &ui->titleVbo,  &ui->titleVertices, 
-                    ui->titleFont, ui->movingToTarget->name, OFFBLAST_NOWRAP,
-                    1);
-            ui->titleTextureInvalid = 0;
+                    ui, &ui->titleLayer,ui->movingToTarget->name, 
+                    OFFBLAST_NOWRAP, 1);
+            ui->titleLayer.textureValid = 1;
         }
 
-        if (ui->infoTextureInvalid) {
+        if (!ui->infoLayer.textureValid) {
             char *infoString;
             asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
                     ui->movingToTarget->date, 
@@ -1288,30 +1269,27 @@ int main (int argc, char** argv) {
                     ui->movingToTarget->ranking);
 
             generateTextLayer(
-                    ui, ui->infoTexture, &ui->infoVbo, &ui->infoVertices, 
-                    ui->infoFont, infoString, OFFBLAST_NOWRAP, 1);
-            ui->infoTextureInvalid = 0;
+                    ui, &ui->infoLayer, infoString, OFFBLAST_NOWRAP, 1);
+            ui->infoLayer.textureValid = 1;
 
             free(infoString);
         }
 
-        if (ui->descriptionTextureInvalid) {
+        if (!ui->descriptionLayer.textureValid) {
             OffblastBlob *descriptionBlob = (OffblastBlob*)
                 &descriptionFile->memory[ui->movingToTarget->descriptionOffset];
 
             generateTextLayer(
-                    ui, ui->descriptionTexture, &ui->descriptionVbo, 
-                    &ui->descriptionVertices, ui->infoFont, 
-                    descriptionBlob->content, ui->descriptionWidth, 1);
-            ui->descriptionTextureInvalid = 0;
+                    ui, &ui->descriptionLayer, descriptionBlob->content, 
+                    ui->descriptionWidth, 1);
+            ui->descriptionLayer.textureValid = 1;
         }
 
-        if (ui->rowNameTextureInvalid) {
+        if (!ui->rowNameLayer.textureValid) {
             generateTextLayer(
-                    ui, ui->rowNameTexture, &ui->rowNameVbo, 
-                    &ui->rowNameVertices, ui->infoFont, ui->movingToRow->name, 
+                    ui, &ui->rowNameLayer, ui->movingToRow->name, 
                     OFFBLAST_NOWRAP, 1);
-            ui->rowNameTextureInvalid = 0;
+            ui->rowNameLayer.textureValid = 1;
         }
 
 
@@ -1357,8 +1335,8 @@ int main (int argc, char** argv) {
         float marginNormalized = (2.0f/ui->winWidth) * (float)ui->winMargin;
 
         // Draw Title
-        glBindTexture(GL_TEXTURE_2D, ui->titleTexture);
-        glBindBuffer(GL_ARRAY_BUFFER, ui->titleVbo);
+        glBindTexture(GL_TEXTURE_2D, ui->titleLayer.textureHandle);
+        glBindBuffer(GL_ARRAY_BUFFER, ui->titleLayer.vbo);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
         glEnableVertexAttribArray(1);
@@ -1372,8 +1350,8 @@ int main (int argc, char** argv) {
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         // Draw Info
-        glBindTexture(GL_TEXTURE_2D, ui->infoTexture);
-        glBindBuffer(GL_ARRAY_BUFFER, ui->infoVbo);
+        glBindTexture(GL_TEXTURE_2D, ui->infoLayer.textureHandle);
+        glBindBuffer(GL_ARRAY_BUFFER, ui->infoLayer.vbo);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
         glEnableVertexAttribArray(1);
@@ -1384,8 +1362,8 @@ int main (int argc, char** argv) {
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         // Draw Description
-        glBindTexture(GL_TEXTURE_2D, ui->descriptionTexture);
-        glBindBuffer(GL_ARRAY_BUFFER, ui->descriptionVbo);
+        glBindTexture(GL_TEXTURE_2D, ui->descriptionLayer.textureHandle);
+        glBindBuffer(GL_ARRAY_BUFFER, ui->descriptionLayer.vbo);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
         glEnableVertexAttribArray(1);
@@ -1394,8 +1372,8 @@ int main (int argc, char** argv) {
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         // Draw Row Name
-        glBindTexture(GL_TEXTURE_2D, ui->rowNameTexture);
-        glBindBuffer(GL_ARRAY_BUFFER, ui->rowNameVbo);
+        glBindTexture(GL_TEXTURE_2D, ui->rowNameLayer.textureHandle);
+        glBindBuffer(GL_ARRAY_BUFFER, ui->rowNameLayer.vbo);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
         glEnableVertexAttribArray(1);
@@ -1403,6 +1381,25 @@ int main (int argc, char** argv) {
                 (void*)(4*sizeof(float)));
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
+
+        uint32_t frameTime = SDL_GetTicks() - lastTick;
+        char *fpsString;
+        asprintf(&fpsString, "frame time: %u", frameTime);
+        generateTextLayer(
+                ui, &ui->debugLayer, fpsString, OFFBLAST_NOWRAP, 1);
+        free(fpsString);
+
+        glBindTexture(GL_TEXTURE_2D, ui->debugLayer.textureHandle);
+        glBindBuffer(GL_ARRAY_BUFFER, ui->debugLayer.vbo);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+                (void*)(4*sizeof(float)));
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        glDisableVertexAttribArray(0);
+        glDisableVertexAttribArray(1);
         glUseProgram(0);
 
         // TODO the offset for all of these is ui->winMargin
@@ -1421,68 +1418,6 @@ int main (int argc, char** argv) {
         animationTick(ui->verticalAnimation, ui);
         animationTick(ui->infoAnimation, ui);
         animationTick(ui->rowNameAnimation, ui);
-
-        // DEBUG FPS INFO
-        // TODO use generate text layer?
-        uint32_t frameTime = SDL_GetTicks() - lastTick;
-        char *fpsString;
-        asprintf(&fpsString, "frame time: %u", frameTime);
-        SDL_Color fpsColor = {255,255,255,255};
-
-        SDL_Surface *fpsSurface = TTF_RenderText_Blended(
-                ui->debugFont,
-                fpsString,
-                fpsColor);
-
-        free(fpsString);
-
-        if (!fpsSurface) {
-            printf("FPS Font render failed, %s\n", TTF_GetError());
-            return 1;
-        }
-
-        uint32_t newWidth = powTwoFloor(fpsSurface->w);
-        uint32_t newHeight = powTwoFloor(fpsSurface->h);
-
-        SDL_Surface *newSurface = SDL_CreateRGBSurface(
-                0, newWidth, newHeight, 32,
-                0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
-
-        SDL_BlitSurface(fpsSurface, NULL, newSurface, NULL);
-
-        glBindTexture(GL_TEXTURE_2D, fpsTexture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight,
-                0, GL_BGRA, GL_UNSIGNED_BYTE, newSurface->pixels);
-
-        SDL_FreeSurface(fpsSurface);
-        SDL_FreeSurface(newSurface);
-
-
-
-        glUseProgram(program);
-        glBindBuffer(GL_ARRAY_BUFFER, ui->fpsVbo);
-
-        glEnableVertexAttribArray(0);
-        glEnableVertexAttribArray(1);
-
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
-                (void*)(4*sizeof(float)));
-
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-
-        glDisableVertexAttribArray(0);
-        glDisableVertexAttribArray(1);
-        glUseProgram(0);
-
-
-
-
     
         SDL_GL_SwapWindow(window);
 
@@ -1594,6 +1529,7 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
             printf("Title font initialization Failed, %s\n", TTF_GetError());
             return 1;
         }
+        ui->titleLayer.font = ui->titleFont;
 
         ui->infoPointSize = goldenRatioLarge(ui->winWidth, 8);
         ui->infoFont = TTF_OpenFont(
@@ -1603,6 +1539,9 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
             printf("Font initialization Failed, %s\n", TTF_GetError());
             return 1;
         }
+        ui->infoLayer.font = ui->infoFont; 
+        ui->descriptionLayer.font = ui->infoFont; 
+        ui->rowNameLayer.font = ui->infoFont; 
 
         ui->debugFont = TTF_OpenFont(
                 "fonts/Roboto-Regular.ttf", ui->infoPointSize);
@@ -1611,38 +1550,13 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
             printf("Font initialization Failed, %s\n", TTF_GetError());
             return 1;
         }
+        ui->debugLayer.font = ui->debugFont;
 
-        // Create fps layer TODO does this need to move to wherever the
-        // ones that generate layers for the other text is?
-        // use generateTextLayer
-        // we should instead invalidate it every frame, but only update the
-        // vertex array when the window size has changed
-        int debugSampleW = 0, debugSampleH = 0;
-        TTF_SizeText(ui->debugFont, "frame time: xxx", 
-                &debugSampleW, &debugSampleH);
-        debugSampleW = powTwoFloor(debugSampleW);
-        debugSampleH = powTwoFloor(debugSampleH);
-        ui->fpsVertices = createRect(ui->winWidth, ui->winHeight, 
-                debugSampleW, debugSampleH);
-
-        if (ui->fpsVbo == 0) {
-            glGenBuffers(1, &ui->fpsVbo);
-            glBindBuffer(GL_ARRAY_BUFFER, ui->fpsVbo);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
-                    ui->fpsVertices, GL_STATIC_DRAW);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-        }
-        else {
-            glBindBuffer(GL_ARRAY_BUFFER, ui->fpsVbo);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
-                    ui->fpsVertices);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-        }
-
-        ui->infoTextureInvalid = 1;
-        ui->titleTextureInvalid = 1;
-        ui->descriptionTextureInvalid = 1;
-        ui->rowNameTextureInvalid = 1;
+        ui->debugLayer.textureValid = 0;
+        ui->infoLayer.textureValid = 0;
+        ui->titleLayer.textureValid = 0;
+        ui->descriptionLayer.textureValid = 0;
+        ui->rowNameLayer.textureValid = 0;
 
         updated = 1;
     }
@@ -1779,10 +1693,10 @@ void infoFaded(OffblastUi *ui) {
 
     if (ui->infoAnimation->direction == 0) {
 
-        ui->titleTextureInvalid = 1;
-        ui->infoTextureInvalid = 1;
-        ui->descriptionTextureInvalid = 1;
-        ui->rowNameTextureInvalid = 1;
+        ui->titleLayer.textureValid = 0;
+        ui->infoLayer.textureValid = 0;
+        ui->descriptionLayer.textureValid = 0;
+        ui->rowNameLayer.textureValid = 0;
 
         ui->infoAnimation->startTick = SDL_GetTicks();
         ui->infoAnimation->direction = 1;
@@ -1798,7 +1712,7 @@ void infoFaded(OffblastUi *ui) {
 void rowNameFaded(OffblastUi *ui) {
     if (ui->rowNameAnimation->direction == 0) {
 
-        ui->rowNameTextureInvalid = 1;
+        ui->rowNameLayer.textureValid = 0;
 
         ui->rowNameAnimation->startTick = SDL_GetTicks();
         ui->rowNameAnimation->direction = 1;
@@ -1988,7 +1902,7 @@ void *downloadCover(void *arg) {
     return NULL;
 }
 
-UiRect *createRect(uint32_t winWidth, uint32_t winHeight, 
+void updateRect(UiRect *vertices, uint32_t winWidth, uint32_t winHeight, 
         uint32_t rectWidth, uint32_t rectHeight) 
 {
     float left = -1.0;
@@ -1996,51 +1910,48 @@ UiRect *createRect(uint32_t winWidth, uint32_t winHeight,
     float bottom = -1.0;
     float top = bottom + (1/(float)winHeight*rectHeight);
 
-    UiRect *rect = (UiRect*) calloc(1, sizeof(UiRect));
+    (*vertices)[0][0] = left;
+    (*vertices)[0][1] = bottom;
+    (*vertices)[0][2] = 0.0f;
+    (*vertices)[0][3] = 1.0f;
+    (*vertices)[0][4] = 0.0f;
+    (*vertices)[0][5] = 1.0f;
 
-    (*rect)[0][0] = left;
-    (*rect)[0][1] = bottom;
-    (*rect)[0][2] = 0.0f;
-    (*rect)[0][3] = 1.0f;
-    (*rect)[0][4] = 0.0f;
-    (*rect)[0][5] = 1.0f;
+    (*vertices)[1][0] = left;
+    (*vertices)[1][1] = top;
+    (*vertices)[1][2] = 0.0f;
+    (*vertices)[1][3] = 1.0f;
+    (*vertices)[1][4] = 0.0f;
+    (*vertices)[1][5] = 0.0f;
 
-    (*rect)[1][0] = left;
-    (*rect)[1][1] = top;
-    (*rect)[1][2] = 0.0f;
-    (*rect)[1][3] = 1.0f;
-    (*rect)[1][4] = 0.0f;
-    (*rect)[1][5] = 0.0f;
+    (*vertices)[2][0] = right;
+    (*vertices)[2][1] = top;
+    (*vertices)[2][2] = 0.0f;
+    (*vertices)[2][3] = 1.0f;
+    (*vertices)[2][4] = 1.0f;
+    (*vertices)[2][5] = 0.0f;
 
-    (*rect)[2][0] = right;
-    (*rect)[2][1] = top;
-    (*rect)[2][2] = 0.0f;
-    (*rect)[2][3] = 1.0f;
-    (*rect)[2][4] = 1.0f;
-    (*rect)[2][5] = 0.0f;
+    (*vertices)[3][0] = right;
+    (*vertices)[3][1] = top;
+    (*vertices)[3][2] = 0.0f;
+    (*vertices)[3][3] = 1.0f;
+    (*vertices)[3][4] = 1.0f;
+    (*vertices)[3][5] = 0.0f;
 
-    (*rect)[3][0] = right;
-    (*rect)[3][1] = top;
-    (*rect)[3][2] = 0.0f;
-    (*rect)[3][3] = 1.0f;
-    (*rect)[3][4] = 1.0f;
-    (*rect)[3][5] = 0.0f;
+    (*vertices)[4][0] = right;
+    (*vertices)[4][1] = bottom;
+    (*vertices)[4][2] = 0.0f;
+    (*vertices)[4][3] = 1.0f;
+    (*vertices)[4][4] = 1.0f;
+    (*vertices)[4][5] = 1.0f;
 
-    (*rect)[4][0] = right;
-    (*rect)[4][1] = bottom;
-    (*rect)[4][2] = 0.0f;
-    (*rect)[4][3] = 1.0f;
-    (*rect)[4][4] = 1.0f;
-    (*rect)[4][5] = 1.0f;
+    (*vertices)[5][0] = left;
+    (*vertices)[5][1] = bottom;
+    (*vertices)[5][2] = 0.0f;
+    (*vertices)[5][3] = 1.0f;
+    (*vertices)[5][4] = 0.0f;
+    (*vertices)[5][5] = 1.0f;
 
-    (*rect)[5][0] = left;
-    (*rect)[5][1] = bottom;
-    (*rect)[5][2] = 0.0f;
-    (*rect)[5][3] = 1.0f;
-    (*rect)[5][4] = 0.0f;
-    (*rect)[5][5] = 1.0f;
-
-    return rect;
 }
 
 uint32_t powTwoFloor(uint32_t val) {
