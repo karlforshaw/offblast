@@ -1117,10 +1117,9 @@ int main (int argc, char** argv) {
 
         }
 
-        // XXX SDL RENDER
-        //SDL_SetRenderDrawColor(ui->renderer, 0x03, 0x03, 0x03, 0xFF);
-        //SDL_RenderClear(ui->renderer);
-
+        // RENDER
+        glClearColor(0.0, 0.0, 0.0, 1.0);
+        glClear(GL_COLOR_BUFFER_BIT);
 
         // Blocks
 #if 0
@@ -1335,11 +1334,12 @@ int main (int argc, char** argv) {
         glBindBuffer(GL_ARRAY_BUFFER, ui->titleVbo);
 
         glEnableVertexAttribArray(0);
-        glEnableVertexAttribArray(1);
         glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+        glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                 (void*)(4*sizeof(float)));
 
+        // XXX XXX NOT WORKING
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         glDisableVertexAttribArray(0);
@@ -1405,8 +1405,6 @@ int main (int argc, char** argv) {
         SDL_FreeSurface(newSurface);
 
 
-        glClearColor(0.0, 0.0, 0.0, 1.0);
-        glClear(GL_COLOR_BUFFER_BIT);
 
         glUseProgram(program);
         glBindBuffer(GL_ARRAY_BUFFER, ui->fpsVbo);
@@ -1531,7 +1529,7 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
         // TODO Find a better way to enfoce this
         ui->descriptionHeight = goldenRatioLarge(ui->winWidth, 3);
 
-        ui->titlePointSize = goldenRatioLarge(ui->winWidth, 7);
+        ui->titlePointSize = goldenRatioLarge(ui->winWidth, 6);
         ui->titleFont = TTF_OpenFont(
                 "fonts/Roboto-Regular.ttf", ui->titlePointSize);
         if (!ui->titleFont) {
