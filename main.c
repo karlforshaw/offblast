@@ -1330,20 +1330,46 @@ int main (int argc, char** argv) {
 
         glUseProgram(program);
 
+        // Draw Title
         glBindTexture(GL_TEXTURE_2D, ui->titleTexture);
         glBindBuffer(GL_ARRAY_BUFFER, ui->titleVbo);
-
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                 (void*)(4*sizeof(float)));
-
-        // XXX XXX NOT WORKING
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        glDisableVertexAttribArray(0);
-        glDisableVertexAttribArray(1);
+        // Draw Info
+        glBindTexture(GL_TEXTURE_2D, ui->infoTexture);
+        glBindBuffer(GL_ARRAY_BUFFER, ui->infoVbo);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+                (void*)(4*sizeof(float)));
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        // Draw Description
+        glBindTexture(GL_TEXTURE_2D, ui->descriptionTexture);
+        glBindBuffer(GL_ARRAY_BUFFER, ui->descriptionVbo);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+                (void*)(4*sizeof(float)));
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        // Draw Row Name
+        glBindTexture(GL_TEXTURE_2D, ui->rowNameTexture);
+        glBindBuffer(GL_ARRAY_BUFFER, ui->rowNameVbo);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+                (void*)(4*sizeof(float)));
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+
         glUseProgram(0);
 
         // TODO the offset for all of these is ui->winMargin
