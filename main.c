@@ -17,10 +17,10 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // TODO GRADIENT LAYERS
-//      * shader loader
 //      - move to an opengl renderer
-//      -   need to get the blocks back in now
-//      * would be cool if we could do it on the BG too
+//      * block texture scaling
+//      * gradient layer/shader 
+//      * shader loader
 //
 // TODO font rasterization and rendering
 //      - SDL_TTF doesn't give us a lot of flexibility when it comes to
@@ -28,6 +28,15 @@
 //
 // TODO COVER ART 
 //      * a loading animation 
+//
+// TODO steam support
+//      * looks like if you ls .steam/steam/userdata there's a folder for 
+//      each game you've played.. this could be a good way to scrape and auto
+//      populate for steam.
+//
+// TODO tighter retroarch integration, 
+//      * we can compile this against libretro.h and tap into stuff from 
+//      the shared object
 //
 // TODO PLATFORM BADGES ON MIXED LISTS
 // TODO GRANDIA IS BEING DETECTED AS "D" DETECT BETTER!
@@ -166,6 +175,7 @@ const char *platformString(char *key);
 void *downloadCover(void *arg);
 char *getCoverPath();
 void updateVbo(GLuint *vbo, UiRect* vertices);
+void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface); 
 void updateRect(UiRect *vertices, uint32_t winWidth, uint32_t winHeight, 
         uint32_t rectWidth, uint32_t rectHeight);
 
@@ -699,22 +709,18 @@ int main (int argc, char** argv) {
     close(launchTargetDb.fd);
 
 
-
     const char *userName = NULL;
-    {
-        json_object *usersObject = NULL;
-        json_object_object_get_ex(configObj, "users", &usersObject);
+    json_object *usersObject = NULL;
+    json_object_object_get_ex(configObj, "users", &usersObject);
 
-        if (usersObject == NULL) {
-            userName = "Anonymous";
-        }
-        else {
-            json_object *tmp = json_object_array_get_idx(usersObject, 0);
-            assert(tmp);
-            userName = json_object_get_string(tmp);
-        }
+    if (usersObject == NULL) {
+        userName = "Anonymous";
     }
-
+    else {
+        json_object *tmp = json_object_array_get_idx(usersObject, 0);
+        assert(tmp);
+        userName = json_object_get_string(tmp);
+    }
     printf("got user name %s\n", userName);
 
 
@@ -797,7 +803,7 @@ int main (int argc, char** argv) {
         "void main()\n"
         "{\n"
         "   //outputColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);\n"
-        "   outputColor = mix(texture(ourTexture, TexCoord), vec4(1,1,1,1), 0.5);\n"
+        "   outputColor = mix(texture(ourTexture, TexCoord), vec4(1,1,1,1), 0.3);\n"
         "   //outputColor = myAlpha*texture(ourTexture, TexCoord);\n"
         "}\n";
 
@@ -1073,6 +1079,7 @@ int main (int argc, char** argv) {
 
         // Blocks
         UiRow *rowToRender = ui->rowCursor->previousRow;
+        rowToRender = rowToRender->previousRow;
 
         GLint translateUni = glGetUniformLocation(program, "myOffset");
         GLint alphaUni = glGetUniformLocation(program, "myAlpha");
@@ -1133,7 +1140,6 @@ int main (int argc, char** argv) {
                 if (tileToRender->textureHandle == 0 &&
                         tileToRender->target->coverUrl != NULL) 
                 {
-                    /*
                     if (tileToRender->loadState != LOAD_STATE_LOADED) {
 
                         char *coverArtPath =
@@ -1160,30 +1166,24 @@ int main (int argc, char** argv) {
                         }
                         
                         if (tileToRender->loadState == LOAD_STATE_DOWNLOADED) {
-                            tileToRender->texture = 
-                                SDL_CreateTextureFromSurface(ui->renderer, 
-                                        image);
+
+                            glGenTextures(1, &tileToRender->textureHandle);
+                            sdlSurfaceToGlTexture(tileToRender->textureHandle, 
+                                    image);
+                            glBindTexture(GL_TEXTURE_2D, 
+                                    tileToRender->textureHandle);
 
                             tileToRender->loadState = LOAD_STATE_LOADED;
                         }
-
                     }
-                    */
                 }
                 else {
-                    /*
-                    SDL_Rect srcRect = {};
-                    SDL_QueryTexture(tileToRender->texture, NULL, NULL, 
-                            &srcRect.w, &srcRect.h);
-
-                    // clip the height for the aspect ratio
-                    srcRect.h = srcRect.w / 7 * 5;
-                    */
+                    glBindTexture(GL_TEXTURE_2D, 
+                            tileToRender->textureHandle);
                 }
 
 
                 // ACTUAL DRAW
-                glBindTexture(GL_TEXTURE_2D, ui->titleLayer.textureHandle);
                 glBindBuffer(GL_ARRAY_BUFFER, ui->blockVbo);
                 glEnableVertexAttribArray(0);
                 glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
@@ -1934,12 +1934,39 @@ uint32_t powTwoFloor(uint32_t val) {
     return pow;
 }
 
+
+void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface) {
+
+    uint32_t newWidth = powTwoFloor(surface->w);
+    uint32_t newHeight = powTwoFloor(surface->h);
+
+    SDL_Surface *newSurface = SDL_CreateRGBSurface(
+            0, newWidth, newHeight, 32,
+            0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
+
+    SDL_Rect destRect = {0, newHeight - surface->h, 0, 0};
+    SDL_BlitSurface(surface, NULL, newSurface, &destRect);
+
+    glBindTexture(GL_TEXTURE_2D, textureHandle);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight,
+            0, GL_BGRA, GL_UNSIGNED_BYTE, newSurface->pixels);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    free(newSurface);
+}
+
 void generateTextLayer(
         OffblastUi *ui, TextLayer *layer, char *text, uint32_t wrapWidth, 
         uint32_t updateVertices) 
 {
     SDL_Color color = {255,255,255,255};
 
+    // TODO use sdlSurfaceToGlTexture
     SDL_Surface *surface;
     if (wrapWidth == OFFBLAST_NOWRAP) {
         surface = TTF_RenderText_Blended(layer->font, text, color);
@@ -1954,6 +1981,7 @@ void generateTextLayer(
         return;
     }
 
+    /* TODO keep these two line */
     uint32_t newWidth = powTwoFloor(surface->w);
     uint32_t newHeight = powTwoFloor(surface->h);
 
