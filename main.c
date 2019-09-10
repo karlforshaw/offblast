@@ -797,8 +797,8 @@ int main (int argc, char** argv) {
         "void main()\n"
         "{\n"
         "   //outputColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);\n"
-        "   //outputColor = mix(texture(ourTexture, TexCoord), vec4(1,1,1,1), 0.5);\n"
-        "   outputColor = myAlpha*texture(ourTexture, TexCoord);\n"
+        "   outputColor = mix(texture(ourTexture, TexCoord), vec4(1,1,1,1), 0.5);\n"
+        "   //outputColor = myAlpha*texture(ourTexture, TexCoord);\n"
         "}\n";
 
     GLint compStatus = GL_FALSE; 
@@ -1079,7 +1079,7 @@ int main (int argc, char** argv) {
         glUseProgram(program);
 
         // § blocks
-        for (int32_t iRow = -1; iRow < ROWS_TOTAL-1; iRow++) {
+        for (int32_t iRow = -2; iRow < ROWS_TOTAL-2; iRow++) {
 
             UiTile *tileToRender = 
                 rewindTiles(rowToRender->tileCursor, 2);
@@ -1107,7 +1107,7 @@ int main (int argc, char** argv) {
                     xOffset += change;
                 }
 
-                yOffset = ui->winFold + (iRow * (ui->boxHeight + ui->boxPad));
+                yOffset = (ui->winFold - ui->boxHeight) + (iRow * (ui->boxHeight + ui->boxPad));
 
                 if (ui->verticalAnimation->animating != 0) 
                 {
@@ -1349,8 +1349,8 @@ int main (int argc, char** argv) {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                 (void*)(4*sizeof(float)));
-        pixelY = ui->winHeight - goldenRatioLargef(ui->winHeight, 1)
-            + ui->rowNameLayer.pixelHeight;
+
+        pixelY = ui->winFold + ui->boxPad;
         newY = (2.0f/ui->winHeight) * pixelY;
 
         glUniform2f(translateUni, marginNormalized, newY);
