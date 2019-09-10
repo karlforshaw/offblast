@@ -21,6 +21,10 @@
 //      * block texture scaling
 //      * gradient layer/shader 
 //      * shader loader
+//      * I quite liked the look of the white mix of 0.3 on the cover art
+//          slightly desaturated - might have a shader for covers and do 
+//          an average color gradient to the right, white mix 0.3 AND anchor
+//          texture to the left with proper ratio, locking in the height
 //
 // TODO font rasterization and rendering
 //      - SDL_TTF doesn't give us a lot of flexibility when it comes to
@@ -75,6 +79,8 @@
 typedef struct UiTile{
     struct LaunchTarget *target;
     GLuint textureHandle;
+    float textureMaxW;
+    float textureMinH;
     uint8_t loadState;
     struct UiTile *next; 
     struct UiTile *previous; 
@@ -175,7 +181,8 @@ const char *platformString(char *key);
 void *downloadCover(void *arg);
 char *getCoverPath();
 void updateVbo(GLuint *vbo, UiRect* vertices);
-void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface); 
+void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface, 
+        uint32_t *newWidth, uint32_t *newHeight); 
 void updateRect(UiRect *vertices, uint32_t winWidth, uint32_t winHeight, 
         uint32_t rectWidth, uint32_t rectHeight);
 
@@ -800,11 +807,16 @@ int main (int argc, char** argv) {
         "out vec4 outputColor;\n"
         "uniform sampler2D ourTexture;\n"
         "uniform float myAlpha;\n"
+        "uniform vec2 textureSize;\n"
         "void main()\n"
         "{\n"
-        "   //outputColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);\n"
-        "   outputColor = mix(texture(ourTexture, TexCoord), vec4(1,1,1,1), 0.3);\n"
-        "   //outputColor = myAlpha*texture(ourTexture, TexCoord);\n"
+        "   vec2 actualTexCoord = vec2(TexCoord.x, TexCoord.y);\n"
+        "   if (textureSize.x != 0.0) { actualTexCoord.x = TexCoord.x * textureSize.x; }\n"
+        "   if (textureSize.y != 0.0) { actualTexCoord.y = textureSize.y +  (TexCoord.y*(1-textureSize.y)); }\n"
+
+        "   vec4 mySample = texture(ourTexture, actualTexCoord);\n"
+        "   //outputColor = mix(mySample, vec4(1,1,1,1), 0.3);\n"
+        "   outputColor = myAlpha*texture(ourTexture, actualTexCoord);\n"
         "}\n";
 
     GLint compStatus = GL_FALSE; 
@@ -1083,6 +1095,7 @@ int main (int argc, char** argv) {
 
         GLint translateUni = glGetUniformLocation(program, "myOffset");
         GLint alphaUni = glGetUniformLocation(program, "myAlpha");
+        GLint texturePosUni = glGetUniformLocation(program, "textureSize");
         glUseProgram(program);
 
         // § blocks
@@ -1166,15 +1179,25 @@ int main (int argc, char** argv) {
                         }
                         
                         if (tileToRender->loadState == LOAD_STATE_DOWNLOADED) {
+                            uint32_t newWidth = 0, newHeight = 0;
 
                             glGenTextures(1, &tileToRender->textureHandle);
-                            sdlSurfaceToGlTexture(tileToRender->textureHandle, 
-                                    image);
+                            sdlSurfaceToGlTexture(
+                                    tileToRender->textureHandle, image,
+                                    &newWidth, &newHeight);
+
+                            tileToRender->textureMaxW = 
+                                (float)image->w / newWidth;
+                            tileToRender->textureMinH = 
+                                1.0-((float)image->h / newHeight);
+
                             glBindTexture(GL_TEXTURE_2D, 
                                     tileToRender->textureHandle);
 
                             tileToRender->loadState = LOAD_STATE_LOADED;
                         }
+
+                        free(image);
                     }
                 }
                 else {
@@ -1194,7 +1217,11 @@ int main (int argc, char** argv) {
 
                 glUniform2f(translateUni, xOffsetNormalized, 
                         yOffsetNormalized);
-                glUniform1f(alphaUni, 1.0f);
+
+                glUniform1f(alphaUni, 1.0);
+
+                glUniform2f(texturePosUni, tileToRender->textureMaxW, 
+                        tileToRender->textureMinH);
 
                 glDrawArrays(GL_TRIANGLES, 0, 6);
 
@@ -1214,6 +1241,8 @@ int main (int argc, char** argv) {
         SDL_SetRenderDrawColor(ui->renderer, 0x00, 0x00, 0x00, 0xFF);
         SDL_RenderFillRect(ui->renderer, &infoLayer);
 #endif
+
+        glUniform2f(texturePosUni, 0.0, 0.0f);
 
         // § INFO AREA
         if (!ui->titleLayer.textureValid) {
@@ -1935,16 +1964,18 @@ uint32_t powTwoFloor(uint32_t val) {
 }
 
 
-void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface) {
+void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface, 
+        uint32_t *newWidth, uint32_t *newHeight) 
+{
 
-    uint32_t newWidth = powTwoFloor(surface->w);
-    uint32_t newHeight = powTwoFloor(surface->h);
+    *newWidth = powTwoFloor(surface->w);
+    *newHeight = powTwoFloor(surface->h);
 
     SDL_Surface *newSurface = SDL_CreateRGBSurface(
-            0, newWidth, newHeight, 32,
+            0, *newWidth, *newHeight, 32,
             0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
 
-    SDL_Rect destRect = {0, newHeight - surface->h, 0, 0};
+    SDL_Rect destRect = {0, *newHeight - surface->h, 0, 0};
     SDL_BlitSurface(surface, NULL, newSurface, &destRect);
 
     glBindTexture(GL_TEXTURE_2D, textureHandle);
@@ -1953,7 +1984,7 @@ void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight,
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, *newWidth, *newHeight,
             0, GL_BGRA, GL_UNSIGNED_BYTE, newSurface->pixels);
     glBindTexture(GL_TEXTURE_2D, 0);
 
