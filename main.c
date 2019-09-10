@@ -17,15 +17,14 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // TODO GRADIENT LAYERS
-//      - move to an opengl renderer
-//          - textLayer struct, because I need some pixel information
-//              in order to translate the layers to their position in clip 
-//              space
-//          - text layer translation
-    //      - text layer alpha
-//      - move FPS to a split method of generatetexture and the other function
 //      * shader loader
+//      - move to an opengl renderer
+//      -   need to get the blocks back in now
 //      * would be cool if we could do it on the BG too
+//
+// TODO font rasterization and rendering
+//      - SDL_TTF doesn't give us a lot of flexibility when it comes to
+//        blocks of text..
 //
 // TODO COVER ART 
 //      * a loading animation 
@@ -66,7 +65,7 @@
 
 typedef struct UiTile{
     struct LaunchTarget *target;
-    SDL_Texture *texture;
+    GLuint textureHandle;
     uint8_t loadState;
     struct UiTile *next; 
     struct UiTile *previous; 
@@ -132,6 +131,9 @@ typedef struct OffblastUi {
     Animation *infoAnimation;
     Animation *rowNameAnimation;
 
+    UiRect blockVertices;
+    GLuint blockVbo;
+
     uint32_t numRows;
     UiRow *rowCursor;
     UiRow *rows;
@@ -163,6 +165,7 @@ void animationTick(Animation *theAnimation, OffblastUi *ui);
 const char *platformString(char *key);
 void *downloadCover(void *arg);
 char *getCoverPath();
+void updateVbo(GLuint *vbo, UiRect* vertices);
 void updateRect(UiRect *vertices, uint32_t winWidth, uint32_t winHeight, 
         uint32_t rectWidth, uint32_t rectHeight);
 
@@ -1069,29 +1072,30 @@ int main (int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT);
 
         // Blocks
-#if 0
-        SDL_SetRenderDrawColor(ui->renderer, 0xFF, 0xFF, 0xFF, 0x66);
         UiRow *rowToRender = ui->rowCursor->previousRow;
 
-        for (int32_t iRow = -1; iRow < ROWS_TOTAL-1; iRow++) {
+        GLint translateUni = glGetUniformLocation(program, "myOffset");
+        GLint alphaUni = glGetUniformLocation(program, "myAlpha");
+        glUseProgram(program);
 
-            uint8_t shade = 255;
-            SDL_SetRenderDrawColor(ui->renderer, shade, shade, shade, 0x66);
+        // § blocks
+        for (int32_t iRow = -1; iRow < ROWS_TOTAL-1; iRow++) {
 
             UiTile *tileToRender = 
                 rewindTiles(rowToRender->tileCursor, 2);
 
             for (int32_t iTile = -2; iTile < COLS_TOTAL; iTile++) {
 
-                SDL_Rect theRect = {};
+                float xOffset = 0;
+                float yOffset = 0;
 
-                theRect.x = 
-                    ui->winMargin + iTile * (ui->boxWidth + ui->boxPad);
+                xOffset = ui->winMargin + iTile * (ui->boxWidth + ui->boxPad);
 
                 if (ui->horizontalAnimation->animating != 0 && iRow == 0) 
                 {
                     double change = easeInOutCirc(
-                            (double)SDL_GetTicks() - ui->horizontalAnimation->startTick,
+                            (double)SDL_GetTicks() 
+                                - ui->horizontalAnimation->startTick,
                             0.0,
                             (double)ui->boxWidth + ui->boxPad,
                             (double)ui->horizontalAnimation->durationMs);
@@ -1100,17 +1104,16 @@ int main (int argc, char** argv) {
                         change = -change;
                     }
 
-                    theRect.x += change;
-
+                    xOffset += change;
                 }
 
-                theRect.y = 
-                    ui->winFold + (iRow * (ui->boxHeight + ui->boxPad));
+                yOffset = ui->winFold + (iRow * (ui->boxHeight + ui->boxPad));
 
                 if (ui->verticalAnimation->animating != 0) 
                 {
                     double change = easeInOutCirc(
-                            (double)SDL_GetTicks() - ui->verticalAnimation->startTick,
+                            (double)SDL_GetTicks() 
+                                - ui->verticalAnimation->startTick,
                             0.0,
                             (double)ui->boxHeight+ ui->boxPad,
                             (double)ui->verticalAnimation->durationMs);
@@ -1119,16 +1122,18 @@ int main (int argc, char** argv) {
                         change = -change;
                     }
 
-                    theRect.y += change;
+                    yOffset += change;
 
                 }
 
-                theRect.w = ui->boxWidth;
-                theRect.h = ui->boxHeight;
+                float xOffsetNormalized = (2.0 / ui->winWidth) * xOffset;
+                float yOffsetNormalized = (2.0 / ui->winHeight) * yOffset;
 
-                if (tileToRender->texture == NULL &&
+                // Generate the texture 
+                if (tileToRender->textureHandle == 0 &&
                         tileToRender->target->coverUrl != NULL) 
                 {
+                    /*
                     if (tileToRender->loadState != LOAD_STATE_LOADED) {
 
                         char *coverArtPath =
@@ -1163,20 +1168,35 @@ int main (int argc, char** argv) {
                         }
 
                     }
-
-                    SDL_RenderFillRect(ui->renderer, &theRect);
+                    */
                 }
                 else {
+                    /*
                     SDL_Rect srcRect = {};
                     SDL_QueryTexture(tileToRender->texture, NULL, NULL, 
                             &srcRect.w, &srcRect.h);
 
                     // clip the height for the aspect ratio
                     srcRect.h = srcRect.w / 7 * 5;
-
-                    SDL_RenderCopy(ui->renderer, tileToRender->texture, 
-                            &srcRect, &theRect);
+                    */
                 }
+
+
+                // ACTUAL DRAW
+                glBindTexture(GL_TEXTURE_2D, ui->titleLayer.textureHandle);
+                glBindBuffer(GL_ARRAY_BUFFER, ui->blockVbo);
+                glEnableVertexAttribArray(0);
+                glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
+                        6*sizeof(float), 0);
+                glEnableVertexAttribArray(1);
+                glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
+                        6*sizeof(float), (void*)(4*sizeof(float)));
+
+                glUniform2f(translateUni, xOffsetNormalized, 
+                        yOffsetNormalized);
+                glUniform1f(alphaUni, 1.0f);
+
+                glDrawArrays(GL_TRIANGLES, 0, 6);
 
                 tileToRender = tileToRender->next;
             }
@@ -1184,7 +1204,8 @@ int main (int argc, char** argv) {
             rowToRender = rowToRender->nextRow;
         }
 
-
+#if 0 
+        // TODO what was this for again?
         SDL_Rect infoLayer = {
             0, 0,
             ui->winWidth,
@@ -1263,10 +1284,6 @@ int main (int argc, char** argv) {
 
             rowNameAlpha = change;
         }
-
-        GLint translateUni = glGetUniformLocation(program, "myOffset");
-        GLint alphaUni = glGetUniformLocation(program, "myAlpha");
-        glUseProgram(program);
 
         float marginNormalized = (2.0f/ui->winWidth) * (float)ui->winMargin;
 
@@ -1464,6 +1481,9 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
         // 7:5
         ui->boxHeight = goldenRatioLarge(ui->winWidth, 4);
         ui->boxWidth = ui->boxHeight/5 * 7;
+        updateRect(&ui->blockVertices, newWidth, newHeight, ui->boxWidth, 
+                ui->boxHeight);
+        updateVbo(&ui->blockVbo, &ui->blockVertices);
 
         ui->boxPad = goldenRatioLarge((double) ui->winWidth, 9);
 
@@ -1853,6 +1873,7 @@ void *downloadCover(void *arg) {
     return NULL;
 }
 
+
 void updateRect(UiRect *vertices, uint32_t winWidth, uint32_t winHeight, 
         uint32_t rectWidth, uint32_t rectHeight) 
 {
@@ -1959,22 +1980,26 @@ void generateTextLayer(
     SDL_FreeSurface(newSurface);
 
     if (updateVertices) {
-
         updateRect(&layer->vertices, ui->winWidth, ui->winHeight, 
                 newWidth, newHeight);
 
-        if (layer->vbo == 0) {
-            glGenBuffers(1, &layer->vbo);
-            glBindBuffer(GL_ARRAY_BUFFER, layer->vbo);
+        updateVbo(&layer->vbo, &layer->vertices);
+    }
+}
+
+void updateVbo(GLuint *vbo, UiRect* vertices) {
+
+        if (*vbo == 0) {
+            glGenBuffers(1, vbo);
+            glBindBuffer(GL_ARRAY_BUFFER, *vbo);
             glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
-                    &layer->vertices, GL_STATIC_DRAW);
+                    vertices, GL_STATIC_DRAW);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
         else {
-            glBindBuffer(GL_ARRAY_BUFFER, layer->vbo);
+            glBindBuffer(GL_ARRAY_BUFFER, *vbo);
             glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
-                    &layer->vertices);
+                    vertices);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
-    }
 }
