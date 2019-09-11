@@ -18,9 +18,9 @@
 
 // TODO GRADIENT LAYERS
 //      - move to an opengl renderer
-//      * shader loader
-//      * gradient layer/shader 
-//      * I quite liked the look of the white mix of 0.3 on the cover art
+//          § gradient layer/shader 
+//
+//          * I quite liked the look of the white mix of 0.3 on the cover art
 //          slightly desaturated - might have a shader for covers and do 
 //          an average color gradient to the right, white mix 0.3 AND anchor
 //          texture to the left with proper ratio, locking in the height
@@ -116,6 +116,14 @@ typedef struct TextLayer {
     TTF_Font *font;
 } TextLayer;
 
+typedef struct GradientLayer {
+    GLuint vbo;
+    UiRect vertices;
+    float xSwap;
+    float ySwap;
+    float offset;
+} GradientLayer;
+
 typedef struct OffblastUi {
 
     int32_t winWidth;
@@ -180,89 +188,21 @@ const char *platformString(char *key);
 void *downloadCover(void *arg);
 char *getCoverPath();
 void updateVbo(GLuint *vbo, UiRect* vertices);
+GLint loadShaderFile(const char *path, GLenum shaderType);
+GLuint createShaderProgram(GLint vertShader, GLint fragShader);
 void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface, 
         uint32_t *newWidth, uint32_t *newHeight); 
 void updateRect(UiRect *vertices, uint32_t winWidth, uint32_t winHeight, 
         uint32_t rectWidth, uint32_t rectHeight);
-
 void generateTextLayer(
         OffblastUi *ui, TextLayer *layer, char *text, uint32_t wrapWidth, 
         uint32_t updateVertices);
-
-
 void changeRow(
         OffblastUi *ui,
         uint32_t direction);
-
 void changeColumn(
         OffblastUi *ui,
         uint32_t direction);
-
-GLint loadShaderFile(const char *path, GLenum shaderType);
-GLint loadShaderFile(const char *path, GLenum shaderType) {
-
-    GLint compStatus = GL_FALSE; 
-    GLuint shader = glCreateShader(shaderType);
-
-    FILE *f = fopen(path, "rb");
-    assert(f);
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    char *shaderString = calloc(1, fsize + 1);
-    fread(shaderString, 1, fsize, f);
-    fclose(f);
-
-    glShaderSource(shader, 1, (const char * const *)&shaderString, NULL);
-
-    glCompileShader(shader);
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &compStatus);
-    printf("Shader Compilation: %d - %s\n", compStatus, path);
-
-    if (!compStatus) {
-        GLint len;
-        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, 
-                &len);
-        char *logString = calloc(1, len+1);
-        glGetShaderInfoLog(shader, len, NULL, logString);
-        printf("%s\n", logString);
-        free(logString);
-    }
-    assert(compStatus);
-
-    return shader;
-}
-
-GLuint createShaderProgram(GLint vertShader, GLint fragShader);
-GLuint createShaderProgram(GLint vertShader, GLint fragShader) {
-
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vertShader);
-    glAttachShader(program, fragShader);
-    glLinkProgram(program);
-
-    GLint programStatus;
-    glGetProgramiv(program, GL_LINK_STATUS, &programStatus);
-    printf("GL Program Status: %d\n", programStatus);
-    if (!programStatus) {
-        GLint len;
-        glGetProgramiv(program, GL_INFO_LOG_LENGTH, 
-                &len);
-        char *logString = calloc(1, len+1);
-        glGetProgramInfoLog(program, len, NULL, logString);
-        printf("%s\n", logString);
-        free(logString);
-    }
-    assert(programStatus);
-
-    glDetachShader(program, vertShader);
-    glDetachShader(program, fragShader);
-    glDeleteShader(vertShader);
-    glDeleteShader(fragShader);
-
-    return program;
-}
 
 
 int main (int argc, char** argv) {
@@ -860,8 +800,20 @@ int main (int argc, char** argv) {
             GL_FRAGMENT_SHADER);
     assert(textVertShader);
     assert(textFragShader);
-    GLuint program = createShaderProgram(textVertShader, textFragShader);
-    assert(program);
+    GLuint textProgram = createShaderProgram(textVertShader, textFragShader);
+    assert(textProgram);
+
+    // Gradient Pipeline
+    GLint gradientVertShader = loadShaderFile("shaders/gradient.vert", 
+            GL_VERTEX_SHADER);
+    GLint gradientFragShader = loadShaderFile("shaders/gradient.frag", 
+            GL_FRAGMENT_SHADER);
+    assert(gradientVertShader);
+    assert(gradientFragShader);
+    GLuint gradientProgram = createShaderProgram(gradientVertShader, 
+            gradientFragShader);
+    assert(gradientProgram);
+
 
     GLuint fpsTexture;
     glGenTextures(1, &fpsTexture);
@@ -872,7 +824,7 @@ int main (int argc, char** argv) {
 
 
     // TODO do we need this?
-    GLint texUni = glGetUniformLocation(program, "ourTexture");
+    GLint texUni = glGetUniformLocation(textProgram, "ourTexture");
     printf("uniform is %u\n", texUni);
 
 
@@ -1098,10 +1050,26 @@ int main (int argc, char** argv) {
         UiRow *rowToRender = ui->rowCursor->previousRow;
         rowToRender = rowToRender->previousRow;
 
-        GLint translateUni = glGetUniformLocation(program, "myOffset");
-        GLint alphaUni = glGetUniformLocation(program, "myAlpha");
-        GLint texturePosUni = glGetUniformLocation(program, "textureSize");
-        glUseProgram(program);
+        GLint translateUni = glGetUniformLocation(textProgram, "myOffset");
+        GLint alphaUni = glGetUniformLocation(textProgram, "myAlpha");
+        GLint texturePosUni = glGetUniformLocation(textProgram, "textureSize");
+        glUseProgram(textProgram);
+
+        GradientLayer bottomGradient = {};
+        updateRect(&bottomGradient.vertices, ui->winWidth, ui->winHeight, 
+                ui->winWidth, goldenRatioLargef(ui->winHeight, 5));
+        updateVbo(&bottomGradient.vbo, &bottomGradient.vertices);
+
+        GradientLayer topGradient = {};
+        updateRect(&topGradient.vertices, ui->winWidth, ui->winHeight, 
+                ui->winWidth, ui->winHeight - ui->winFold);
+        updateVbo(&topGradient.vbo, &topGradient.vertices);
+        GLint gradientOffsetYUniform = 
+            glGetUniformLocation(gradientProgram, "yOffset");
+        GLint gradientFlipYUniform = 
+            glGetUniformLocation(gradientProgram, "yFlip");
+        GLint gradientStartUniform = 
+            glGetUniformLocation(gradientProgram, "startPos");
 
         // § blocks
         for (int32_t iRow = -2; iRow < ROWS_TOTAL-2; iRow++) {
@@ -1236,20 +1204,42 @@ int main (int argc, char** argv) {
             rowToRender = rowToRender->nextRow;
         }
 
-#if 0 
-        // TODO what was this for again?
-        SDL_Rect infoLayer = {
-            0, 0,
-            ui->winWidth,
-            ui->winFold
-        };
-        SDL_SetRenderDrawColor(ui->renderer, 0x00, 0x00, 0x00, 0xFF);
-        SDL_RenderFillRect(ui->renderer, &infoLayer);
-#endif
+        glUniform2f(translateUni, 0.0f, 0.0f);
+        glUniform1f(alphaUni, 1.0);
+        glUniform2f(texturePosUni, 0.0f, 0.0f);
 
-        glUniform2f(texturePosUni, 0.0, 0.0f);
+        // § GRADIENT LAYERS
+        glUseProgram(gradientProgram);
+        glUniform1f(gradientOffsetYUniform, 
+                2.0/ui->winHeight * ui->winFold);
+        glUniform1f(gradientFlipYUniform, 1.0);
+        glUniform1f(gradientStartUniform, 1.0);
+        glBindBuffer(GL_ARRAY_BUFFER, topGradient.vbo);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
+                6*sizeof(float), 0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
+                6*sizeof(float), (void*)(4*sizeof(float)));
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+
+
+        glUseProgram(gradientProgram);
+        glUniform1f(gradientOffsetYUniform, 0.0);
+        glUniform1f(gradientFlipYUniform, 0.0);
+        glUniform1f(gradientStartUniform, 0.1);
+        glBindBuffer(GL_ARRAY_BUFFER, bottomGradient.vbo);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
+                6*sizeof(float), 0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
+                6*sizeof(float), (void*)(4*sizeof(float)));
+        glDrawArrays(GL_TRIANGLES, 0, 6);
 
         // § INFO AREA
+        glUseProgram(textProgram);
+
         if (!ui->titleLayer.textureValid) {
             generateTextLayer(
                     ui, &ui->titleLayer,ui->movingToTarget->name, 
@@ -1331,7 +1321,7 @@ int main (int argc, char** argv) {
                 (void*)(4*sizeof(float)));
 
         float pixelY = 
-            ui->winHeight - goldenRatioLargef(ui->winHeight, 4)
+            ui->winHeight - goldenRatioLargef(ui->winHeight, 5)
                 - ui->titleLayer.pixelHeight;
         float newY  = (2.0f/ui->winHeight) * pixelY;
 
@@ -2067,3 +2057,70 @@ void updateVbo(GLuint *vbo, UiRect* vertices) {
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
 }
+
+
+GLint loadShaderFile(const char *path, GLenum shaderType) {
+
+    GLint compStatus = GL_FALSE; 
+    GLuint shader = glCreateShader(shaderType);
+
+    FILE *f = fopen(path, "rb");
+    assert(f);
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char *shaderString = calloc(1, fsize + 1);
+    fread(shaderString, 1, fsize, f);
+    fclose(f);
+
+    glShaderSource(shader, 1, (const char * const *)&shaderString, NULL);
+
+    glCompileShader(shader);
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compStatus);
+    printf("Shader Compilation: %d - %s\n", compStatus, path);
+
+    if (!compStatus) {
+        GLint len;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, 
+                &len);
+        char *logString = calloc(1, len+1);
+        glGetShaderInfoLog(shader, len, NULL, logString);
+        printf("%s\n", logString);
+        free(logString);
+    }
+    assert(compStatus);
+
+    return shader;
+}
+
+
+GLuint createShaderProgram(GLint vertShader, GLint fragShader) {
+
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertShader);
+    glAttachShader(program, fragShader);
+    glLinkProgram(program);
+
+    GLint programStatus;
+    glGetProgramiv(program, GL_LINK_STATUS, &programStatus);
+    printf("GL Program Status: %d\n", programStatus);
+    if (!programStatus) {
+        GLint len;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, 
+                &len);
+        char *logString = calloc(1, len+1);
+        glGetProgramInfoLog(program, len, NULL, logString);
+        printf("%s\n", logString);
+        free(logString);
+    }
+    assert(programStatus);
+
+    glDetachShader(program, vertShader);
+    glDetachShader(program, fragShader);
+    glDeleteShader(vertShader);
+    glDeleteShader(fragShader);
+
+    return program;
+}
+

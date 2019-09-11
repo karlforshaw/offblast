@@ -11,7 +11,7 @@ OBJS = main.o offblastDbFile.o
 ${PROG}: ${OBJS}
 	gcc -g -o ${PROG} ${OBJS} -lm ${LIBS} 
 
-main.o: main.c offblast.h offblastDbFile.h
+main.o: main.c offblast.h offblastDbFile.h shaders/*
 	gcc -g -c ${CFLAGS} main.c
 
 offblastDbFile.o: offblastDbFile.c offblast.h offblastDbFile.h
