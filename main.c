@@ -18,9 +18,8 @@
 
 // TODO GRADIENT LAYERS
 //      - move to an opengl renderer
-//      * block texture scaling
-//      * gradient layer/shader 
 //      * shader loader
+//      * gradient layer/shader 
 //      * I quite liked the look of the white mix of 0.3 on the cover art
 //          slightly desaturated - might have a shader for covers and do 
 //          an average color gradient to the right, white mix 0.3 AND anchor
@@ -198,6 +197,72 @@ void changeRow(
 void changeColumn(
         OffblastUi *ui,
         uint32_t direction);
+
+GLint loadShaderFile(const char *path, GLenum shaderType);
+GLint loadShaderFile(const char *path, GLenum shaderType) {
+
+    GLint compStatus = GL_FALSE; 
+    GLuint shader = glCreateShader(shaderType);
+
+    FILE *f = fopen(path, "rb");
+    assert(f);
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char *shaderString = calloc(1, fsize + 1);
+    fread(shaderString, 1, fsize, f);
+    fclose(f);
+
+    glShaderSource(shader, 1, (const char * const *)&shaderString, NULL);
+
+    glCompileShader(shader);
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compStatus);
+    printf("Shader Compilation: %d - %s\n", compStatus, path);
+
+    if (!compStatus) {
+        GLint len;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, 
+                &len);
+        char *logString = calloc(1, len+1);
+        glGetShaderInfoLog(shader, len, NULL, logString);
+        printf("%s\n", logString);
+        free(logString);
+    }
+    assert(compStatus);
+
+    return shader;
+}
+
+GLuint createShaderProgram(GLint vertShader, GLint fragShader);
+GLuint createShaderProgram(GLint vertShader, GLint fragShader) {
+
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertShader);
+    glAttachShader(program, fragShader);
+    glLinkProgram(program);
+
+    GLint programStatus;
+    glGetProgramiv(program, GL_LINK_STATUS, &programStatus);
+    printf("GL Program Status: %d\n", programStatus);
+    if (!programStatus) {
+        GLint len;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, 
+                &len);
+        char *logString = calloc(1, len+1);
+        glGetProgramInfoLog(program, len, NULL, logString);
+        printf("%s\n", logString);
+        free(logString);
+    }
+    assert(programStatus);
+
+    glDetachShader(program, vertShader);
+    glDetachShader(program, fragShader);
+    glDeleteShader(vertShader);
+    glDeleteShader(fragShader);
+
+    return program;
+}
 
 
 int main (int argc, char** argv) {
@@ -788,75 +853,15 @@ int main (int argc, char** argv) {
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
 
-    // § shaders
-    const char *vertexShaderStr = 
-        "#version 330\n"
-        "layout(location = 0) in vec4 position;\n"
-        "layout(location = 1) in vec2 aTexcoord;\n"
-        "uniform vec2 myOffset;\n"
-        "out vec2 TexCoord;\n"
-        "void main()\n"
-        "{\n"
-        "   gl_Position = position + vec4(myOffset.x, myOffset.y, 0.0f, 0.0f);\n"
-        "   TexCoord = aTexcoord;\n"
-        "}\n";
-
-    const char *fragmentShaderStr = 
-        "#version 330\n"
-        "in vec2 TexCoord;\n"
-        "out vec4 outputColor;\n"
-        "uniform sampler2D ourTexture;\n"
-        "uniform float myAlpha;\n"
-        "uniform vec2 textureSize;\n"
-        "void main()\n"
-        "{\n"
-        "   vec2 actualTexCoord = vec2(TexCoord.x, TexCoord.y);\n"
-        "   if (textureSize.x != 0.0) { actualTexCoord.x = TexCoord.x * textureSize.x; }\n"
-        "   if (textureSize.y != 0.0) { actualTexCoord.y = textureSize.y +  (TexCoord.y*(1-textureSize.y)); }\n"
-
-        "   vec4 mySample = texture(ourTexture, actualTexCoord);\n"
-        "   //outputColor = mix(mySample, vec4(1,1,1,1), 0.3);\n"
-        "   outputColor = myAlpha*texture(ourTexture, actualTexCoord);\n"
-        "}\n";
-
-    GLint compStatus = GL_FALSE; 
-    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderStr, NULL);
-    glCompileShader(vertexShader);
-    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &compStatus);
-    printf("Vertex Shader Compilation: %d\n", compStatus);
-    if (!compStatus) {
-        GLint len;
-        glGetShaderiv(vertexShader, GL_INFO_LOG_LENGTH, 
-                &len);
-        char *logString = calloc(1, len+1);
-        glGetShaderInfoLog(vertexShader, len, NULL, logString);
-        printf("%s\n", logString);
-    }
-    assert(compStatus);
-
-    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderStr, NULL);
-    glCompileShader(fragmentShader);
-    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &compStatus);
-    printf("Fragment Shader Compilation: %d\n", compStatus);
-    assert(compStatus);
-
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vertexShader);
-    glAttachShader(program, fragmentShader);
-    glLinkProgram(program);
-
-    GLint programStatus;
-    glGetProgramiv(program, GL_LINK_STATUS, &programStatus);
-    printf("GL Program Status: %d\n", programStatus);
-    assert(programStatus);
-
-
-    glDetachShader(program, vertexShader);
-    glDetachShader(program, fragmentShader);
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
+    // Text Pipeline
+    GLint textVertShader = loadShaderFile("shaders/text.vert", 
+            GL_VERTEX_SHADER);
+    GLint textFragShader = loadShaderFile("shaders/text.frag", 
+            GL_FRAGMENT_SHADER);
+    assert(textVertShader);
+    assert(textFragShader);
+    GLuint program = createShaderProgram(textVertShader, textFragShader);
+    assert(program);
 
     GLuint fpsTexture;
     glGenTextures(1, &fpsTexture);
