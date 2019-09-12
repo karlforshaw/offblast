@@ -13,24 +13,29 @@
 #define LOAD_STATE_LOADED 3
 
 #define OFFBLAST_NOWRAP 0
+#define OFFBLAST_MAX_PLAYERS 4
+
 
 #define NAVIGATION_MOVE_DURATION 250 
 
-// TODO GRADIENT LAYERS
-//      - move to an opengl renderer
-//          § gradient layer/shader 
+// TODO - Controller support
+// TODO GFX
+//      * can we do a blurred background layer?
+//              https://www.shadertoy.com/view/XdfGDH
 //
-//          * I quite liked the look of the white mix of 0.3 on the cover art
+//      * I quite liked the look of the white mix of 0.3 on the cover art
 //          slightly desaturated - might have a shader for covers and do 
 //          an average color gradient to the right, white mix 0.3 AND anchor
 //          texture to the left with proper ratio, locking in the height
+//      * a loading animation 
+//      * PLATFORM BADGES ON MIXED LISTS
 //
 // TODO font rasterization and rendering
 //      - SDL_TTF doesn't give us a lot of flexibility when it comes to
 //        blocks of text..
 //
+//
 // TODO COVER ART 
-//      * a loading animation 
 //
 // TODO steam support
 //      * looks like if you ls .steam/steam/userdata there's a folder for 
@@ -41,8 +46,10 @@
 //      * we can compile this against libretro.h and tap into stuff from 
 //      the shared object
 //
-// TODO PLATFORM BADGES ON MIXED LISTS
 // TODO GRANDIA IS BEING DETECTED AS "D" DETECT BETTER!
+//
+// TODO Collections, this is more of an opengamedb ticket but It would be
+//      cool to feature collections from youtuvers such as metal jesus.
 //
 // Known Bugs:
 //      - Invalid date format is a thing
@@ -74,6 +81,13 @@
 
 #include "offblast.h"
 #include "offblastDbFile.h"
+
+typedef struct Player {
+    int32_t jsIndex;
+    SDL_GameController *usingController; 
+    char *name; 
+    uint8_t emailHash;
+} Player;
 
 typedef struct UiTile{
     struct LaunchTarget *target;
@@ -161,6 +175,8 @@ typedef struct OffblastUi {
     UiRow *rows;
     LaunchTarget *movingToTarget;
     UiRow *movingToRow;
+
+    Player players[OFFBLAST_MAX_PLAYERS];
 } OffblastUi;
 
 typedef struct Launcher {
@@ -203,6 +219,56 @@ void changeRow(
 void changeColumn(
         OffblastUi *ui,
         uint32_t direction);
+
+void launch(OffblastUi *ui, uint32_t nPaths, Launcher* launchers) {
+
+    LaunchTarget *target = ui->rowCursor->tileCursor->target;
+
+    if (strlen(target->path) == 0 || 
+            strlen(target->fileName) == 0) 
+    {
+        printf("%s has no launch candidate\n", target->name);
+    }
+    else {
+
+        char *romSlug;
+        asprintf(&romSlug, "%s", (char*) &target->path);
+
+        char *launchString = calloc(PATH_MAX, sizeof(char));
+
+        for (uint32_t i = 0; i < nPaths; i++) {
+            if (strcmp(target->path, launchers[i].path))
+                memcpy( launchString, 
+                        launchers[i].launcher, 
+                        strlen(launchers[i].launcher));
+        }
+        assert(strlen(launchString));
+
+        char *p;
+        uint8_t replaceIter = 0, replaceLimit = 8;
+        while ((p = strstr(launchString, "%ROM%"))) {
+            memmove(
+                    p + strlen(romSlug) + 2, 
+                    p + 5,
+                    strlen(p+5));
+            *p = '"';
+            memcpy(p+1, romSlug, strlen(romSlug));
+            *(p + 1 + strlen(romSlug)) = '"';
+
+            replaceIter++;
+            if (replaceIter >= replaceLimit) {
+                printf("rom replace iterations exceeded, breaking\n");
+                break;
+            }
+        }
+
+        system(launchString);
+        free(romSlug);
+        free(launchString);
+    }
+
+
+}
 
 
 int main (int argc, char** argv) {
@@ -743,7 +809,10 @@ int main (int argc, char** argv) {
 
 
 
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO |
+                SDL_INIT_JOYSTICK | 
+                SDL_INIT_GAMECONTROLLER) != 0) 
+    {
         printf("SDL initialization Failed, exiting..\n");
         return 1;
     }
@@ -788,6 +857,10 @@ int main (int argc, char** argv) {
     ui->verticalAnimation = calloc(1, sizeof(Animation));
     ui->infoAnimation = calloc(1, sizeof(Animation));
     ui->rowNameAnimation = calloc(1, sizeof(Animation));
+
+    for (uint32_t i = 0; i < OFFBLAST_MAX_PLAYERS; i++) {
+        ui->players[i].jsIndex = -1;
+    }
 
     GLuint vao;
     glGenVertexArrays(1, &vao);
@@ -956,6 +1029,61 @@ int main (int argc, char** argv) {
                 running = 0;
                 break;
             }
+            else if (event.type == SDL_CONTROLLERAXISMOTION) {
+                printf("axis motion\n");
+            }
+            else if (event.type == SDL_CONTROLLERBUTTONDOWN) {
+                SDL_ControllerButtonEvent *buttonEvent = 
+                    (SDL_ControllerButtonEvent *) &event;
+
+                // TODO should all players be able to control?
+
+                switch(buttonEvent->button) {
+                    case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                        changeRow(ui, 1);
+                        break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                        changeRow(ui, 0);
+                        break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                        changeColumn(ui, 0);
+                        break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                        changeColumn(ui, 1);
+                        break;
+                    case SDL_CONTROLLER_BUTTON_A:
+                        launch(ui, nPaths, launchers);
+                        break;
+                }
+
+            }
+            else if (event.type == SDL_CONTROLLERBUTTONUP) {
+                printf("button up \n");
+            }
+            else if (event.type == SDL_CONTROLLERDEVICEADDED) {
+
+                SDL_ControllerDeviceEvent *devEvent = 
+                    (SDL_ControllerDeviceEvent*)&event;
+
+                printf("controller added %d\n", devEvent->which);
+                SDL_GameController *controller;
+                if (SDL_IsGameController(devEvent->which) == SDL_TRUE &&
+                        (controller = SDL_GameControllerOpen(devEvent->which)) != NULL) 
+                {
+                    for (uint32_t k = 0; k < OFFBLAST_MAX_PLAYERS; k++) {
+                        if (ui->players[k].jsIndex == -1) {
+                            ui->players[k].jsIndex = devEvent->which;
+                            printf("Controller: %s\nAdded to Player %d\n",
+                                SDL_GameControllerNameForIndex(devEvent->which),
+                                k);
+                            break;
+                        }
+                    }
+                }
+            }
+            else if (event.type == SDL_CONTROLLERDEVICEREMOVED) {
+                printf("controller removed\n");
+            }
             else if (event.type == SDL_KEYUP) {
                 SDL_KeyboardEvent *keyEvent = (SDL_KeyboardEvent*) &event;
                 if (keyEvent->keysym.scancode == SDL_SCANCODE_ESCAPE) {
@@ -964,64 +1092,19 @@ int main (int argc, char** argv) {
                     break;
                 }
                 if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
-
-                    LaunchTarget *target = ui->rowCursor->tileCursor->target;
-
-                    if (strlen(target->path) == 0 || 
-                            strlen(target->fileName) == 0) 
-                    {
-                        printf("%s has no launch candidate\n", target->name);
-                    }
-                    else {
-
-                        char *romSlug;
-                        asprintf(&romSlug, "%s", (char*) &target->path);
-
-                        char *launchString = calloc(PATH_MAX, sizeof(char));
-                        
-                        for (uint32_t i = 0; i < nPaths; i++) {
-                            if (strcmp(target->path, launchers[i].path))
-                                memcpy( launchString, 
-                                        launchers[i].launcher, 
-                                        strlen(launchers[i].launcher));
-                        }
-                        assert(strlen(launchString));
-
-                        char *p;
-                        uint8_t replaceIter = 0, replaceLimit = 8;
-                        while ((p = strstr(launchString, "%ROM%"))) {
-                            memmove(
-                                    p + strlen(romSlug) + 2, 
-                                    p + 5,
-                                    strlen(p+5));
-                            *p = '"';
-                            memcpy(p+1, romSlug, strlen(romSlug));
-                            *(p + 1 + strlen(romSlug)) = '"';
-
-                            replaceIter++;
-                            if (replaceIter >= replaceLimit) {
-                                printf("rom replace iterations exceeded, breaking\n");
-                                break;
-                            }
-                        }
-
-                        system(launchString);
-                        free(romSlug);
-                        free(launchString);
-                    }
-
+                    launch(ui, nPaths, launchers);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_DOWN ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_J) 
                 {
-                    changeRow(ui, 1);
+                    changeRow(ui, 0);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_UP ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_K) 
                 {
-                    changeRow(ui, 0);
+                    changeRow(ui, 1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
@@ -1281,14 +1364,14 @@ int main (int argc, char** argv) {
 
         float alpha = 1.0;
         if (ui->infoAnimation->animating == 1) {
-            uint8_t change = easeInOutCirc(
+            double change = easeInOutCirc(
                     (double)SDL_GetTicks() - ui->infoAnimation->startTick,
+                    0.0,
                     1.0,
-                    0.1,
                     (double)ui->infoAnimation->durationMs);
 
             if (ui->infoAnimation->direction == 0) {
-                change = 1 - change;
+                change = 1.0 - change;
             }
 
             alpha = change;
@@ -1296,14 +1379,14 @@ int main (int argc, char** argv) {
 
         float rowNameAlpha = 1;
         if (ui->rowNameAnimation->animating == 1) {
-            uint8_t change = easeInOutCirc(
+            double change = easeInOutCirc(
                     (double)SDL_GetTicks() - ui->rowNameAnimation->startTick,
+                    0.0,
                     1.0,
-                    0.1,
                     (double)ui->rowNameAnimation->durationMs);
 
             if (ui->rowNameAnimation->direction == 0) {
-                change = 1 - change;
+                change = 1.0 - change;
             }
 
             rowNameAlpha = change;

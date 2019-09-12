@@ -17,7 +17,7 @@ void main()
     }
 
     if (textureSize.y != 0.0) {
-        actualTexCoord.y = textureSize.y +  (TexCoord.y*(1-textureSize.y)); 
+        actualTexCoord.y = textureSize.y +  (TexCoord.y*(1.0-textureSize.y)); 
     }
 
    vec4 mySample = texture(ourTexture, actualTexCoord);
