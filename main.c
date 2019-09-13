@@ -237,21 +237,29 @@ void launch(OffblastUi *ui, uint32_t nPaths, Launcher* launchers) {
 
         char *launchString = calloc(PATH_MAX, sizeof(char));
 
+        // TODO I don't super love this
+        uint32_t bestMatchIndex = 0;
         for (uint32_t i = 0; i < nPaths; i++) {
-            if (strcmp(target->path, launchers[i].path))
-                memcpy( launchString, 
-                        launchers[i].launcher, 
-                        strlen(launchers[i].launcher));
+            if (strcmp(target->path, launchers[i].path) > bestMatchIndex) {
+                bestMatchIndex = i;
+            }
         }
+
+        memcpy(launchString, 
+                launchers[bestMatchIndex].launcher, 
+                strlen(launchers[bestMatchIndex].launcher));
+
         assert(strlen(launchString));
 
         char *p;
         uint8_t replaceIter = 0, replaceLimit = 8;
         while ((p = strstr(launchString, "%ROM%"))) {
+
             memmove(
                     p + strlen(romSlug) + 2, 
                     p + 5,
-                    strlen(p+5));
+                    strlen(p));
+
             *p = '"';
             memcpy(p+1, romSlug, strlen(romSlug));
             *(p + 1 + strlen(romSlug)) = '"';
@@ -263,6 +271,7 @@ void launch(OffblastUi *ui, uint32_t nPaths, Launcher* launchers) {
             }
         }
 
+        printf("OFFBLAST! %s\n", launchString);
         system(launchString);
         free(romSlug);
         free(launchString);
@@ -385,7 +394,7 @@ int main (int argc, char** argv) {
     free(descriptionDbPath);
 
 
-#if 1
+#if 0
     // XXX DEBUG Dump out all launch targets
     for (int i = 0; i < launchTargetFile->nEntries; i++) {
         printf("Reading from local game db (%u) entries\n", 
