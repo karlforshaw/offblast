@@ -14,8 +14,9 @@
 #include "offblastDbFile.h"
 
 #define ITEM_BUFFER_NUM 1000ul
+#define BLOB_GROW_SIZE 1048576
 
-int init_db_file(char *path, OffblastDbFile *dbFileStruct, 
+int InitDbFile(char *path, OffblastDbFile *dbFileStruct, 
         size_t itemSize) 
 {
 
@@ -28,14 +29,15 @@ int init_db_file(char *path, OffblastDbFile *dbFileStruct,
     }
 
     size_t initialBytesToAllocate = itemSize * ((size_t) ITEM_BUFFER_NUM);
-    if (sb.st_size == 0 && 
-            fallocate(fd, 0, 0, initialBytesToAllocate) == -1) 
-    {
-        printf("couldn't allocate space for the db %s\n", path);
-        perror("error :");
-    }
-    else {
-        sb.st_size = initialBytesToAllocate;
+    if (sb.st_size == 0) {
+        if (fallocate(fd, 0, 0, initialBytesToAllocate) == -1) 
+        {
+            printf("couldn't allocate space for the db %s\n", path);
+            perror("error :");
+        }
+        else {
+            sb.st_size = initialBytesToAllocate;
+        }
     }
 
     printf("allocating %lu for %s\n", sb.st_size, path);
@@ -57,6 +59,82 @@ int init_db_file(char *path, OffblastDbFile *dbFileStruct,
     dbFileStruct->nBytesAllocated = sb.st_size;
 
     return 1;
+}
+
+
+void* growDbFileIfNecessary(OffblastDbFile* dbFileStruct, size_t itemSize, enum OffBlastDbType type) 
+{
+
+    uint32_t willOverflow = 0;
+    size_t newSize = 0;
+
+    if (type == OFFBLAST_DB_TYPE_FIXED) {
+
+        OffblastDbFileFormat *dbFileActual = 
+            (OffblastDbFileFormat*)dbFileStruct->memory;
+
+        willOverflow = dbFileActual->nEntries * itemSize + itemSize >= 
+            dbFileStruct->nBytesAllocated;
+        
+        newSize = dbFileStruct->nBytesAllocated + 
+            itemSize * (size_t) ITEM_BUFFER_NUM;
+
+    }
+    else if(type == OFFBLAST_DB_TYPE_BLOB) {
+
+        OffblastBlobFile *dbFileActual = 
+            (OffblastBlobFile*)dbFileStruct->memory;
+
+        willOverflow = ((size_t)dbFileActual->cursor) + itemSize >= 
+            dbFileStruct->nBytesAllocated;
+
+        newSize = dbFileStruct->nBytesAllocated + 
+            BLOB_GROW_SIZE;
+    }
+    else {
+        printf("wtf kind of db file are you using then?\n");
+        return NULL;
+    }
+
+
+    if (willOverflow) 
+    {
+
+        printf("DB FILE FULL, GROWING!\n");
+
+        if(ftruncate(dbFileStruct->fd, newSize) == -1) {
+            return NULL;
+        }
+        else {
+
+    struct stat sb;
+
+    if (fstat(dbFileStruct->fd, &sb) == -1) {
+        perror("could not open db file\n");
+        return NULL;
+    }
+
+        printf("truncated block size %lu!\n", sb.st_size);
+        printf("newSize we were using %lu!\n", newSize);
+
+            void *memory = mremap(
+                    dbFileStruct->memory,
+                    dbFileStruct->nBytesAllocated,
+                    sb.st_size,
+                    MREMAP_MAYMOVE
+                    );
+
+            if (memory == MAP_FAILED) {
+                perror("couldn't re-map memory for file\n");
+                return NULL;
+            }
+
+            dbFileStruct->memory = memory;
+            dbFileStruct->nBytesAllocated = newSize;
+        }
+    }
+
+    return dbFileStruct->memory;
 }
 
 int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file, 

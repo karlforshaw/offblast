@@ -1,6 +1,11 @@
 #include <stdint.h>
 #include <linux/limits.h>
 
+enum OffBlastDbType {
+    OFFBLAST_DB_TYPE_FIXED = 1,
+    OFFBLAST_DB_TYPE_BLOB = 2,
+};
+
 typedef struct OffblastDbFileFormat {
     uint32_t nEntries;
     void *entries;
@@ -56,12 +61,12 @@ typedef struct OffblastBlob {
 } OffblastBlob;
 
 
-int init_db_file(char *, OffblastDbFile *dbFileStruct, 
+int InitDbFile(char *, OffblastDbFile *dbFileStruct, 
         size_t itemSize);
 
-// TODO implement
-int num_remaining_items(OffblastDbFile *dbFileStruct,
-        size_t itemSize);
+void *growDbFileIfNecessary(OffblastDbFile* dbFileStruct,
+        size_t itemSize,
+        enum OffBlastDbType type);
 
 int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file, 
         uint32_t targetSignature);

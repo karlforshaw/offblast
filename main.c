@@ -18,7 +18,19 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
-// TODO - Controller support
+// ALPHA 0.1 HITLIST
+//      1. Detection Algo is crap
+//      2. Who's playing?
+//      3. Recently Played and Play Duration
+//      4. Fullscreen Switch
+//      5. Return to offblast experience
+//
+// Known Bugs:
+//      - Invalid date format is a thing
+//      - Only JPG covers are supported
+//      * if you add a rom after the platform has been scraped we say we already
+//          have it in the db but this is the target, not the filepath etc
+//
 // TODO GFX
 //      * can we do a blurred background layer?
 //              https://www.shadertoy.com/view/XdfGDH
@@ -34,9 +46,6 @@
 //      - SDL_TTF doesn't give us a lot of flexibility when it comes to
 //        blocks of text..
 //
-//
-// TODO COVER ART 
-//
 // TODO steam support
 //      * looks like if you ls .steam/steam/userdata there's a folder for 
 //      each game you've played.. this could be a good way to scrape and auto
@@ -46,17 +55,9 @@
 //      * we can compile this against libretro.h and tap into stuff from 
 //      the shared object
 //
-// TODO GRANDIA IS BEING DETECTED AS "D" DETECT BETTER!
-//
 // TODO Collections, this is more of an opengamedb ticket but It would be
 //      cool to feature collections from youtuvers such as metal jesus.
 //
-// Known Bugs:
-//      - Invalid date format is a thing
-//      - Only JPG covers are supported
-//      - Returning to offblast on i3 - window not being full screen
-//      * if you add a rom after the platform has been scraped we say we already
-//          have it in the db but this is the target, not the filepath etc
 
 #include <stdio.h>
 #include <stdint.h>
@@ -350,7 +351,7 @@ int main (int argc, char** argv) {
     char *pathInfoDbPath;
     asprintf(&pathInfoDbPath, "%s/pathinfo.bin", configPath);
     struct OffblastDbFile pathDb = {0};
-    if (!init_db_file(pathInfoDbPath, &pathDb, sizeof(PathInfo))) {
+    if (!InitDbFile(pathInfoDbPath, &pathDb, sizeof(PathInfo))) {
         printf("couldn't initialize path db, exiting\n");
         return 1;
     }
@@ -360,7 +361,7 @@ int main (int argc, char** argv) {
     char *launchTargetDbPath;
     asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
     OffblastDbFile launchTargetDb = {0};
-    if (!init_db_file(launchTargetDbPath, &launchTargetDb, 
+    if (!InitDbFile(launchTargetDbPath, &launchTargetDb, 
                 sizeof(LaunchTarget))) 
     {
         printf("couldn't initialize path db, exiting\n");
@@ -373,8 +374,8 @@ int main (int argc, char** argv) {
     char *descriptionDbPath;
     asprintf(&descriptionDbPath, "%s/descriptions.bin", configPath);
     OffblastDbFile descriptionDb = {0};
-    if (!init_db_file(descriptionDbPath, &descriptionDb, 
-                sizeof(OffblastBlobFile) + 33333))
+    if (!InitDbFile(descriptionDbPath, &descriptionDb, 
+                1))
     {
         printf("couldn't initialize the descriptions file, exiting\n");
         return 1;
@@ -384,10 +385,11 @@ int main (int argc, char** argv) {
     free(descriptionDbPath);
 
 
-#if 0
+#if 1
     // XXX DEBUG Dump out all launch targets
     for (int i = 0; i < launchTargetFile->nEntries; i++) {
-        printf("Reading from local game db\n");
+        printf("Reading from local game db (%u) entries\n", 
+                launchTargetFile->nEntries);
         printf("found game\t%d\t%u\n", 
                 i, launchTargetFile->entries[i].targetSignature); 
 
@@ -506,6 +508,21 @@ int main (int argc, char** argv) {
 
                     if (indexOfEntry == -1) {
 
+                        void *pLaunchTargetMemory = growDbFileIfNecessary(
+                                    &launchTargetDb, 
+                                    sizeof(LaunchTarget),
+                                    OFFBLAST_DB_TYPE_FIXED);
+
+                        if(pLaunchTargetMemory == NULL) {
+                            printf("Couldn't expand the db file to accomodate"
+                                    " all the targets\n");
+                            return 1;
+                        }
+                        else {
+                            launchTargetFile = 
+                                (LaunchTargetFile*) pLaunchTargetMemory; 
+                        }
+
                         char *gameDate = getCsvField(csvLine, 2);
                         char *scoreString = getCsvField(csvLine, 3);
                         char *metaScoreString = getCsvField(csvLine, 4);
@@ -558,8 +575,26 @@ int main (int argc, char** argv) {
                             }
                         }
 
-                        // XXX TODO check we have enough space to write
-                        // the description into the file
+
+                        void *pDescriptionFile = growDbFileIfNecessary(
+                                    &descriptionDb, 
+                                    sizeof(OffblastBlob) 
+                                        + strlen(description),
+                                    OFFBLAST_DB_TYPE_BLOB); 
+
+                        if(pDescriptionFile == NULL) {
+                            printf("Couldn't expand the description file to "
+                                    "accomodate all the descriptions\n");
+                            return 1;
+                        }
+                        else { 
+                            descriptionFile = 
+                                (OffblastBlobFile*) pDescriptionFile;
+                        }
+
+                        printf("description file just after cursor is now %lu\n", 
+                                descriptionFile->cursor);
+
                         OffblastBlob *newDescription = (OffblastBlob*) 
                             &descriptionFile->memory[descriptionFile->cursor];
 
@@ -575,11 +610,13 @@ int main (int argc, char** argv) {
                         descriptionFile->cursor += 
                             sizeof(OffblastBlob) + strlen(description) + 1;
 
+                        printf("description file cursor is now %lu\n", 
+                                descriptionFile->cursor);
+
 
                         // TODO round properly
                         newEntry->ranking = (uint32_t) score;
 
-                        // TODO check we have the space for it
                         launchTargetFile->nEntries++;
 
                         free(gameDate);
@@ -1058,7 +1095,7 @@ int main (int argc, char** argv) {
 
             }
             else if (event.type == SDL_CONTROLLERBUTTONUP) {
-                printf("button up \n");
+                printf("button up\n");
             }
             else if (event.type == SDL_CONTROLLERDEVICEADDED) {
 
@@ -1967,14 +2004,15 @@ void *downloadCover(void *arg) {
 
         uint32_t res = curl_easy_perform(curl);
 
-        if (res != CURLE_OK) {
-            printf("%s\n", curl_easy_strerror(res));
-        }
-
         curl_easy_cleanup(curl);
         fclose(fd);
 
-        tileToRender->loadState = LOAD_STATE_DOWNLOADED;
+        if (res != CURLE_OK) {
+            printf("%s\n", curl_easy_strerror(res));
+        }
+        else {
+            tileToRender->loadState = LOAD_STATE_DOWNLOADED;
+        }
     }
 
     return NULL;
