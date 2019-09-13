@@ -24,6 +24,7 @@
 //      3. Recently Played and Play Duration
 //      4. Fullscreen Switch
 //      5. Return to offblast experience
+//      6. watch out for vram!
 //
 // Known Bugs:
 //      - Invalid date format is a thing
@@ -960,7 +961,8 @@ int main (int argc, char** argv) {
     ui->rowCursor = ui->rows;
 
     // __ROW__ "Your Library"
-    // TODO put a limit on this
+    uint32_t tileLimit = 15;
+    uint32_t tileCount = 0;
     uint32_t libraryLength = 0;
     for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
         LaunchTarget *target = &launchTargetFile->entries[i];
@@ -969,35 +971,46 @@ int main (int argc, char** argv) {
     }
 
     if (libraryLength > 0) {
-        ui->rows[ui->numRows].length = libraryLength; 
-        ui->rows[ui->numRows].tiles = calloc(libraryLength, sizeof(UiTile)); 
+
+        ui->rows[ui->numRows].tiles = calloc(tileLimit, sizeof(UiTile)); 
         assert(ui->rows[ui->numRows].tiles);
         ui->rows[ui->numRows].tileCursor = &ui->rows[ui->numRows].tiles[0];
-        for (uint32_t i = 0, j = 0; i < launchTargetFile->nEntries; i++) {
+
+        for (uint32_t i = launchTargetFile->nEntries; i > 0; i--) {
+
             LaunchTarget *target = &launchTargetFile->entries[i];
+
             if (strlen(target->fileName) != 0) {
-                ui->rows[ui->numRows].tiles[j].target = target;
-                if (j+1 == libraryLength) {
-                    ui->rows[ui->numRows].tiles[j].next = 
+
+                ui->rows[ui->numRows].tiles[tileCount].target = target;
+
+                if (tileCount+1 == tileLimit) {
+                    ui->rows[ui->numRows].tiles[tileCount].next = 
                         &ui->rows[ui->numRows].tiles[0];
                 }
                 else {
-                    ui->rows[ui->numRows].tiles[j].next = 
-                        &ui->rows[ui->numRows].tiles[j+1];
+                    ui->rows[ui->numRows].tiles[tileCount].next = 
+                        &ui->rows[ui->numRows].tiles[tileCount+1];
                 }
 
-                if (j==0) {
-                    ui->rows[ui->numRows].tiles[j].previous = 
-                        &ui->rows[ui->numRows].tiles[libraryLength -1];
+                if (tileCount==0) {
+                    ui->rows[ui->numRows].tiles[tileCount].previous = 
+                        &ui->rows[ui->numRows].tiles[tileLimit -1];
                 }
                 else {
-                    ui->rows[ui->numRows].tiles[j].previous 
-                        = &ui->rows[ui->numRows].tiles[j-1];
+                    ui->rows[ui->numRows].tiles[tileCount].previous 
+                        = &ui->rows[ui->numRows].tiles[tileCount-1];
                 }
-                j++;
+
+                tileCount++;
+
+                if (tileCount >= tileLimit) {
+                    break;
+                }
             }
         }
-        ui->rows[ui->numRows].name = "Your Library";
+        ui->rows[ui->numRows].length = tileCount; 
+        ui->rows[ui->numRows].name = "Recently Installed";
         ui->numRows++;
     }
     else { 
@@ -1005,42 +1018,50 @@ int main (int argc, char** argv) {
     }
 
 
-    // __ROWS__ Essentials per platform
+    // __ROWS__ Essentials per platform (temporary)
     for (uint32_t iPlatform = 0; iPlatform < nPlatforms; iPlatform++) {
 
-        asprintf(&ui->rows[ui->numRows].name, "Essential %s", 
-                platformString(platforms[iPlatform]));
+        uint32_t topRatedMax = 25;
+        UiTile *tiles = calloc(topRatedMax, sizeof(UiTile));
+        assert(tiles);
 
-        uint32_t topRatedLength = 9;
-        ui->rows[ui->numRows].length = topRatedLength;
-        ui->rows[ui->numRows].tiles = calloc(topRatedLength, sizeof(UiTile));
-        assert(ui->rows[ui->numRows].tiles);
-        ui->rows[ui->numRows].tileCursor = &ui->rows[ui->numRows].tiles[0];
-        for (uint32_t i = 0; i < ui->rows[ui->numRows].length; i++) {
-            ui->rows[ui->numRows].tiles[i].target = 
-                &launchTargetFile->entries[i];
+        uint32_t numTiles = 0;
+        for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
 
-            if (i+1 == ui->rows[ui->numRows].length) {
-                ui->rows[ui->numRows].tiles[i].next = 
-                    &ui->rows[ui->numRows].tiles[0]; 
-            }
-            else {
-                ui->rows[ui->numRows].tiles[i].next = 
-                    &ui->rows[ui->numRows].tiles[i+1]; 
+            LaunchTarget *target = &launchTargetFile->entries[i];
+
+            if (strcmp(target->platform, platforms[iPlatform]) == 0) {
+
+                tiles[numTiles].target = target; 
+                tiles[numTiles].next = &tiles[numTiles+1]; 
+
+                if (numTiles != 0) 
+                    tiles[numTiles].previous = &tiles[numTiles-1];
+
+                numTiles++;
             }
 
-            if (i == 0) {
-                ui->rows[ui->numRows].tiles[i].previous = 
-                    &ui->rows[ui->numRows].tiles[topRatedLength-1];
-            }
-            else {
-                ui->rows[ui->numRows].tiles[i].previous = 
-                    &ui->rows[ui->numRows].tiles[i-1];
-            }
+            if (numTiles >= topRatedMax) break;
         }
 
-        ui->numRows++;
+        if (numTiles > 0) {
+            tiles[numTiles-1].next = &tiles[0];
+            tiles[0].previous = &tiles[numTiles-1];
+
+            ui->rows[ui->numRows].tiles = tiles;
+            asprintf(&ui->rows[ui->numRows].name, "Essential %s", 
+                    platformString(platforms[iPlatform]));
+
+            ui->rows[ui->numRows].tileCursor = &ui->rows[ui->numRows].tiles[0];
+            ui->rows[ui->numRows].length = numTiles;
+            ui->numRows++;
+        }
+        else {
+            printf("no games for platform!!!\n");
+            free(tiles);
+        }
     }
+
 
     for (uint32_t i = 0; i < ui->numRows; i++) {
         if (i == 0) {
