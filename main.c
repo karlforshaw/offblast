@@ -15,7 +15,6 @@
 #define OFFBLAST_NOWRAP 0
 #define OFFBLAST_MAX_PLAYERS 4
 
-
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.1 HITLIST
@@ -56,6 +55,8 @@
 //      * we can compile this against libretro.h and tap into stuff from 
 //      the shared object
 //
+// TODO List caches, I think when we generate lists we should cache
+//      them in files.. maybe?
 // TODO Collections, this is more of an opengamedb ticket but It would be
 //      cool to feature collections from youtuvers such as metal jesus.
 //
@@ -961,8 +962,6 @@ int main (int argc, char** argv) {
     ui->rowCursor = ui->rows;
 
     // __ROW__ "Your Library"
-    uint32_t tileLimit = 15;
-    uint32_t tileCount = 0;
     uint32_t libraryLength = 0;
     for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
         LaunchTarget *target = &launchTargetFile->entries[i];
@@ -972,9 +971,11 @@ int main (int argc, char** argv) {
 
     if (libraryLength > 0) {
 
-        ui->rows[ui->numRows].tiles = calloc(tileLimit, sizeof(UiTile)); 
-        assert(ui->rows[ui->numRows].tiles);
-        ui->rows[ui->numRows].tileCursor = &ui->rows[ui->numRows].tiles[0];
+        uint32_t tileLimit = 25;
+        UiTile *tiles = calloc(tileLimit, sizeof(UiTile));
+        assert(tiles);
+
+        uint32_t tileCount = 0;
 
         for (uint32_t i = launchTargetFile->nEntries; i > 0; i--) {
 
@@ -982,43 +983,34 @@ int main (int argc, char** argv) {
 
             if (strlen(target->fileName) != 0) {
 
-                ui->rows[ui->numRows].tiles[tileCount].target = target;
-
-                if (tileCount+1 == tileLimit) {
-                    ui->rows[ui->numRows].tiles[tileCount].next = 
-                        &ui->rows[ui->numRows].tiles[0];
-                }
-                else {
-                    ui->rows[ui->numRows].tiles[tileCount].next = 
-                        &ui->rows[ui->numRows].tiles[tileCount+1];
-                }
-
-                if (tileCount==0) {
-                    ui->rows[ui->numRows].tiles[tileCount].previous = 
-                        &ui->rows[ui->numRows].tiles[tileLimit -1];
-                }
-                else {
-                    ui->rows[ui->numRows].tiles[tileCount].previous 
-                        = &ui->rows[ui->numRows].tiles[tileCount-1];
-                }
+                tiles[tileCount].target = target;
+                tiles[tileCount].next = &tiles[tileCount+1];
+                if (tileCount != 0) 
+                    tiles[tileCount].previous = &tiles[tileCount-1];
 
                 tileCount++;
-
-                if (tileCount >= tileLimit) {
-                    break;
-                }
+                if (tileCount >= tileLimit) break;
             }
         }
-        ui->rows[ui->numRows].length = tileCount; 
-        ui->rows[ui->numRows].name = "Recently Installed";
-        ui->numRows++;
+
+        if (tileCount > 0) {
+
+            tiles[tileCount-1].next = &tiles[0];
+            tiles[0].previous = &tiles[tileCount-1];
+
+            ui->rows[ui->numRows].tiles = tiles; 
+            ui->rows[ui->numRows].tileCursor = tiles;
+            ui->rows[ui->numRows].name = "Recently Installed";
+            ui->rows[ui->numRows].length = tileCount; 
+            ui->numRows++;
+        }
     }
     else { 
         printf("woah now looks like we have an empty library\n");
     }
 
 
-    // __ROWS__ Essentials per platform (temporary)
+    // __ROWS__ Essentials per platform 
     for (uint32_t iPlatform = 0; iPlatform < nPlatforms; iPlatform++) {
 
         uint32_t topRatedMax = 25;
