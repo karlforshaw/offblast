@@ -163,34 +163,78 @@ int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file,
     return foundIndex;
 }
 
-int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, 
-        char *search)
-{
-    uint32_t foundIndex = -1;
-    char *bestMatch = NULL;
 
-    printf("\nLooking for: %s\n--------------\n", search);
+int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, char *fileName) {
+
+    int32_t bestIndex = -1;
+    float bestScore = 0;
+
+    // Prepare the file name for searching 
+    char *fileNameStripped = calloc(1, strlen(fileName) + 1);
+    mempcpy(fileNameStripped, fileName, strlen(fileName));
+    char *ext = strchr(fileNameStripped, '(');
+    if (ext == NULL) ext = strrchr(fileNameStripped, '.');
+    if (ext != NULL) *ext = '\0';
+    if (*(ext-1) == ' ') *(ext-1) = '\0';
+
+    printf("\nLooking for: %s\n--------------\n", fileName);
 
     for (uint32_t i = 0; i < file->nEntries; i++) {
-        char *result = strstr(search, file->entries[i].name);
 
-        if (result != NULL) {
-            printf("Match: %s\n", 
-                    file->entries[i].name);
+        // File name needle match
+        char *workingCopy = strdup(fileNameStripped);
+        uint32_t tokensMatched = 0;
+        uint32_t numTokens = 0;
+        float score;
 
-            if (bestMatch == NULL || strlen(result) > strlen(bestMatch)){ 
-                foundIndex = i;
-                bestMatch = file->entries[i].name;
+        char *token = token = strtok(workingCopy, " ");
+        while(token != NULL) {
+            numTokens++;
+            if ((strstr(file->entries[i].name, token) != NULL)) {
+                //printf("Pass 1; Token Match: %s\n", token);
+                tokensMatched++;
+            }
+            token = strtok(NULL, " ");
+        }
+        free(workingCopy);
+
+        // Entry name needle match
+        workingCopy = strdup(file->entries[i].name);
+        token = token = strtok(workingCopy, " ");
+        while(token != NULL) {
+            numTokens++;
+            if ((strstr(fileNameStripped, token) != NULL)) {
+                //printf("Pass2: Token Match: %s\n", token);
+                tokensMatched++;
+            }
+            token = strtok(NULL, " ");
+        }
+        free(workingCopy);
+
+        if (tokensMatched >= 1) {
+            score = (float)tokensMatched/numTokens;
+            printf("%s\t%s\n", fileName, file->entries[i].name);
+            printf("Matched %u/%u for a score of %f\n", 
+                    tokensMatched, numTokens, score);
+
+            if (score == bestScore) {
+                //printf("\n--CONFLICT not sure which is best, "
+                //        "doing nothing!--\n");
+            }
+            else if (score > bestScore) {
+                bestScore = score;
+                bestIndex = i;
             }
         }
     }
 
-    if (foundIndex == -1) {
+    if (bestIndex == -1) {
         printf("NOT FOUND\n\n");
     }
     else {
-        printf("best match: %s - index %u\n\n", bestMatch, foundIndex);
+        printf("best match: %s - index %u\n\n",
+                file->entries[bestIndex].name, bestIndex);
     }
 
-    return foundIndex;
+    return bestIndex;
 }

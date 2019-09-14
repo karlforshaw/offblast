@@ -18,7 +18,6 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.1 HITLIST
-//      1. Detection Algo is crap
 //      2. Who's playing?
 //      3. Recently Played and Play Duration
 //      4. Fullscreen Switch
