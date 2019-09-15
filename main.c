@@ -18,10 +18,10 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.1 HITLIST
+//      4. Fullscreen Switch
+//
 //      2. Who's playing?
 //      3. Recently Played and Play Duration
-//      4. Fullscreen Switch
-//      5. Return to offblast experience
 //      6. watch out for vram!
 //
 // Known Bugs:
@@ -29,6 +29,15 @@
 //      - Only JPG covers are supported
 //      * if you add a rom after the platform has been scraped we say we already
 //          have it in the db but this is the target, not the filepath etc
+//
+// TODO multidisk PS games.
+//      - need to get smart about detection of multidisk PS games and not
+//          entirely sure how to do it just yet. I could either create m3u files
+//          for all my playstation games and just launch the m3u's.. maybe 
+//          add a tool that creates it.. but that's harder than it needs to be
+//          perhaps when we are detecting tokens we could see if theres a 
+//          "(Disk X)" token in the string and if there is and theres an m3u
+//          file present we use that instead?
 //
 // TODO GFX
 //      * can we do a blurred background layer?
@@ -238,7 +247,8 @@ void launch(OffblastUi *ui, uint32_t nPaths, Launcher* launchers) {
 
         char *launchString = calloc(PATH_MAX, sizeof(char));
 
-        // TODO I don't super love this
+        // TODO I don't super love this, it's not even working
+        // ps games are trying to launch with the wrong path
         uint32_t bestMatchIndex = 0;
         for (uint32_t i = 0; i < nPaths; i++) {
             if (strcmp(target->path, launchers[i].path) > bestMatchIndex) {
@@ -274,6 +284,7 @@ void launch(OffblastUi *ui, uint32_t nPaths, Launcher* launchers) {
 
         printf("OFFBLAST! %s\n", launchString);
         system(launchString);
+
         free(romSlug);
         free(launchString);
     }
@@ -882,7 +893,7 @@ int main (int argc, char** argv) {
             640,
             480,
             SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP | 
-                SDL_WINDOW_ALLOW_HIGHDPI);
+                SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_ALLOW_HIGHDPI);
 
     if (window == NULL) {
         printf("SDL window creation failed, exiting..\n");
@@ -1151,6 +1162,10 @@ int main (int argc, char** argv) {
                 }
                 if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
                     launch(ui, nPaths, launchers);
+                }
+                if (keyEvent->keysym.scancode == SDL_SCANCODE_F) {
+                    SDL_SetWindowFullscreen(window, 
+                            SDL_WINDOW_FULLSCREEN_DESKTOP);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_DOWN ||
