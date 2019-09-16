@@ -18,8 +18,6 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.1 HITLIST
-//      4. Fullscreen Switch
-//
 //      2. Who's playing?
 //      3. Recently Played and Play Duration
 //      6. watch out for vram!
@@ -217,6 +215,7 @@ char *getCoverPath();
 void updateVbo(GLuint *vbo, UiRect* vertices);
 GLint loadShaderFile(const char *path, GLenum shaderType);
 GLuint createShaderProgram(GLint vertShader, GLint fragShader);
+void launch(OffblastUi *ui, uint32_t nPaths, Launcher* launchers);
 void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface, 
         uint32_t *newWidth, uint32_t *newHeight); 
 void updateRect(UiRect *vertices, uint32_t winWidth, uint32_t winHeight, 
@@ -231,66 +230,6 @@ void changeColumn(
         OffblastUi *ui,
         uint32_t direction);
 
-void launch(OffblastUi *ui, uint32_t nPaths, Launcher* launchers) {
-
-    LaunchTarget *target = ui->rowCursor->tileCursor->target;
-
-    if (strlen(target->path) == 0 || 
-            strlen(target->fileName) == 0) 
-    {
-        printf("%s has no launch candidate\n", target->name);
-    }
-    else {
-
-        char *romSlug;
-        asprintf(&romSlug, "%s", (char*) &target->path);
-
-        char *launchString = calloc(PATH_MAX, sizeof(char));
-
-        // TODO I don't super love this, it's not even working
-        // ps games are trying to launch with the wrong path
-        uint32_t bestMatchIndex = 0;
-        for (uint32_t i = 0; i < nPaths; i++) {
-            if (strcmp(target->path, launchers[i].path) > bestMatchIndex) {
-                bestMatchIndex = i;
-            }
-        }
-
-        memcpy(launchString, 
-                launchers[bestMatchIndex].launcher, 
-                strlen(launchers[bestMatchIndex].launcher));
-
-        assert(strlen(launchString));
-
-        char *p;
-        uint8_t replaceIter = 0, replaceLimit = 8;
-        while ((p = strstr(launchString, "%ROM%"))) {
-
-            memmove(
-                    p + strlen(romSlug) + 2, 
-                    p + 5,
-                    strlen(p));
-
-            *p = '"';
-            memcpy(p+1, romSlug, strlen(romSlug));
-            *(p + 1 + strlen(romSlug)) = '"';
-
-            replaceIter++;
-            if (replaceIter >= replaceLimit) {
-                printf("rom replace iterations exceeded, breaking\n");
-                break;
-            }
-        }
-
-        printf("OFFBLAST! %s\n", launchString);
-        system(launchString);
-
-        free(romSlug);
-        free(launchString);
-    }
-
-
-}
 
 
 int main (int argc, char** argv) {
@@ -822,8 +761,8 @@ int main (int argc, char** argv) {
                                 strlen(matchingFileNames[j]));
 
                         memcpy(&theTarget->path, 
-                                romPathTrimmed,
-                                strlen(romPathTrimmed));
+                                thePath,
+                                strlen(thePath));
                     
                     }
                 }
@@ -1122,6 +1061,7 @@ int main (int argc, char** argv) {
                         break;
                     case SDL_CONTROLLER_BUTTON_A:
                         launch(ui, nPaths, launchers);
+                        SDL_RaiseWindow(window);
                         break;
                 }
 
@@ -1160,10 +1100,11 @@ int main (int argc, char** argv) {
                     running = 0;
                     break;
                 }
-                if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
+                else if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
                     launch(ui, nPaths, launchers);
+                    SDL_RaiseWindow(window);
                 }
-                if (keyEvent->keysym.scancode == SDL_SCANCODE_F) {
+                else if (keyEvent->keysym.scancode == SDL_SCANCODE_F) {
                     SDL_SetWindowFullscreen(window, 
                             SDL_WINDOW_FULLSCREEN_DESKTOP);
                 }
@@ -2281,3 +2222,66 @@ GLuint createShaderProgram(GLint vertShader, GLint fragShader) {
     return program;
 }
 
+
+void launch(OffblastUi *ui, uint32_t nPaths, Launcher* launchers) {
+
+    LaunchTarget *target = ui->rowCursor->tileCursor->target;
+
+    if (strlen(target->path) == 0 || 
+            strlen(target->fileName) == 0) 
+    {
+        printf("%s has no launch candidate\n", target->name);
+    }
+    else {
+
+        char *romSlug;
+        asprintf(&romSlug, "%s/%s", (char*) &target->path, 
+                (char*)&target->fileName);
+
+        char *launchString = calloc(PATH_MAX, sizeof(char));
+
+        int32_t foundIndex = -1;
+        for (uint32_t i = 0; i < nPaths; i++) {
+            if (strcmp(target->path, launchers[i].path) == 0) {
+                foundIndex = i;
+            }
+        }
+
+        if (foundIndex == -1) {
+            printf("%s has no launcher\n", target->name);
+            return;
+        }
+
+        memcpy(launchString, 
+                launchers[foundIndex].launcher, 
+                strlen(launchers[foundIndex].launcher));
+
+        assert(strlen(launchString));
+
+        char *p;
+        uint8_t replaceIter = 0, replaceLimit = 8;
+        while ((p = strstr(launchString, "%ROM%"))) {
+
+            memmove(
+                    p + strlen(romSlug) + 2, 
+                    p + 5,
+                    strlen(p));
+
+            *p = '"';
+            memcpy(p+1, romSlug, strlen(romSlug));
+            *(p + 1 + strlen(romSlug)) = '"';
+
+            replaceIter++;
+            if (replaceIter >= replaceLimit) {
+                printf("rom replace iterations exceeded, breaking\n");
+                break;
+            }
+        }
+
+        printf("OFFBLAST! %s\n", launchString);
+        system(launchString);
+
+        free(romSlug);
+        free(launchString);
+    }
+}
