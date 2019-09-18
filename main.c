@@ -17,10 +17,12 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
+// TODO I think it's time we start thinking about having a global UI struct
+//  As now we have more than one interface that can be rendered
 // ALPHA 0.1 HITLIST
 //      2. Who's playing?
 //      3. Recently Played and Play Duration
-//      6. watch out for vram!
+//      6. watch out for vram! glDeleteTextures
 //
 // Known Bugs:
 //      - Invalid date format is a thing
@@ -126,7 +128,7 @@ typedef struct Animation {
     uint32_t startTick;
     uint32_t durationMs;
     void *callbackArgs;
-    void (* callback)(struct OffblastUi*);
+    void (* callback)();
 } Animation;
 
 typedef struct TextLayer {
@@ -147,25 +149,23 @@ typedef struct GradientLayer {
     float offset;
 } GradientLayer;
 
-typedef struct OffblastUi {
 
-    int32_t winWidth;
-    int32_t winHeight;
-    int32_t winFold;
-    int32_t winMargin;
+enum UiMode {
+    OFFBLAST_UI_MODE_MAIN = 1,
+    OFFBLAST_UI_MODE_PLAYER_SELECT = 2,
+};
+
+typedef struct PlayerSelectUi {
+    TextLayer promptLayer;
+} PlayerSelectUi;
+
+typedef struct MainUi {
+    int32_t descriptionWidth;
+    int32_t descriptionHeight;
     int32_t boxWidth;
     int32_t boxHeight;
     int32_t boxPad;
-    int32_t descriptionWidth;
-    int32_t descriptionHeight;
-    double titlePointSize;
-    double infoPointSize;
 
-    TTF_Font *titleFont;
-    TTF_Font *infoFont;
-    TTF_Font *debugFont;
-
-    TextLayer debugLayer;
     TextLayer titleLayer;
     TextLayer infoLayer;
     TextLayer descriptionLayer;
@@ -176,14 +176,37 @@ typedef struct OffblastUi {
     Animation *infoAnimation;
     Animation *rowNameAnimation;
 
+    uint32_t numRows;
     UiRect blockVertices;
     GLuint blockVbo;
 
-    uint32_t numRows;
     UiRow *rowCursor;
     UiRow *rows;
     LaunchTarget *movingToTarget;
     UiRow *movingToRow;
+
+} MainUi ;
+
+typedef struct OffblastUi {
+
+    enum UiMode mode;
+    PlayerSelectUi playerSelectUi;
+    MainUi mainUi;
+
+    int32_t winWidth;
+    int32_t winHeight;
+    int32_t winFold;
+    int32_t winMargin;
+
+    // TODO move to bitmap font
+    double titlePointSize;
+    double infoPointSize;
+
+    TTF_Font *titleFont;
+    TTF_Font *infoFont;
+    TTF_Font *debugFont;
+
+    TextLayer debugLayer;
 
     Player players[OFFBLAST_MAX_PLAYERS];
 } OffblastUi;
@@ -196,41 +219,37 @@ typedef struct Launcher {
 
 uint32_t megabytes(uint32_t n);
 uint32_t powTwoFloor(uint32_t val);
-uint32_t needsReRender(SDL_Window *window, OffblastUi *ui);
+uint32_t needsReRender(SDL_Window *window);
 double easeOutCirc(double t, double b, double c, double d);
 double easeInOutCirc (double t, double b, double c, double d);
 char *getCsvField(char *line, int fieldNo);
 double goldenRatioLarge(double in, uint32_t exponent);
 float goldenRatioLargef(float in, uint32_t exponent);
-void horizontalMoveDone(OffblastUi *ui);
-void verticalMoveDone(OffblastUi *ui);
+void horizontalMoveDone();
+void verticalMoveDone();
 UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
-void infoFaded(OffblastUi *ui);
-void rowNameFaded(OffblastUi *ui);
-uint32_t animationRunning(OffblastUi *ui);
-void animationTick(Animation *theAnimation, OffblastUi *ui);
+void infoFaded();
+void rowNameFaded();
+uint32_t animationRunning();
+void animationTick(Animation *theAnimation);
 const char *platformString(char *key);
 void *downloadCover(void *arg);
 char *getCoverPath();
 void updateVbo(GLuint *vbo, UiRect* vertices);
 GLint loadShaderFile(const char *path, GLenum shaderType);
 GLuint createShaderProgram(GLint vertShader, GLint fragShader);
-void launch(OffblastUi *ui, uint32_t nPaths, Launcher* launchers);
+void launch(uint32_t nPaths, Launcher* launchers);
 void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface, 
         uint32_t *newWidth, uint32_t *newHeight); 
-void updateRect(UiRect *vertices, uint32_t winWidth, uint32_t winHeight, 
-        uint32_t rectWidth, uint32_t rectHeight);
+void updateRect(UiRect *vertices, uint32_t rectWidth, uint32_t rectHeight);
 void generateTextLayer(
-        OffblastUi *ui, TextLayer *layer, char *text, uint32_t wrapWidth, 
+        TextLayer *layer, char *text, uint32_t wrapWidth, 
         uint32_t updateVertices);
-void changeRow(
-        OffblastUi *ui,
-        uint32_t direction);
-void changeColumn(
-        OffblastUi *ui,
-        uint32_t direction);
+void changeRow(uint32_t direction);
+void changeColumn(uint32_t direction);
 
 
+OffblastUi *offblast;
 
 int main (int argc, char** argv) {
 
@@ -847,16 +866,29 @@ int main (int argc, char** argv) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    OffblastUi *ui = calloc(1, sizeof(OffblastUi));
-    needsReRender(window, ui);
 
-    ui->horizontalAnimation = calloc(1, sizeof(Animation));
-    ui->verticalAnimation = calloc(1, sizeof(Animation));
-    ui->infoAnimation = calloc(1, sizeof(Animation));
-    ui->rowNameAnimation = calloc(1, sizeof(Animation));
+    // § Init UI!
+    offblast = calloc(1, sizeof(OffblastUi));
+    MainUi *mainUi = &offblast->mainUi;
+    PlayerSelectUi *playerSelectUi = &offblast->playerSelectUi;
+
+    needsReRender(window);
+    mainUi->horizontalAnimation = calloc(1, sizeof(Animation));
+    mainUi->verticalAnimation = calloc(1, sizeof(Animation));
+    mainUi->infoAnimation = calloc(1, sizeof(Animation));
+    mainUi->rowNameAnimation = calloc(1, sizeof(Animation));
+
+    // TODO all text layers need a texture handle, I can't wait to have
+    // one texture for the font!
+    glGenTextures(1, &mainUi->titleLayer.textureHandle);
+    glGenTextures(1, &mainUi->infoLayer.textureHandle);
+    glGenTextures(1, &mainUi->descriptionLayer.textureHandle);
+    glGenTextures(1, &mainUi->rowNameLayer.textureHandle);
+    glGenTextures(1, &offblast->debugLayer.textureHandle);
+    glGenTextures(1, &playerSelectUi->promptLayer.textureHandle);
 
     for (uint32_t i = 0; i < OFFBLAST_MAX_PLAYERS; i++) {
-        ui->players[i].jsIndex = -1;
+        offblast->players[i].jsIndex = -1;
     }
 
     GLuint vao;
@@ -885,30 +917,18 @@ int main (int argc, char** argv) {
     assert(gradientProgram);
 
 
-    GLuint fpsTexture;
-    glGenTextures(1, &fpsTexture);
-    glGenTextures(1, &ui->titleLayer.textureHandle);
-    glGenTextures(1, &ui->infoLayer.textureHandle);
-    glGenTextures(1, &ui->descriptionLayer.textureHandle);
-    glGenTextures(1, &ui->rowNameLayer.textureHandle);
-
-
-    // TODO do we need this?
-    GLint texUni = glGetUniformLocation(textProgram, "ourTexture");
-    printf("uniform is %u\n", texUni);
-
-
     int running = 1;
     uint32_t lastTick = SDL_GetTicks();
     uint32_t renderFrequency = 1000/60;
 
     // Init Ui
+
     // rows for now:
     // 1. Your Library
     // 2. Essential *platform" 
-    ui->rows = calloc(1 + nPlatforms, sizeof(UiRow));
-    ui->numRows = 0;
-    ui->rowCursor = ui->rows;
+    mainUi->rows = calloc(1 + nPlatforms, sizeof(UiRow));
+    mainUi->numRows = 0;
+    mainUi->rowCursor = mainUi->rows;
 
     // __ROW__ "Your Library"
     uint32_t libraryLength = 0;
@@ -947,11 +967,11 @@ int main (int argc, char** argv) {
             tiles[tileCount-1].next = &tiles[0];
             tiles[0].previous = &tiles[tileCount-1];
 
-            ui->rows[ui->numRows].tiles = tiles; 
-            ui->rows[ui->numRows].tileCursor = tiles;
-            ui->rows[ui->numRows].name = "Recently Installed";
-            ui->rows[ui->numRows].length = tileCount; 
-            ui->numRows++;
+            mainUi->rows[mainUi->numRows].tiles = tiles; 
+            mainUi->rows[mainUi->numRows].tileCursor = tiles;
+            mainUi->rows[mainUi->numRows].name = "Recently Installed";
+            mainUi->rows[mainUi->numRows].length = tileCount; 
+            mainUi->numRows++;
         }
     }
     else { 
@@ -989,13 +1009,13 @@ int main (int argc, char** argv) {
             tiles[numTiles-1].next = &tiles[0];
             tiles[0].previous = &tiles[numTiles-1];
 
-            ui->rows[ui->numRows].tiles = tiles;
-            asprintf(&ui->rows[ui->numRows].name, "Essential %s", 
+            mainUi->rows[mainUi->numRows].tiles = tiles;
+            asprintf(&mainUi->rows[mainUi->numRows].name, "Essential %s", 
                     platformString(platforms[iPlatform]));
 
-            ui->rows[ui->numRows].tileCursor = &ui->rows[ui->numRows].tiles[0];
-            ui->rows[ui->numRows].length = numTiles;
-            ui->numRows++;
+            mainUi->rows[mainUi->numRows].tileCursor = &mainUi->rows[mainUi->numRows].tiles[0];
+            mainUi->rows[mainUi->numRows].length = numTiles;
+            mainUi->numRows++;
         }
         else {
             printf("no games for platform!!!\n");
@@ -1004,28 +1024,30 @@ int main (int argc, char** argv) {
     }
 
 
-    for (uint32_t i = 0; i < ui->numRows; i++) {
+    for (uint32_t i = 0; i < mainUi->numRows; i++) {
         if (i == 0) {
-            ui->rows[i].previousRow = &ui->rows[ui->numRows-1];
+            mainUi->rows[i].previousRow = &mainUi->rows[mainUi->numRows-1];
         }
         else {
-            ui->rows[i].previousRow = &ui->rows[i-1];
+            mainUi->rows[i].previousRow = &mainUi->rows[i-1];
         }
 
-        if (i == ui->numRows - 1) {
-            ui->rows[i].nextRow = &ui->rows[0];
+        if (i == mainUi->numRows - 1) {
+            mainUi->rows[i].nextRow = &mainUi->rows[0];
         }
         else {
-            ui->rows[i].nextRow = &ui->rows[i+1];
+            mainUi->rows[i].nextRow = &mainUi->rows[i+1];
         }
     }
 
-    ui->movingToTarget = ui->rowCursor->tileCursor->target;
-    ui->movingToRow = ui->rowCursor;
+    mainUi->movingToTarget = mainUi->rowCursor->tileCursor->target;
+    mainUi->movingToRow = mainUi->rowCursor;
 
+
+    // § Main loop
     while (running) {
 
-        if (needsReRender(window, ui) == 1) {
+        if (needsReRender(window) == 1) {
             printf("Window size changed, sizes updated.\n");
         }
 
@@ -1048,19 +1070,19 @@ int main (int argc, char** argv) {
 
                 switch(buttonEvent->button) {
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:
-                        changeRow(ui, 1);
+                        changeRow(1);
                         break;
                     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                        changeRow(ui, 0);
+                        changeRow(0);
                         break;
                     case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                        changeColumn(ui, 0);
+                        changeColumn(0);
                         break;
                     case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                        changeColumn(ui, 1);
+                        changeColumn(1);
                         break;
                     case SDL_CONTROLLER_BUTTON_A:
-                        launch(ui, nPaths, launchers);
+                        launch(nPaths, launchers);
                         SDL_RaiseWindow(window);
                         break;
                 }
@@ -1080,8 +1102,8 @@ int main (int argc, char** argv) {
                         (controller = SDL_GameControllerOpen(devEvent->which)) != NULL) 
                 {
                     for (uint32_t k = 0; k < OFFBLAST_MAX_PLAYERS; k++) {
-                        if (ui->players[k].jsIndex == -1) {
-                            ui->players[k].jsIndex = devEvent->which;
+                        if (offblast->players[k].jsIndex == -1) {
+                            offblast->players[k].jsIndex = devEvent->which;
                             printf("Controller: %s\nAdded to Player %d\n",
                                 SDL_GameControllerNameForIndex(devEvent->which),
                                 k);
@@ -1101,7 +1123,7 @@ int main (int argc, char** argv) {
                     break;
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
-                    launch(ui, nPaths, launchers);
+                    launch(nPaths, launchers);
                     SDL_RaiseWindow(window);
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_F) {
@@ -1112,25 +1134,25 @@ int main (int argc, char** argv) {
                         keyEvent->keysym.scancode == SDL_SCANCODE_DOWN ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_J) 
                 {
-                    changeRow(ui, 0);
+                    changeRow(0);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_UP ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_K) 
                 {
-                    changeRow(ui, 1);
+                    changeRow(1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_RIGHT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_L) 
                 {
-                    changeColumn(ui, 1);
+                    changeColumn(1);
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
                         keyEvent->keysym.scancode == SDL_SCANCODE_H) 
                 {
-                    changeColumn(ui, 0);
+                    changeColumn(0);
                 }
                 else {
                     printf("key up %d\n", keyEvent->keysym.scancode);
@@ -1139,357 +1161,392 @@ int main (int argc, char** argv) {
 
         }
 
+        // § Player Detection
+        // TODO should we do this on every loop?
+        if (offblast->players[0].emailHash == 0) {
+            offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
+            // TODO this should probably kill all the active animations?
+            // or fire their callbacks immediately
+        }
+
         // RENDER
         glClearColor(0.0, 0.0, 0.0, 1.0);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // Blocks
-        UiRow *rowToRender = ui->rowCursor->previousRow;
-        rowToRender = rowToRender->previousRow;
-
         GLint translateUni = glGetUniformLocation(textProgram, "myOffset");
         GLint alphaUni = glGetUniformLocation(textProgram, "myAlpha");
-        GLint texturePosUni = glGetUniformLocation(textProgram, "textureSize");
-        glUseProgram(textProgram);
+        GLint texturePosUni = 
+            glGetUniformLocation(textProgram, "textureSize");
 
-        GradientLayer bottomGradient = {};
-        updateRect(&bottomGradient.vertices, ui->winWidth, ui->winHeight, 
-                ui->winWidth, goldenRatioLargef(ui->winHeight, 5));
-        updateVbo(&bottomGradient.vbo, &bottomGradient.vertices);
+        if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
 
-        GradientLayer topGradient = {};
-        updateRect(&topGradient.vertices, ui->winWidth, ui->winHeight, 
-                ui->winWidth, ui->winHeight - ui->winFold);
-        updateVbo(&topGradient.vbo, &topGradient.vertices);
-        GLint gradientOffsetYUniform = 
-            glGetUniformLocation(gradientProgram, "yOffset");
-        GLint gradientFlipYUniform = 
-            glGetUniformLocation(gradientProgram, "yFlip");
-        GLint gradientStartUniform = 
-            glGetUniformLocation(gradientProgram, "startPos");
+            // Blocks
+            UiRow *rowToRender = mainUi->rowCursor->previousRow;
+            rowToRender = rowToRender->previousRow;
 
-        // § blocks
-        for (int32_t iRow = -2; iRow < ROWS_TOTAL-2; iRow++) {
+            glUseProgram(textProgram);
 
-            UiTile *tileToRender = 
-                rewindTiles(rowToRender->tileCursor, 2);
+            GradientLayer bottomGradient = {};
+            updateRect(&bottomGradient.vertices, offblast->winWidth, 
+                    goldenRatioLargef(offblast->winHeight, 5));
 
-            for (int32_t iTile = -2; iTile < COLS_TOTAL; iTile++) {
+            updateVbo(&bottomGradient.vbo, &bottomGradient.vertices);
 
-                float xOffset = 0;
-                float yOffset = 0;
+            GradientLayer topGradient = {};
+            updateRect(&topGradient.vertices, offblast->winWidth, 
+                    offblast->winHeight - offblast->winFold);
 
-                xOffset = ui->winMargin + iTile * (ui->boxWidth + ui->boxPad);
+            updateVbo(&topGradient.vbo, &topGradient.vertices);
+            GLint gradientOffsetYUniform = 
+                glGetUniformLocation(gradientProgram, "yOffset");
+            GLint gradientFlipYUniform = 
+                glGetUniformLocation(gradientProgram, "yFlip");
+            GLint gradientStartUniform = 
+                glGetUniformLocation(gradientProgram, "startPos");
 
-                if (ui->horizontalAnimation->animating != 0 && iRow == 0) 
-                {
-                    double change = easeInOutCirc(
-                            (double)SDL_GetTicks() 
-                                - ui->horizontalAnimation->startTick,
-                            0.0,
-                            (double)ui->boxWidth + ui->boxPad,
-                            (double)ui->horizontalAnimation->durationMs);
+            // § blocks
+            for (int32_t iRow = -2; iRow < ROWS_TOTAL-2; iRow++) {
 
-                    if (ui->horizontalAnimation->direction > 0) {
-                        change = -change;
+                UiTile *tileToRender = 
+                    rewindTiles(rowToRender->tileCursor, 2);
+
+                for (int32_t iTile = -2; iTile < COLS_TOTAL; iTile++) {
+
+                    float xOffset = 0;
+                    float yOffset = 0;
+
+                    xOffset = offblast->winMargin + iTile * 
+                        (mainUi->boxWidth + mainUi->boxPad);
+
+                    if (mainUi->horizontalAnimation->animating != 0 && iRow == 0) 
+                    {
+                        double change = easeInOutCirc(
+                                (double)SDL_GetTicks() 
+                                    - mainUi->horizontalAnimation->startTick,
+                                0.0,
+                                (double)mainUi->boxWidth + mainUi->boxPad,
+                                (double)mainUi->horizontalAnimation->durationMs);
+
+                        if (mainUi->horizontalAnimation->direction > 0) {
+                            change = -change;
+                        }
+
+                        xOffset += change;
                     }
 
-                    xOffset += change;
-                }
+                    yOffset = (offblast->winFold - mainUi->boxHeight) + 
+                        (iRow * (mainUi->boxHeight + mainUi->boxPad));
 
-                yOffset = (ui->winFold - ui->boxHeight) + (iRow * (ui->boxHeight + ui->boxPad));
+                    if (mainUi->verticalAnimation->animating != 0) 
+                    {
+                        double change = easeInOutCirc(
+                                (double)SDL_GetTicks() 
+                                    - mainUi->verticalAnimation->startTick,
+                                0.0,
+                                (double)mainUi->boxHeight+ mainUi->boxPad,
+                                (double)mainUi->verticalAnimation->durationMs);
 
-                if (ui->verticalAnimation->animating != 0) 
-                {
-                    double change = easeInOutCirc(
-                            (double)SDL_GetTicks() 
-                                - ui->verticalAnimation->startTick,
-                            0.0,
-                            (double)ui->boxHeight+ ui->boxPad,
-                            (double)ui->verticalAnimation->durationMs);
+                        if (mainUi->verticalAnimation->direction > 0) {
+                            change = -change;
+                        }
 
-                    if (ui->verticalAnimation->direction > 0) {
-                        change = -change;
+                        yOffset += change;
+
                     }
 
-                    yOffset += change;
+                    float xOffsetNormalized = (2.0 / offblast->winWidth) * xOffset;
+                    float yOffsetNormalized = (2.0 / offblast->winHeight) * yOffset;
 
-                }
+                    // Generate the texture 
+                    if (tileToRender->textureHandle == 0 &&
+                            tileToRender->target->coverUrl != NULL) 
+                    {
+                        if (tileToRender->loadState != LOAD_STATE_LOADED) {
 
-                float xOffsetNormalized = (2.0 / ui->winWidth) * xOffset;
-                float yOffsetNormalized = (2.0 / ui->winHeight) * yOffset;
+                            char *coverArtPath =
+                                getCoverPath(
+                                        tileToRender->target->targetSignature); 
 
-                // Generate the texture 
-                if (tileToRender->textureHandle == 0 &&
-                        tileToRender->target->coverUrl != NULL) 
-                {
-                    if (tileToRender->loadState != LOAD_STATE_LOADED) {
+                            SDL_Surface *image = IMG_Load(coverArtPath);
+                            free(coverArtPath);
 
-                        char *coverArtPath =
-                            getCoverPath(tileToRender->target->targetSignature); 
-                        SDL_Surface *image = IMG_Load(coverArtPath);
-                        free(coverArtPath);
-
-                        if (tileToRender->loadState == LOAD_STATE_UNKNOWN) {
+                            if (tileToRender->loadState == LOAD_STATE_UNKNOWN) {
+                                
+                                if(!image) {
+                                    tileToRender->loadState = 
+                                        LOAD_STATE_DOWNLOADING;
+                                    pthread_t theThread;
+                                    pthread_create(
+                                            &theThread, 
+                                            NULL, 
+                                            downloadCover, 
+                                            (void*)tileToRender);
+                                }
+                                else {
+                                    tileToRender->loadState = 
+                                        LOAD_STATE_DOWNLOADED;
+                                }
+                            }
                             
-                            if(!image) {
-                                tileToRender->loadState = 
-                                    LOAD_STATE_DOWNLOADING;
-                                pthread_t theThread;
-                                pthread_create(
-                                        &theThread, 
-                                        NULL, 
-                                        downloadCover, 
-                                        (void*)tileToRender);
+                            if (tileToRender->loadState == 
+                                    LOAD_STATE_DOWNLOADED) 
+                            {
+                                uint32_t newWidth = 0, newHeight = 0;
+
+                                glGenTextures(1, &tileToRender->textureHandle);
+                                sdlSurfaceToGlTexture(
+                                        tileToRender->textureHandle, image,
+                                        &newWidth, &newHeight);
+
+                                tileToRender->textureMaxW = 
+                                    (float)image->w / newWidth;
+                                tileToRender->textureMinH = 
+                                    1.0-((float)image->h / newHeight);
+
+                                glBindTexture(GL_TEXTURE_2D, 
+                                        tileToRender->textureHandle);
+
+                                tileToRender->loadState = LOAD_STATE_LOADED;
                             }
-                            else {
-                                tileToRender->loadState = 
-                                    LOAD_STATE_DOWNLOADED;
-                            }
+
+                            free(image);
                         }
-                        
-                        if (tileToRender->loadState == LOAD_STATE_DOWNLOADED) {
-                            uint32_t newWidth = 0, newHeight = 0;
-
-                            glGenTextures(1, &tileToRender->textureHandle);
-                            sdlSurfaceToGlTexture(
-                                    tileToRender->textureHandle, image,
-                                    &newWidth, &newHeight);
-
-                            tileToRender->textureMaxW = 
-                                (float)image->w / newWidth;
-                            tileToRender->textureMinH = 
-                                1.0-((float)image->h / newHeight);
-
-                            glBindTexture(GL_TEXTURE_2D, 
-                                    tileToRender->textureHandle);
-
-                            tileToRender->loadState = LOAD_STATE_LOADED;
-                        }
-
-                        free(image);
                     }
+                    else {
+                        glBindTexture(GL_TEXTURE_2D, 
+                                tileToRender->textureHandle);
+                    }
+
+
+                    // ACTUAL DRAW
+                    glBindBuffer(GL_ARRAY_BUFFER, mainUi->blockVbo);
+                    glEnableVertexAttribArray(0);
+                    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
+                            6*sizeof(float), 0);
+                    glEnableVertexAttribArray(1);
+                    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
+                            6*sizeof(float), (void*)(4*sizeof(float)));
+
+                    glUniform2f(translateUni, xOffsetNormalized, 
+                            yOffsetNormalized);
+
+                    glUniform1f(alphaUni, 1.0);
+
+                    glUniform2f(texturePosUni, tileToRender->textureMaxW, 
+                            tileToRender->textureMinH);
+
+                    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+                    tileToRender = tileToRender->next;
                 }
-                else {
-                    glBindTexture(GL_TEXTURE_2D, 
-                            tileToRender->textureHandle);
-                }
 
-
-                // ACTUAL DRAW
-                glBindBuffer(GL_ARRAY_BUFFER, ui->blockVbo);
-                glEnableVertexAttribArray(0);
-                glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
-                        6*sizeof(float), 0);
-                glEnableVertexAttribArray(1);
-                glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
-                        6*sizeof(float), (void*)(4*sizeof(float)));
-
-                glUniform2f(translateUni, xOffsetNormalized, 
-                        yOffsetNormalized);
-
-                glUniform1f(alphaUni, 1.0);
-
-                glUniform2f(texturePosUni, tileToRender->textureMaxW, 
-                        tileToRender->textureMinH);
-
-                glDrawArrays(GL_TRIANGLES, 0, 6);
-
-                tileToRender = tileToRender->next;
+                rowToRender = rowToRender->nextRow;
             }
 
-            rowToRender = rowToRender->nextRow;
+            glUniform2f(translateUni, 0.0f, 0.0f);
+            glUniform1f(alphaUni, 1.0);
+            glUniform2f(texturePosUni, 0.0f, 0.0f);
+
+            // § GRADIENT LAYERS
+            glUseProgram(gradientProgram);
+            glUniform1f(gradientOffsetYUniform, 
+                    2.0/offblast->winHeight * offblast->winFold);
+            glUniform1f(gradientFlipYUniform, 1.0);
+            glUniform1f(gradientStartUniform, 1.0);
+            glBindBuffer(GL_ARRAY_BUFFER, topGradient.vbo);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
+                    6*sizeof(float), 0);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
+                    6*sizeof(float), (void*)(4*sizeof(float)));
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+
+            glUseProgram(gradientProgram);
+            glUniform1f(gradientOffsetYUniform, 0.0);
+            glUniform1f(gradientFlipYUniform, 0.0);
+            glUniform1f(gradientStartUniform, 0.1);
+            glBindBuffer(GL_ARRAY_BUFFER, bottomGradient.vbo);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
+                    6*sizeof(float), 0);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
+                    6*sizeof(float), (void*)(4*sizeof(float)));
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            // § INFO AREA
+            glUseProgram(textProgram);
+
+            if (!mainUi->titleLayer.textureValid) {
+                generateTextLayer(
+                        &mainUi->titleLayer,mainUi->movingToTarget->name, 
+                        OFFBLAST_NOWRAP, 1);
+                mainUi->titleLayer.textureValid = 1;
+            }
+
+            if (!mainUi->infoLayer.textureValid) {
+                char *infoString;
+                asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
+                        mainUi->movingToTarget->date, 
+                        platformString(mainUi->movingToTarget->platform),
+                        mainUi->movingToTarget->ranking);
+
+                generateTextLayer(
+                        &mainUi->infoLayer, infoString, OFFBLAST_NOWRAP, 1);
+                mainUi->infoLayer.textureValid = 1;
+
+                free(infoString);
+            }
+
+            if (!mainUi->descriptionLayer.textureValid) {
+                OffblastBlob *descriptionBlob = (OffblastBlob*)
+                    &descriptionFile->memory[
+                        mainUi->movingToTarget->descriptionOffset];
+
+                generateTextLayer(
+                        &mainUi->descriptionLayer, descriptionBlob->content, 
+                        mainUi->descriptionWidth, 1);
+                mainUi->descriptionLayer.textureValid = 1;
+            }
+
+            if (!mainUi->rowNameLayer.textureValid) {
+                generateTextLayer(
+                        &mainUi->rowNameLayer, mainUi->movingToRow->name, 
+                        OFFBLAST_NOWRAP, 1);
+                mainUi->rowNameLayer.textureValid = 1;
+            }
+
+
+            float alpha = 1.0;
+            if (mainUi->infoAnimation->animating == 1) {
+                double change = easeInOutCirc(
+                        (double)SDL_GetTicks() - mainUi->infoAnimation->startTick,
+                        0.0,
+                        1.0,
+                        (double)mainUi->infoAnimation->durationMs);
+
+                if (mainUi->infoAnimation->direction == 0) {
+                    change = 1.0 - change;
+                }
+
+                alpha = change;
+            }
+
+            float rowNameAlpha = 1;
+            if (mainUi->rowNameAnimation->animating == 1) {
+                double change = easeInOutCirc(
+                        (double)SDL_GetTicks() - 
+                            mainUi->rowNameAnimation->startTick,
+                        0.0,
+                        1.0,
+                        (double)mainUi->rowNameAnimation->durationMs);
+
+                if (mainUi->rowNameAnimation->direction == 0) {
+                    change = 1.0 - change;
+                }
+
+                rowNameAlpha = change;
+            }
+
+            float marginNormalized = (2.0f/offblast->winWidth) * 
+                (float)offblast->winMargin;
+
+            // Draw Title
+            glBindTexture(GL_TEXTURE_2D, mainUi->titleLayer.textureHandle);
+            glBindBuffer(GL_ARRAY_BUFFER, mainUi->titleLayer.vbo);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+                    (void*)(4*sizeof(float)));
+
+            float pixelY = 
+                offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
+                    - mainUi->titleLayer.pixelHeight;
+            float newY  = (2.0f/offblast->winHeight) * pixelY;
+
+            glUniform2f(translateUni, marginNormalized, newY);
+            glUniform1f(alphaUni, alpha);
+
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            // Draw Info
+            glBindTexture(GL_TEXTURE_2D, mainUi->infoLayer.textureHandle);
+            glBindBuffer(GL_ARRAY_BUFFER, mainUi->infoLayer.vbo);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+                    (void*)(4*sizeof(float)));
+
+            pixelY -= offblast->infoPointSize;
+            newY = (2.0f/offblast->winHeight) * pixelY;
+
+            glUniform1f(alphaUni, alpha);
+            glUniform2f(translateUni, marginNormalized, newY);
+
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            // Draw Description
+            glBindTexture(GL_TEXTURE_2D, mainUi->descriptionLayer.textureHandle);
+            glBindBuffer(GL_ARRAY_BUFFER, mainUi->descriptionLayer.vbo);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+                    (void*)(4*sizeof(float)));
+
+            pixelY -= mainUi->descriptionLayer.pixelHeight + mainUi->boxPad;
+            newY = (2.0f/offblast->winHeight) * pixelY;
+
+            glUniform1f(alphaUni, alpha);
+            glUniform2f(translateUni, marginNormalized, newY);
+
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+
+            // Draw Row Name
+            glBindTexture(GL_TEXTURE_2D, mainUi->rowNameLayer.textureHandle);
+            glBindBuffer(GL_ARRAY_BUFFER, mainUi->rowNameLayer.vbo);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+                    (void*)(4*sizeof(float)));
+
+            pixelY = offblast->winFold + mainUi->boxPad;
+            newY = (2.0f/offblast->winHeight) * pixelY;
+
+            glUniform2f(translateUni, marginNormalized, newY);
+            glUniform1f(alphaUni, rowNameAlpha);
+
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        }
+        else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
+            printf("rendering player select\n");
+
+            // Need a text layer that says player select
+
+            // need a list of players to choose from
+    
+            // need to handle the event
         }
 
-        glUniform2f(translateUni, 0.0f, 0.0f);
-        glUniform1f(alphaUni, 1.0);
-        glUniform2f(texturePosUni, 0.0f, 0.0f);
 
-        // § GRADIENT LAYERS
-        glUseProgram(gradientProgram);
-        glUniform1f(gradientOffsetYUniform, 
-                2.0/ui->winHeight * ui->winFold);
-        glUniform1f(gradientFlipYUniform, 1.0);
-        glUniform1f(gradientStartUniform, 1.0);
-        glBindBuffer(GL_ARRAY_BUFFER, topGradient.vbo);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
-                6*sizeof(float), 0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
-                6*sizeof(float), (void*)(4*sizeof(float)));
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-
-
-        glUseProgram(gradientProgram);
-        glUniform1f(gradientOffsetYUniform, 0.0);
-        glUniform1f(gradientFlipYUniform, 0.0);
-        glUniform1f(gradientStartUniform, 0.1);
-        glBindBuffer(GL_ARRAY_BUFFER, bottomGradient.vbo);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
-                6*sizeof(float), 0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
-                6*sizeof(float), (void*)(4*sizeof(float)));
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-
-        // § INFO AREA
+        
         glUseProgram(textProgram);
-
-        if (!ui->titleLayer.textureValid) {
-            generateTextLayer(
-                    ui, &ui->titleLayer,ui->movingToTarget->name, 
-                    OFFBLAST_NOWRAP, 1);
-            ui->titleLayer.textureValid = 1;
-        }
-
-        if (!ui->infoLayer.textureValid) {
-            char *infoString;
-            asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
-                    ui->movingToTarget->date, 
-                    platformString(ui->movingToTarget->platform),
-                    ui->movingToTarget->ranking);
-
-            generateTextLayer(
-                    ui, &ui->infoLayer, infoString, OFFBLAST_NOWRAP, 1);
-            ui->infoLayer.textureValid = 1;
-
-            free(infoString);
-        }
-
-        if (!ui->descriptionLayer.textureValid) {
-            OffblastBlob *descriptionBlob = (OffblastBlob*)
-                &descriptionFile->memory[ui->movingToTarget->descriptionOffset];
-
-            generateTextLayer(
-                    ui, &ui->descriptionLayer, descriptionBlob->content, 
-                    ui->descriptionWidth, 1);
-            ui->descriptionLayer.textureValid = 1;
-        }
-
-        if (!ui->rowNameLayer.textureValid) {
-            generateTextLayer(
-                    ui, &ui->rowNameLayer, ui->movingToRow->name, 
-                    OFFBLAST_NOWRAP, 1);
-            ui->rowNameLayer.textureValid = 1;
-        }
-
-
-        float alpha = 1.0;
-        if (ui->infoAnimation->animating == 1) {
-            double change = easeInOutCirc(
-                    (double)SDL_GetTicks() - ui->infoAnimation->startTick,
-                    0.0,
-                    1.0,
-                    (double)ui->infoAnimation->durationMs);
-
-            if (ui->infoAnimation->direction == 0) {
-                change = 1.0 - change;
-            }
-
-            alpha = change;
-        }
-
-        float rowNameAlpha = 1;
-        if (ui->rowNameAnimation->animating == 1) {
-            double change = easeInOutCirc(
-                    (double)SDL_GetTicks() - ui->rowNameAnimation->startTick,
-                    0.0,
-                    1.0,
-                    (double)ui->rowNameAnimation->durationMs);
-
-            if (ui->rowNameAnimation->direction == 0) {
-                change = 1.0 - change;
-            }
-
-            rowNameAlpha = change;
-        }
-
-        float marginNormalized = (2.0f/ui->winWidth) * (float)ui->winMargin;
-
-        // Draw Title
-        glBindTexture(GL_TEXTURE_2D, ui->titleLayer.textureHandle);
-        glBindBuffer(GL_ARRAY_BUFFER, ui->titleLayer.vbo);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
-                (void*)(4*sizeof(float)));
-
-        float pixelY = 
-            ui->winHeight - goldenRatioLargef(ui->winHeight, 5)
-                - ui->titleLayer.pixelHeight;
-        float newY  = (2.0f/ui->winHeight) * pixelY;
-
-        glUniform2f(translateUni, marginNormalized, newY);
-        glUniform1f(alphaUni, alpha);
-
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-
-        // Draw Info
-        glBindTexture(GL_TEXTURE_2D, ui->infoLayer.textureHandle);
-        glBindBuffer(GL_ARRAY_BUFFER, ui->infoLayer.vbo);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
-                (void*)(4*sizeof(float)));
-
-        pixelY -= ui->infoPointSize;
-        newY = (2.0f/ui->winHeight) * pixelY;
-
-        glUniform1f(alphaUni, alpha);
-        glUniform2f(translateUni, marginNormalized, newY);
-
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-
-        // Draw Description
-        glBindTexture(GL_TEXTURE_2D, ui->descriptionLayer.textureHandle);
-        glBindBuffer(GL_ARRAY_BUFFER, ui->descriptionLayer.vbo);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
-                (void*)(4*sizeof(float)));
-
-        pixelY -= ui->descriptionLayer.pixelHeight + ui->boxPad;
-        newY = (2.0f/ui->winHeight) * pixelY;
-
-        glUniform1f(alphaUni, alpha);
-        glUniform2f(translateUni, marginNormalized, newY);
-
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-
-
-        // Draw Row Name
-        glBindTexture(GL_TEXTURE_2D, ui->rowNameLayer.textureHandle);
-        glBindBuffer(GL_ARRAY_BUFFER, ui->rowNameLayer.vbo);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
-                (void*)(4*sizeof(float)));
-
-        pixelY = ui->winFold + ui->boxPad;
-        newY = (2.0f/ui->winHeight) * pixelY;
-
-        glUniform2f(translateUni, marginNormalized, newY);
-        glUniform1f(alphaUni, rowNameAlpha);
-
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-
-
-
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "frame time: %u", frameTime);
         generateTextLayer(
-                ui, &ui->debugLayer, fpsString, OFFBLAST_NOWRAP, 1);
+                &offblast->debugLayer, fpsString, OFFBLAST_NOWRAP, 1);
         free(fpsString);
 
-        glBindTexture(GL_TEXTURE_2D, ui->debugLayer.textureHandle);
-        glBindBuffer(GL_ARRAY_BUFFER, ui->debugLayer.vbo);
+        glBindTexture(GL_TEXTURE_2D, offblast->debugLayer.textureHandle);
+        glBindBuffer(GL_ARRAY_BUFFER, offblast->debugLayer.vbo);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
         glEnableVertexAttribArray(1);
@@ -1503,10 +1560,10 @@ int main (int argc, char** argv) {
         glDisableVertexAttribArray(1);
         glUseProgram(0);
 
-        animationTick(ui->horizontalAnimation, ui);
-        animationTick(ui->verticalAnimation, ui);
-        animationTick(ui->infoAnimation, ui);
-        animationTick(ui->rowNameAnimation, ui);
+        animationTick(mainUi->horizontalAnimation);
+        animationTick(mainUi->verticalAnimation);
+        animationTick(mainUi->infoAnimation);
+        animationTick(mainUi->rowNameAnimation);
     
         SDL_GL_SwapWindow(window);
 
@@ -1584,71 +1641,82 @@ char *getCsvField(char *line, int fieldNo)
     return fieldString;
 }
 
-uint32_t needsReRender(SDL_Window *window, OffblastUi *ui) 
+uint32_t needsReRender(SDL_Window *window) 
 {
     int32_t newWidth, newHeight;
     uint32_t updated = 0;
 
+    MainUi *mainUi = &offblast->mainUi;
+
     SDL_GetWindowSize(window, &newWidth, &newHeight);
 
-    if (newWidth != ui->winWidth || newHeight != ui->winHeight) {
+    if (newWidth != offblast->winWidth || 
+            newHeight != offblast->winHeight) 
+    {
 
-        ui->winWidth = newWidth;
-        ui->winHeight= newHeight;
+        offblast->winWidth = newWidth;
+        offblast->winHeight= newHeight;
         glViewport(0, 0, (GLsizei)newWidth, (GLsizei)newHeight);
-        ui->winFold = newHeight * 0.5;
-        ui->winMargin = goldenRatioLarge((double) newWidth, 5);
+        offblast->winFold = newHeight * 0.5;
+        offblast->winMargin = goldenRatioLarge((double) newWidth, 5);
 
         // 7:5
-        ui->boxHeight = goldenRatioLarge(ui->winWidth, 4);
-        ui->boxWidth = ui->boxHeight/5 * 7;
-        updateRect(&ui->blockVertices, newWidth, newHeight, ui->boxWidth, 
-                ui->boxHeight);
-        updateVbo(&ui->blockVbo, &ui->blockVertices);
+        mainUi->boxHeight = goldenRatioLarge(offblast->winWidth, 4);
+        mainUi->boxWidth = mainUi->boxHeight/5 * 7;
+        updateRect(&mainUi->blockVertices, newWidth, newHeight);
+        updateVbo(&mainUi->blockVbo, &mainUi->blockVertices);
 
-        ui->boxPad = goldenRatioLarge((double) ui->winWidth, 9);
+        mainUi->boxPad = goldenRatioLarge((double) offblast->winWidth, 9);
 
-        ui->descriptionWidth = 
-            goldenRatioLarge((double) newWidth, 1) - ui->winMargin;
+        mainUi->descriptionWidth = 
+            goldenRatioLarge((double) newWidth, 1) - offblast->winMargin;
 
         // TODO Find a better way to enfoce this
-        ui->descriptionHeight = goldenRatioLarge(ui->winWidth, 3);
+        mainUi->descriptionHeight = goldenRatioLarge(offblast->winWidth, 3);
 
-        ui->titlePointSize = goldenRatioLarge(ui->winWidth, 7);
-        ui->titleFont = TTF_OpenFont(
-                "fonts/Roboto-Regular.ttf", ui->titlePointSize);
-        if (!ui->titleFont) {
+        offblast->titlePointSize = goldenRatioLarge(offblast->winWidth, 7);
+        offblast->titleFont = TTF_OpenFont(
+                "fonts/Roboto-Regular.ttf", offblast->titlePointSize);
+        if (!offblast->titleFont) {
             printf("Title font initialization Failed, %s\n", TTF_GetError());
             return 1;
         }
-        ui->titleLayer.font = ui->titleFont;
+        mainUi->titleLayer.font = offblast->titleFont;
 
-        ui->infoPointSize = goldenRatioLarge(ui->winWidth, 9);
-        ui->infoFont = TTF_OpenFont(
-                "fonts/Roboto-Regular.ttf", ui->infoPointSize);
+        offblast->infoPointSize = goldenRatioLarge(offblast->winWidth, 9);
+        offblast->infoFont = TTF_OpenFont(
+                "fonts/Roboto-Regular.ttf", offblast->infoPointSize);
 
-        if (!ui->infoFont) {
+        if (!offblast->infoFont) {
             printf("Font initialization Failed, %s\n", TTF_GetError());
             return 1;
         }
-        ui->infoLayer.font = ui->infoFont; 
-        ui->descriptionLayer.font = ui->infoFont; 
-        ui->rowNameLayer.font = ui->infoFont; 
+        mainUi->infoLayer.font = offblast->infoFont; 
+        mainUi->descriptionLayer.font = offblast->infoFont; 
+        mainUi->rowNameLayer.font = offblast->infoFont; 
 
-        ui->debugFont = TTF_OpenFont(
-                "fonts/Roboto-Regular.ttf", ui->infoPointSize);
+        offblast->debugFont = TTF_OpenFont(
+                "fonts/Roboto-Regular.ttf", offblast->infoPointSize);
 
-        if (!ui->debugFont) {
+        if (!offblast->debugFont) {
             printf("Font initialization Failed, %s\n", TTF_GetError());
             return 1;
         }
-        ui->debugLayer.font = ui->debugFont;
+        offblast->debugLayer.font = offblast->debugFont;
 
-        ui->debugLayer.textureValid = 0;
-        ui->infoLayer.textureValid = 0;
-        ui->titleLayer.textureValid = 0;
-        ui->descriptionLayer.textureValid = 0;
-        ui->rowNameLayer.textureValid = 0;
+        offblast->debugLayer.textureValid = 0;
+        mainUi->infoLayer.textureValid = 0;
+        mainUi->titleLayer.textureValid = 0;
+        mainUi->descriptionLayer.textureValid = 0;
+        mainUi->rowNameLayer.textureValid = 0;
+
+        offblast->playerSelectUi.promptLayer.font = offblast->titleFont;
+        generateTextLayer(
+            &offblast->playerSelectUi.promptLayer, 
+            "Who's Playing?", 
+            OFFBLAST_NOWRAP, 
+            1);
+        offblast->playerSelectUi.promptLayer.textureValid = 1;
 
         updated = 1;
     }
@@ -1657,11 +1725,11 @@ uint32_t needsReRender(SDL_Window *window, OffblastUi *ui)
 }
 
 
-void changeColumn(
-        OffblastUi *ui,
-        uint32_t direction) 
+void changeColumn(uint32_t direction) 
 {
-    if (animationRunning(ui) == 0)
+    MainUi *ui = &offblast->mainUi;
+
+    if (animationRunning() == 0)
     {
         ui->horizontalAnimation->startTick = SDL_GetTicks();
         ui->horizontalAnimation->direction = direction;
@@ -1686,11 +1754,11 @@ void changeColumn(
     }
 }
 
-void changeRow(
-        OffblastUi *ui,
-        uint32_t direction) 
+void changeRow(uint32_t direction) 
 {
-    if (animationRunning(ui) == 0)
+    MainUi *ui = &offblast->mainUi;
+
+    if (animationRunning() == 0)
     {
         ui->verticalAnimation->startTick = SDL_GetTicks();
         ui->verticalAnimation->direction = direction;
@@ -1759,7 +1827,8 @@ float goldenRatioLargef(float in, uint32_t exponent) {
     }
 }
 
-void horizontalMoveDone(OffblastUi *ui) {
+void horizontalMoveDone() {
+    MainUi *ui = &offblast->mainUi;
     if (ui->horizontalAnimation->direction == 1) {
         ui->rowCursor->tileCursor = 
             ui->rowCursor->tileCursor->next;
@@ -1770,7 +1839,8 @@ void horizontalMoveDone(OffblastUi *ui) {
     }
 }
 
-void verticalMoveDone(OffblastUi *ui) {
+void verticalMoveDone() {
+    MainUi *ui = &offblast->mainUi;
     if (ui->verticalAnimation->direction == 1) {
         ui->rowCursor = 
             ui->rowCursor->nextRow;
@@ -1781,8 +1851,9 @@ void verticalMoveDone(OffblastUi *ui) {
     }
 }
 
-void infoFaded(OffblastUi *ui) {
+void infoFaded() {
 
+    MainUi *ui = &offblast->mainUi;
     if (ui->infoAnimation->direction == 0) {
 
         ui->titleLayer.textureValid = 0;
@@ -1801,7 +1872,9 @@ void infoFaded(OffblastUi *ui) {
     }
 }
 
-void rowNameFaded(OffblastUi *ui) {
+void rowNameFaded() {
+
+    MainUi *ui = &offblast->mainUi;
     if (ui->rowNameAnimation->direction == 0) {
 
         ui->rowNameLayer.textureValid = 0;
@@ -1822,9 +1895,10 @@ uint32_t megabytes(uint32_t n) {
     return n * 1024 * 1024;
 }
 
-uint32_t animationRunning(OffblastUi *ui) {
-    uint32_t result = 0;
+uint32_t animationRunning() {
 
+    uint32_t result = 0;
+    MainUi *ui = &offblast->mainUi;
     if (ui->horizontalAnimation->animating != 0) {
         result++;
     }
@@ -1838,12 +1912,12 @@ uint32_t animationRunning(OffblastUi *ui) {
     return result;
 }
 
-void animationTick(Animation *theAnimation, OffblastUi *ui) {
+void animationTick(Animation *theAnimation) {
         if (theAnimation->animating && SDL_GetTicks() > 
                 theAnimation->startTick + theAnimation->durationMs) 
         {
             theAnimation->animating = 0;
-            theAnimation->callback(ui);
+            theAnimation->callback();
         }
 }
 
@@ -1996,13 +2070,15 @@ void *downloadCover(void *arg) {
 }
 
 
-void updateRect(UiRect *vertices, uint32_t winWidth, uint32_t winHeight, 
-        uint32_t rectWidth, uint32_t rectHeight) 
+void updateRect(UiRect *vertices, uint32_t rectWidth, uint32_t rectHeight) 
 {
+    float winWidth = (float)offblast->winWidth;
+    float winHeight = (float)offblast->winHeight;
+
     float left = -1.0;
-    float right = left + (2/(float)winWidth*rectWidth);
+    float right = left + (2/winWidth*rectWidth);
     float bottom = -1.0;
-    float top = bottom + (2/(float)winHeight*rectHeight);
+    float top = bottom + (2/winHeight*rectHeight);
 
     (*vertices)[0][0] = left;
     (*vertices)[0][1] = bottom;
@@ -2085,12 +2161,11 @@ void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface,
 }
 
 void generateTextLayer(
-        OffblastUi *ui, TextLayer *layer, char *text, uint32_t wrapWidth, 
+        TextLayer *layer, char *text, uint32_t wrapWidth, 
         uint32_t updateVertices) 
 {
     SDL_Color color = {255,255,255,255};
 
-    // TODO use sdlSurfaceToGlTexture
     SDL_Surface *surface;
     if (wrapWidth == OFFBLAST_NOWRAP) {
         surface = TTF_RenderText_Blended(layer->font, text, color);
@@ -2132,8 +2207,7 @@ void generateTextLayer(
     SDL_FreeSurface(newSurface);
 
     if (updateVertices) {
-        updateRect(&layer->vertices, ui->winWidth, ui->winHeight, 
-                newWidth, newHeight);
+        updateRect(&layer->vertices, newWidth, newHeight);
 
         updateVbo(&layer->vbo, &layer->vertices);
     }
@@ -2223,9 +2297,9 @@ GLuint createShaderProgram(GLint vertShader, GLint fragShader) {
 }
 
 
-void launch(OffblastUi *ui, uint32_t nPaths, Launcher* launchers) {
-
-    LaunchTarget *target = ui->rowCursor->tileCursor->target;
+void launch(uint32_t nPaths, Launcher* launchers) {
+    
+    LaunchTarget *target = offblast->mainUi.rowCursor->tileCursor->target;
 
     if (strlen(target->path) == 0 || 
             strlen(target->fileName) == 0) 
