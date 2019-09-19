@@ -11,7 +11,11 @@
         "platform": "sony_playstation"
     }],
     "users": [
-        "Mr Wolf"
+        {
+            "name": "User 1",
+            "email": "myemail@domain.com",
+            "avatar": "/home/user/Pictures/me.jpg"
+        }
     ],
     "opengamedb": "/home/user/opengamedb"
 }

@@ -93,6 +93,13 @@
 #include "offblast.h"
 #include "offblastDbFile.h"
 
+
+typedef struct User {
+    char name[256];
+    char email[512];
+    char avatarPath[PATH_MAX];
+} User;
+
 typedef struct Player {
     int32_t jsIndex;
     SDL_GameController *usingController; 
@@ -157,6 +164,7 @@ enum UiMode {
 
 typedef struct PlayerSelectUi {
     TextLayer promptLayer;
+    TextLayer *playerNameLayers[];
 } PlayerSelectUi;
 
 typedef struct MainUi {
@@ -208,7 +216,16 @@ typedef struct OffblastUi {
 
     TextLayer debugLayer;
 
+    GLuint textProgram;
+    GLint textTranslateUni;
+    GLint textAlphaUni;
+    GLint textTexturePosUni; 
+
     Player players[OFFBLAST_MAX_PLAYERS];
+
+    size_t nUsers;
+    User *users;
+
 } OffblastUi;
 
 typedef struct Launcher {
@@ -247,6 +264,8 @@ void generateTextLayer(
         uint32_t updateVertices);
 void changeRow(uint32_t direction);
 void changeColumn(uint32_t direction);
+void renderTextLayer(TextLayer *layer, float x, float y, float a);
+
 
 
 OffblastUi *offblast;
@@ -254,6 +273,7 @@ OffblastUi *offblast;
 int main (int argc, char** argv) {
 
     printf("\nStarting up OffBlast with %d args.\n\n", argc);
+    offblast = calloc(1, sizeof(OffblastUi));
 
 
     char *homePath = getenv("HOME");
@@ -803,19 +823,41 @@ int main (int argc, char** argv) {
     close(launchTargetDb.fd);
 
 
-    const char *userName = NULL;
     json_object *usersObject = NULL;
     json_object_object_get_ex(configObj, "users", &usersObject);
+    offblast->nUsers = json_object_array_length(usersObject);
+    assert(offblast->nUsers);
+    offblast->users = calloc(offblast->nUsers, sizeof(User));
 
-    if (usersObject == NULL) {
-        userName = "Anonymous";
+    printf("DEBUG 2\n");
+    for (uint32_t i=0; i < offblast->nUsers; i++) {
+
+        json_object *workingUserNode = NULL;
+        json_object *workingNameNode = NULL;
+        json_object *workingEmailNode = NULL;
+        json_object *workingAvatarPathNode = NULL;
+
+        const char *theName= NULL;
+        const char *theEmail = NULL;
+        const char *theAvatarPath= NULL;
+
+        workingUserNode = json_object_array_get_idx(usersObject, i);
+        json_object_object_get_ex(workingUserNode, "name",
+                &workingNameNode);
+        json_object_object_get_ex(workingUserNode, "email",
+                &workingEmailNode);
+        json_object_object_get_ex(workingUserNode, "avatar",
+                &workingAvatarPathNode);
+
+
+        theName = json_object_get_string(workingNameNode);
+        theEmail = json_object_get_string(workingEmailNode);
+        theAvatarPath = json_object_get_string(workingAvatarPathNode);
+
+        
+
+        printf("got user --\n%s\n%s\n%s\n", theName, theEmail, theAvatarPath);
     }
-    else {
-        json_object *tmp = json_object_array_get_idx(usersObject, 0);
-        assert(tmp);
-        userName = json_object_get_string(tmp);
-    }
-    printf("got user name %s\n", userName);
 
 
 
@@ -867,8 +909,7 @@ int main (int argc, char** argv) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 
-    // § Init UI!
-    offblast = calloc(1, sizeof(OffblastUi));
+    // § Init UI
     MainUi *mainUi = &offblast->mainUi;
     PlayerSelectUi *playerSelectUi = &offblast->playerSelectUi;
 
@@ -902,8 +943,15 @@ int main (int argc, char** argv) {
             GL_FRAGMENT_SHADER);
     assert(textVertShader);
     assert(textFragShader);
-    GLuint textProgram = createShaderProgram(textVertShader, textFragShader);
-    assert(textProgram);
+
+    offblast->textProgram = createShaderProgram(textVertShader, textFragShader);
+    assert(offblast->textProgram);
+    offblast->textTranslateUni = glGetUniformLocation(
+            offblast->textProgram, "myOffset");
+    offblast->textAlphaUni = glGetUniformLocation(
+            offblast->textProgram, "myAlpha");
+    offblast->textTexturePosUni = glGetUniformLocation(
+            offblast->textProgram, "textureSize");
 
     // Gradient Pipeline
     GLint gradientVertShader = loadShaderFile("shaders/gradient.vert", 
@@ -1173,18 +1221,12 @@ int main (int argc, char** argv) {
         glClearColor(0.0, 0.0, 0.0, 1.0);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        GLint translateUni = glGetUniformLocation(textProgram, "myOffset");
-        GLint alphaUni = glGetUniformLocation(textProgram, "myAlpha");
-        GLint texturePosUni = 
-            glGetUniformLocation(textProgram, "textureSize");
 
         if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
 
             // Blocks
             UiRow *rowToRender = mainUi->rowCursor->previousRow;
             rowToRender = rowToRender->previousRow;
-
-            glUseProgram(textProgram);
 
             GradientLayer bottomGradient = {};
             updateRect(&bottomGradient.vertices, offblast->winWidth, 
@@ -1319,6 +1361,7 @@ int main (int argc, char** argv) {
 
 
                     // ACTUAL DRAW
+                    glUseProgram(offblast->textProgram);
                     glBindBuffer(GL_ARRAY_BUFFER, mainUi->blockVbo);
                     glEnableVertexAttribArray(0);
                     glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
@@ -1327,12 +1370,13 @@ int main (int argc, char** argv) {
                     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
                             6*sizeof(float), (void*)(4*sizeof(float)));
 
-                    glUniform2f(translateUni, xOffsetNormalized, 
+                    glUniform2f(offblast->textTranslateUni, xOffsetNormalized, 
                             yOffsetNormalized);
 
-                    glUniform1f(alphaUni, 1.0);
+                    glUniform1f(offblast->textAlphaUni, 1.0);
 
-                    glUniform2f(texturePosUni, tileToRender->textureMaxW, 
+                    glUniform2f(offblast->textTexturePosUni, 
+                            tileToRender->textureMaxW, 
                             tileToRender->textureMinH);
 
                     glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -1343,9 +1387,9 @@ int main (int argc, char** argv) {
                 rowToRender = rowToRender->nextRow;
             }
 
-            glUniform2f(translateUni, 0.0f, 0.0f);
-            glUniform1f(alphaUni, 1.0);
-            glUniform2f(texturePosUni, 0.0f, 0.0f);
+            glUniform2f(offblast->textTranslateUni, 0.0f, 0.0f);
+            glUniform1f(offblast->textAlphaUni, 1.0);
+            glUniform2f(offblast->textTexturePosUni, 0.0f, 0.0f);
 
             // § GRADIENT LAYERS
             glUseProgram(gradientProgram);
@@ -1362,7 +1406,6 @@ int main (int argc, char** argv) {
                     6*sizeof(float), (void*)(4*sizeof(float)));
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
-
             glUseProgram(gradientProgram);
             glUniform1f(gradientOffsetYUniform, 0.0);
             glUniform1f(gradientFlipYUniform, 0.0);
@@ -1376,53 +1419,13 @@ int main (int argc, char** argv) {
                     6*sizeof(float), (void*)(4*sizeof(float)));
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
+
             // § INFO AREA
-            glUseProgram(textProgram);
-
-            if (!mainUi->titleLayer.textureValid) {
-                generateTextLayer(
-                        &mainUi->titleLayer,mainUi->movingToTarget->name, 
-                        OFFBLAST_NOWRAP, 1);
-                mainUi->titleLayer.textureValid = 1;
-            }
-
-            if (!mainUi->infoLayer.textureValid) {
-                char *infoString;
-                asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
-                        mainUi->movingToTarget->date, 
-                        platformString(mainUi->movingToTarget->platform),
-                        mainUi->movingToTarget->ranking);
-
-                generateTextLayer(
-                        &mainUi->infoLayer, infoString, OFFBLAST_NOWRAP, 1);
-                mainUi->infoLayer.textureValid = 1;
-
-                free(infoString);
-            }
-
-            if (!mainUi->descriptionLayer.textureValid) {
-                OffblastBlob *descriptionBlob = (OffblastBlob*)
-                    &descriptionFile->memory[
-                        mainUi->movingToTarget->descriptionOffset];
-
-                generateTextLayer(
-                        &mainUi->descriptionLayer, descriptionBlob->content, 
-                        mainUi->descriptionWidth, 1);
-                mainUi->descriptionLayer.textureValid = 1;
-            }
-
-            if (!mainUi->rowNameLayer.textureValid) {
-                generateTextLayer(
-                        &mainUi->rowNameLayer, mainUi->movingToRow->name, 
-                        OFFBLAST_NOWRAP, 1);
-                mainUi->rowNameLayer.textureValid = 1;
-            }
-
-
             float alpha = 1.0;
             if (mainUi->infoAnimation->animating == 1) {
                 double change = easeInOutCirc(
-                        (double)SDL_GetTicks() - mainUi->infoAnimation->startTick,
+                        (double)SDL_GetTicks() - 
+                            mainUi->infoAnimation->startTick,
                         0.0,
                         1.0,
                         (double)mainUi->infoAnimation->durationMs);
@@ -1453,80 +1456,72 @@ int main (int argc, char** argv) {
             float marginNormalized = (2.0f/offblast->winWidth) * 
                 (float)offblast->winMargin;
 
-            // Draw Title
-            glBindTexture(GL_TEXTURE_2D, mainUi->titleLayer.textureHandle);
-            glBindBuffer(GL_ARRAY_BUFFER, mainUi->titleLayer.vbo);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
-                    (void*)(4*sizeof(float)));
+            if (!mainUi->titleLayer.textureValid) {
+                generateTextLayer(
+                        &mainUi->titleLayer,mainUi->movingToTarget->name, 
+                        OFFBLAST_NOWRAP, 1);
+                mainUi->titleLayer.textureValid = 1;
+            }
 
             float pixelY = 
                 offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
                     - mainUi->titleLayer.pixelHeight;
             float newY  = (2.0f/offblast->winHeight) * pixelY;
+            renderTextLayer(&mainUi->titleLayer, marginNormalized, newY, alpha);
 
-            glUniform2f(translateUni, marginNormalized, newY);
-            glUniform1f(alphaUni, alpha);
+            if (!mainUi->infoLayer.textureValid) {
+                char *infoString;
+                asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
+                        mainUi->movingToTarget->date, 
+                        platformString(mainUi->movingToTarget->platform),
+                        mainUi->movingToTarget->ranking);
 
-            glDrawArrays(GL_TRIANGLES, 0, 6);
+                generateTextLayer(
+                        &mainUi->infoLayer, infoString, OFFBLAST_NOWRAP, 1);
+                mainUi->infoLayer.textureValid = 1;
 
-            // Draw Info
-            glBindTexture(GL_TEXTURE_2D, mainUi->infoLayer.textureHandle);
-            glBindBuffer(GL_ARRAY_BUFFER, mainUi->infoLayer.vbo);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
-                    (void*)(4*sizeof(float)));
-
+                free(infoString);
+            }
             pixelY -= offblast->infoPointSize;
             newY = (2.0f/offblast->winHeight) * pixelY;
+            renderTextLayer(&mainUi->infoLayer, marginNormalized, newY, alpha);
 
-            glUniform1f(alphaUni, alpha);
-            glUniform2f(translateUni, marginNormalized, newY);
+            if (!mainUi->descriptionLayer.textureValid) {
+                OffblastBlob *descriptionBlob = (OffblastBlob*)
+                    &descriptionFile->memory[
+                        mainUi->movingToTarget->descriptionOffset];
 
-            glDrawArrays(GL_TRIANGLES, 0, 6);
-
-            // Draw Description
-            glBindTexture(GL_TEXTURE_2D, mainUi->descriptionLayer.textureHandle);
-            glBindBuffer(GL_ARRAY_BUFFER, mainUi->descriptionLayer.vbo);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
-                    (void*)(4*sizeof(float)));
-
+                generateTextLayer(
+                        &mainUi->descriptionLayer, descriptionBlob->content, 
+                        mainUi->descriptionWidth, 1);
+                mainUi->descriptionLayer.textureValid = 1;
+            }
             pixelY -= mainUi->descriptionLayer.pixelHeight + mainUi->boxPad;
             newY = (2.0f/offblast->winHeight) * pixelY;
+            renderTextLayer(&mainUi->descriptionLayer, marginNormalized, newY, 
+                    alpha);
 
-            glUniform1f(alphaUni, alpha);
-            glUniform2f(translateUni, marginNormalized, newY);
-
-            glDrawArrays(GL_TRIANGLES, 0, 6);
-
-
-            // Draw Row Name
-            glBindTexture(GL_TEXTURE_2D, mainUi->rowNameLayer.textureHandle);
-            glBindBuffer(GL_ARRAY_BUFFER, mainUi->rowNameLayer.vbo);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
-                    (void*)(4*sizeof(float)));
-
+            if (!mainUi->rowNameLayer.textureValid) {
+                generateTextLayer(
+                        &mainUi->rowNameLayer, mainUi->movingToRow->name, 
+                        OFFBLAST_NOWRAP, 1);
+                mainUi->rowNameLayer.textureValid = 1;
+            }
             pixelY = offblast->winFold + mainUi->boxPad;
             newY = (2.0f/offblast->winHeight) * pixelY;
-
-            glUniform2f(translateUni, marginNormalized, newY);
-            glUniform1f(alphaUni, rowNameAlpha);
-
-            glDrawArrays(GL_TRIANGLES, 0, 6);
+            renderTextLayer(&mainUi->rowNameLayer, marginNormalized, newY, 
+                    rowNameAlpha);
 
         }
         else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
-            printf("rendering player select\n");
+
+            TextLayer *layer = &playerSelectUi->promptLayer;
+            glUseProgram(offblast->textProgram);
+            if (!layer->textureValid) {
+                generateTextLayer(layer, "Who's playing?", OFFBLAST_NOWRAP, 1);
+                layer->textureValid = 1;
+            }
+            renderTextLayer(layer, 0.5f, 0.5f, 1.0f);
 
             // Need a text layer that says player select
 
@@ -1537,7 +1532,7 @@ int main (int argc, char** argv) {
 
 
         
-        glUseProgram(textProgram);
+        glUseProgram(offblast->textProgram);
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "frame time: %u", frameTime);
@@ -1552,8 +1547,8 @@ int main (int argc, char** argv) {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                 (void*)(4*sizeof(float)));
-        glUniform2f(translateUni, 0, 0);
-        glUniform1f(alphaUni, 1.0f);
+        glUniform2f(offblast->textTranslateUni, 0, 0);
+        glUniform1f(offblast->textAlphaUni, 1.0f);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         glDisableVertexAttribArray(0);
@@ -1682,6 +1677,7 @@ uint32_t needsReRender(SDL_Window *window)
             return 1;
         }
         mainUi->titleLayer.font = offblast->titleFont;
+        offblast->playerSelectUi.promptLayer.font = offblast->titleFont;
 
         offblast->infoPointSize = goldenRatioLarge(offblast->winWidth, 9);
         offblast->infoFont = TTF_OpenFont(
@@ -1709,14 +1705,7 @@ uint32_t needsReRender(SDL_Window *window)
         mainUi->titleLayer.textureValid = 0;
         mainUi->descriptionLayer.textureValid = 0;
         mainUi->rowNameLayer.textureValid = 0;
-
-        offblast->playerSelectUi.promptLayer.font = offblast->titleFont;
-        generateTextLayer(
-            &offblast->playerSelectUi.promptLayer, 
-            "Who's Playing?", 
-            OFFBLAST_NOWRAP, 
-            1);
-        offblast->playerSelectUi.promptLayer.textureValid = 1;
+        offblast->playerSelectUi.promptLayer.textureValid = 0;
 
         updated = 1;
     }
@@ -2358,4 +2347,22 @@ void launch(uint32_t nPaths, Launcher* launchers) {
         free(romSlug);
         free(launchString);
     }
+}
+
+void renderTextLayer(TextLayer *layer, float x, float y, float a) {
+
+    glUseProgram(offblast->textProgram);
+    assert(layer->textureValid);
+
+    glBindTexture(GL_TEXTURE_2D, layer->textureHandle);
+    glBindBuffer(GL_ARRAY_BUFFER, layer->vbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+            (void*)(4*sizeof(float)));
+    glUniform2f(offblast->textTranslateUni, x, y);
+    glUniform1f(offblast->textAlphaUni, a);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
 }
