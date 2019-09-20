@@ -164,7 +164,9 @@ enum UiMode {
 
 typedef struct PlayerSelectUi {
     TextLayer promptLayer;
-    TextLayer *playerNameLayers[];
+    TextLayer *playerNameLayers;
+    // TODO change to an image layer?
+    TextLayer *playerAvatarLayers;
 } PlayerSelectUi;
 
 typedef struct MainUi {
@@ -827,10 +829,10 @@ int main (int argc, char** argv) {
     json_object_object_get_ex(configObj, "users", &usersObject);
     offblast->nUsers = json_object_array_length(usersObject);
     assert(offblast->nUsers);
-    offblast->users = calloc(offblast->nUsers, sizeof(User));
+    offblast->users = calloc(offblast->nUsers + 1, sizeof(User));
 
-    printf("DEBUG 2\n");
-    for (uint32_t i=0; i < offblast->nUsers; i++) {
+    uint32_t iUser;
+    for (iUser = 0; iUser < offblast->nUsers; iUser++) {
 
         json_object *workingUserNode = NULL;
         json_object *workingNameNode = NULL;
@@ -841,7 +843,7 @@ int main (int argc, char** argv) {
         const char *theEmail = NULL;
         const char *theAvatarPath= NULL;
 
-        workingUserNode = json_object_array_get_idx(usersObject, i);
+        workingUserNode = json_object_array_get_idx(usersObject, iUser);
         json_object_object_get_ex(workingUserNode, "name",
                 &workingNameNode);
         json_object_object_get_ex(workingUserNode, "email",
@@ -854,10 +856,25 @@ int main (int argc, char** argv) {
         theEmail = json_object_get_string(workingEmailNode);
         theAvatarPath = json_object_get_string(workingAvatarPathNode);
 
-        
+        User *pUser = &offblast->users[iUser];
+        uint32_t nameLen = (strlen(theName) < 256) ? strlen(theName) : 255;
+        uint32_t emailLen = (strlen(theEmail) < 512) ? strlen(theEmail) : 512;
+        uint32_t avatarLen = 
+            (strlen(theAvatarPath) < PATH_MAX) ? 
+                    strlen(theAvatarPath) : PATH_MAX;
 
-        printf("got user --\n%s\n%s\n%s\n", theName, theEmail, theAvatarPath);
+        memcpy(&pUser->name, theName, nameLen);
+        memcpy(&pUser->email, theEmail, emailLen);
+        memcpy(&pUser->avatarPath, theAvatarPath, avatarLen);
+
+        printf("got user %u --\n%s\n%s\n%s\n", iUser, 
+                theName, theEmail, theAvatarPath);
     }
+
+    User *pUser = &offblast->users[iUser];
+    memcpy(&pUser->name, "Guest", strlen("Guest"));
+    memcpy(&pUser->avatarPath, "guest-512.jpg", strlen("guest-512.jpg"));
+    offblast->nUsers++;
 
 
 
@@ -930,6 +947,41 @@ int main (int argc, char** argv) {
 
     for (uint32_t i = 0; i < OFFBLAST_MAX_PLAYERS; i++) {
         offblast->players[i].jsIndex = -1;
+    }
+
+    playerSelectUi->playerNameLayers = calloc(offblast->nUsers, 
+            sizeof(TextLayer));
+    playerSelectUi->playerAvatarLayers = calloc(offblast->nUsers, 
+            sizeof(TextLayer));
+    // TODO can't wait to get rid of this font shit
+    for (uint32_t i = 0; i < offblast->nUsers; i++) {
+
+        playerSelectUi->playerNameLayers[i].font = offblast->infoFont;
+        glGenTextures(1, &playerSelectUi->playerNameLayers[i].textureHandle);
+
+        TextLayer *avatarLayer = &playerSelectUi->playerAvatarLayers[i];
+        glGenTextures(1, &avatarLayer->textureHandle);
+
+        SDL_Surface *image = IMG_Load(offblast->users[i].avatarPath);
+
+        if(image) {
+            uint32_t newWidth = 0, newHeight = 0;
+            sdlSurfaceToGlTexture(
+                    avatarLayer->textureHandle, image, &newWidth, &newHeight);
+
+            avatarLayer->textureValid = 1;
+            avatarLayer->pixelWidth = image->w;
+            avatarLayer->pixelHeight = image->h;
+            updateRect(&avatarLayer->vertices, image->w, image->h);
+            updateVbo(&avatarLayer->vbo, &avatarLayer->vertices);
+
+        }
+        else {
+            printf("couldn't load texture for avatar %s\n", 
+                    offblast->users[i].avatarPath);
+        }
+        free(image);
+
     }
 
     GLuint vao;
@@ -1523,7 +1575,22 @@ int main (int argc, char** argv) {
             }
             renderTextLayer(layer, 0.5f, 0.5f, 1.0f);
 
-            // Need a text layer that says player select
+            for (uint32_t i = 0; i < offblast->nUsers; i++) {
+
+                TextLayer *layer = &playerSelectUi->playerNameLayers[i];
+                TextLayer *avatarLayer = 
+                    &playerSelectUi->playerAvatarLayers[i];
+
+                if (!layer->textureValid) {
+                    generateTextLayer(layer, offblast->users[i].name, 
+                            OFFBLAST_NOWRAP, 1);
+                    layer->textureValid = 1;
+                }
+
+                renderTextLayer(layer, 0.5f, 0.5f - ((float)i/5*0.2), 1.0f);
+                renderTextLayer(avatarLayer, 
+                        0.5f - 0.1, 0.5f - ((float)i/5*0.2), 1.0f);
+            }
 
             // need a list of players to choose from
     
@@ -2154,7 +2221,8 @@ void generateTextLayer(
         uint32_t updateVertices) 
 {
     SDL_Color color = {255,255,255,255};
-
+    
+    assert(layer->font);
     SDL_Surface *surface;
     if (wrapWidth == OFFBLAST_NOWRAP) {
         surface = TTF_RenderText_Blended(layer->font, text, color);
