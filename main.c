@@ -24,6 +24,17 @@
 //      3. Recently Played and Play Duration
 //      6. watch out for vram! glDeleteTextures
 //
+// Refactoring:
+//      - I'd love to have a better way of generating textured rectangles as I
+//          suspect i'm going to be doing a lot of it, I think the bext thing
+//          we need to do is get around to having a prerendered font texture,
+//          turning TextLayer into TexturedRect, and create a new TextLayer
+//          struct that uses the bitmap font.
+//
+// TODO font rasterization and rendering
+//      - SDL_TTF doesn't give us a lot of flexibility when it comes to
+//        blocks of text..
+//
 // Known Bugs:
 //      - Invalid date format is a thing
 //      - Only JPG covers are supported
@@ -50,9 +61,6 @@
 //      * a loading animation 
 //      * PLATFORM BADGES ON MIXED LISTS
 //
-// TODO font rasterization and rendering
-//      - SDL_TTF doesn't give us a lot of flexibility when it comes to
-//        blocks of text..
 //
 // TODO steam support
 //      * looks like if you ls .steam/steam/userdata there's a folder for 
@@ -972,7 +980,9 @@ int main (int argc, char** argv) {
             avatarLayer->textureValid = 1;
             avatarLayer->pixelWidth = image->w;
             avatarLayer->pixelHeight = image->h;
-            updateRect(&avatarLayer->vertices, image->w, image->h);
+            updateRect(&avatarLayer->vertices, 
+                    offblast->mainUi.boxHeight,
+                    offblast->mainUi.boxHeight);
             updateVbo(&avatarLayer->vbo, &avatarLayer->vertices);
 
         }
@@ -1573,7 +1583,7 @@ int main (int argc, char** argv) {
                 generateTextLayer(layer, "Who's playing?", OFFBLAST_NOWRAP, 1);
                 layer->textureValid = 1;
             }
-            renderTextLayer(layer, 0.5f, 0.5f, 1.0f);
+            renderTextLayer(layer, 0.5f, 1.61f, 1.0f);
 
             for (uint32_t i = 0; i < offblast->nUsers; i++) {
 
@@ -1587,9 +1597,12 @@ int main (int argc, char** argv) {
                     layer->textureValid = 1;
                 }
 
-                renderTextLayer(layer, 0.5f, 0.5f - ((float)i/5*0.2), 1.0f);
+                renderTextLayer(layer, 
+                        0.5f + i*0.2, 
+                        1.2f, 1.0f);
                 renderTextLayer(avatarLayer, 
-                        0.5f - 0.1, 0.5f - ((float)i/5*0.2), 1.0f);
+                        0.5f + i*0.2, 
+                        0.5f, 1.0f);
             }
 
             // need a list of players to choose from
