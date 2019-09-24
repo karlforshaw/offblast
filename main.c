@@ -17,10 +17,8 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
-// TODO I think it's time we start thinking about having a global UI struct
-//  As now we have more than one interface that can be rendered
 // ALPHA 0.1 HITLIST
-//      2. Who's playing?
+//      1. Fix cover rendering bug (texture pos)
 //      3. Recently Played and Play Duration
 //      6. watch out for vram! glDeleteTextures
 //
@@ -1162,6 +1160,24 @@ int main (int argc, char** argv) {
     mainUi->movingToTarget = mainUi->rowCursor->tileCursor->target;
     mainUi->movingToRow = mainUi->rowCursor;
 
+    GradientLayer bottomGradient = {};
+    updateRect(&bottomGradient.vertices, offblast->winWidth, 
+            goldenRatioLargef(offblast->winHeight, 5));
+
+    updateVbo(&bottomGradient.vbo, &bottomGradient.vertices);
+
+    GradientLayer topGradient = {};
+    updateRect(&topGradient.vertices, offblast->winWidth, 
+            offblast->winHeight - offblast->winFold);
+
+    updateVbo(&topGradient.vbo, &topGradient.vertices);
+    GLint gradientOffsetYUniform = 
+        glGetUniformLocation(gradientProgram, "yOffset");
+    GLint gradientFlipYUniform = 
+        glGetUniformLocation(gradientProgram, "yFlip");
+    GLint gradientStartUniform = 
+        glGetUniformLocation(gradientProgram, "startPos");
+
 
     // § Main loop
     while (running) {
@@ -1300,26 +1316,9 @@ int main (int argc, char** argv) {
             UiRow *rowToRender = mainUi->rowCursor->previousRow;
             rowToRender = rowToRender->previousRow;
 
-            GradientLayer bottomGradient = {};
-            updateRect(&bottomGradient.vertices, offblast->winWidth, 
-                    goldenRatioLargef(offblast->winHeight, 5));
-
-            updateVbo(&bottomGradient.vbo, &bottomGradient.vertices);
-
-            GradientLayer topGradient = {};
-            updateRect(&topGradient.vertices, offblast->winWidth, 
-                    offblast->winHeight - offblast->winFold);
-
-            updateVbo(&topGradient.vbo, &topGradient.vertices);
-            GLint gradientOffsetYUniform = 
-                glGetUniformLocation(gradientProgram, "yOffset");
-            GLint gradientFlipYUniform = 
-                glGetUniformLocation(gradientProgram, "yFlip");
-            GLint gradientStartUniform = 
-                glGetUniformLocation(gradientProgram, "startPos");
-
             // § blocks
             for (int32_t iRow = -2; iRow < ROWS_TOTAL-2; iRow++) {
+
 
                 UiTile *tileToRender = 
                     rewindTiles(rowToRender->tileCursor, 2);
@@ -1372,6 +1371,7 @@ int main (int argc, char** argv) {
                     float yOffsetNormalized = (2.0 / offblast->winHeight) * yOffset;
 
                     // Generate the texture 
+                    glUseProgram(offblast->textProgram);
                     if (tileToRender->textureHandle == 0 &&
                             tileToRender->target->coverUrl != NULL) 
                     {
@@ -1431,9 +1431,7 @@ int main (int argc, char** argv) {
                                 tileToRender->textureHandle);
                     }
 
-
                     // ACTUAL DRAW
-                    glUseProgram(offblast->textProgram);
                     glBindBuffer(GL_ARRAY_BUFFER, mainUi->blockVbo);
                     glEnableVertexAttribArray(0);
                     glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
@@ -1747,7 +1745,7 @@ uint32_t needsReRender(SDL_Window *window)
         // 7:5
         mainUi->boxHeight = goldenRatioLarge(offblast->winWidth, 4);
         mainUi->boxWidth = mainUi->boxHeight/5 * 7;
-        updateRect(&mainUi->blockVertices, newWidth, newHeight);
+        updateRect(&mainUi->blockVertices, mainUi->boxWidth, mainUi->boxHeight);
         updateVbo(&mainUi->blockVbo, &mainUi->blockVertices);
 
         mainUi->boxPad = goldenRatioLarge((double) offblast->winWidth, 9);
