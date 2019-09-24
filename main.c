@@ -17,8 +17,9 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
-// ALPHA 0.1 HITLIST
-//      1. Fix cover rendering bug (texture pos)
+// ALPHA 0.2 HITLIST
+//      1. STB IMAGE
+//      2. STB TRUETYPE
 //      3. Recently Played and Play Duration
 //      6. watch out for vram! glDeleteTextures
 //
