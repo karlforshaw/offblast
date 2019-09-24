@@ -1202,6 +1202,7 @@ int main (int argc, char** argv) {
                         break;
                     case SDL_CONTROLLER_BUTTON_A:
                         pressConfirm(buttonEvent->which);
+                        SDL_RaiseWindow(window);
                         break;
                 }
 
@@ -1240,7 +1241,7 @@ int main (int argc, char** argv) {
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
                     pressConfirm(-1);
-                    //SDL_RaiseWindow(window);
+                    SDL_RaiseWindow(window);
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_F) {
                     SDL_SetWindowFullscreen(window, 
