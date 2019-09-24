@@ -175,6 +175,7 @@ typedef struct PlayerSelectUi {
     TextLayer *playerNameLayers;
     // TODO change to an image layer?
     TextLayer *playerAvatarLayers;
+    int32_t cursor;
 } PlayerSelectUi;
 
 typedef struct MainUi {
@@ -205,9 +206,15 @@ typedef struct MainUi {
 
 } MainUi ;
 
+typedef struct Launcher {
+    char path[PATH_MAX];
+    char launcher[MAX_LAUNCH_COMMAND_LENGTH];
+} Launcher;
+
 typedef struct OffblastUi {
 
     enum UiMode mode;
+
     PlayerSelectUi playerSelectUi;
     MainUi mainUi;
 
@@ -236,12 +243,12 @@ typedef struct OffblastUi {
     size_t nUsers;
     User *users;
 
+    size_t nPaths;
+    Launcher *launchers;
+
+
 } OffblastUi;
 
-typedef struct Launcher {
-    char path[PATH_MAX];
-    char launcher[MAX_LAUNCH_COMMAND_LENGTH];
-} Launcher;
 
 
 uint32_t megabytes(uint32_t n);
@@ -265,7 +272,7 @@ char *getCoverPath();
 void updateVbo(GLuint *vbo, UiRect* vertices);
 GLint loadShaderFile(const char *path, GLenum shaderType);
 GLuint createShaderProgram(GLint vertShader, GLint fragShader);
-void launch(uint32_t nPaths, Launcher* launchers);
+void launch();
 void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface, 
         uint32_t *newWidth, uint32_t *newHeight); 
 void updateRect(UiRect *vertices, uint32_t rectWidth, uint32_t rectHeight);
@@ -275,6 +282,8 @@ void generateTextLayer(
 void changeRow(uint32_t direction);
 void changeColumn(uint32_t direction);
 void renderTextLayer(TextLayer *layer, float x, float y, float a);
+void pressConfirm();
+
 
 
 
@@ -413,10 +422,10 @@ int main (int argc, char** argv) {
     char (*platforms)[256] = calloc(MAX_PLATFORMS, 256 * sizeof(char));
     uint32_t nPlatforms = 0;
 
-    size_t nPaths = json_object_array_length(paths);
-    Launcher *launchers = calloc(nPaths, sizeof(Launcher));
+    offblast->nPaths = json_object_array_length(paths);
+    offblast->launchers = calloc(offblast->nPaths, sizeof(Launcher));
 
-    for (int i=0; i<nPaths; i++) {
+    for (int i=0; i < offblast->nPaths; i++) {
 
         json_object *workingPathNode = NULL;
         json_object *workingPathStringNode = NULL;
@@ -445,8 +454,8 @@ int main (int argc, char** argv) {
         thePlatform = json_object_get_string(workingPathPlatformNode);
 
         theLauncher = json_object_get_string(workingPathLauncherNode);
-        memcpy(&launchers[i].path, thePath, strlen(thePath));
-        memcpy(&launchers[i].launcher, theLauncher, strlen(theLauncher));
+        memcpy(&offblast->launchers[i].path, thePath, strlen(thePath));
+        memcpy(&offblast->launchers[i].launcher, theLauncher, strlen(theLauncher));
 
         printf("Running Path for %s: %s\n", theExtension, thePath);
 
@@ -1192,8 +1201,7 @@ int main (int argc, char** argv) {
                         changeColumn(1);
                         break;
                     case SDL_CONTROLLER_BUTTON_A:
-                        launch(nPaths, launchers);
-                        SDL_RaiseWindow(window);
+                        pressConfirm(buttonEvent->which);
                         break;
                 }
 
@@ -1208,18 +1216,16 @@ int main (int argc, char** argv) {
 
                 printf("controller added %d\n", devEvent->which);
                 SDL_GameController *controller;
-                if (SDL_IsGameController(devEvent->which) == SDL_TRUE &&
-                        (controller = SDL_GameControllerOpen(devEvent->which)) != NULL) 
-                {
-                    for (uint32_t k = 0; k < OFFBLAST_MAX_PLAYERS; k++) {
-                        if (offblast->players[k].jsIndex == -1) {
-                            offblast->players[k].jsIndex = devEvent->which;
-                            printf("Controller: %s\nAdded to Player %d\n",
-                                SDL_GameControllerNameForIndex(devEvent->which),
-                                k);
-                            break;
-                        }
+                if (SDL_IsGameController(devEvent->which) == SDL_TRUE) {
+
+                    controller = SDL_GameControllerOpen(devEvent->which); 
+                    if (controller == NULL)  {
+                        printf("failed to add %d\n", devEvent->which);
                     }
+                    else {
+                        offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
+                    }
+
                 }
             }
             else if (event.type == SDL_CONTROLLERDEVICEREMOVED) {
@@ -1233,8 +1239,8 @@ int main (int argc, char** argv) {
                     break;
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
-                    launch(nPaths, launchers);
-                    SDL_RaiseWindow(window);
+                    pressConfirm(-1);
+                    //SDL_RaiseWindow(window);
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_F) {
                     SDL_SetWindowFullscreen(window, 
@@ -1277,6 +1283,9 @@ int main (int argc, char** argv) {
             offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
             // TODO this should probably kill all the active animations?
             // or fire their callbacks immediately
+        }
+        else {
+            offblast->mode = OFFBLAST_UI_MODE_MAIN;
         }
 
         // RENDER
@@ -1597,15 +1606,14 @@ int main (int argc, char** argv) {
                     layer->textureValid = 1;
                 }
 
+                float alpha = (i == playerSelectUi->cursor) ? 1.0 : 0.7;
                 renderTextLayer(layer, 
-                        0.5f + i*0.2, 
-                        1.2f, 1.0f);
+                        0.25f + i*0.3, 
+                        1.2f, alpha);
                 renderTextLayer(avatarLayer, 
-                        0.5f + i*0.2, 
-                        0.5f, 1.0f);
+                        0.25f + i*0.3, 
+                        0.5f, alpha);
             }
-
-            // need a list of players to choose from
     
             // need to handle the event
         }
@@ -1798,27 +1806,48 @@ void changeColumn(uint32_t direction)
 {
     MainUi *ui = &offblast->mainUi;
 
-    if (animationRunning() == 0)
-    {
-        ui->horizontalAnimation->startTick = SDL_GetTicks();
-        ui->horizontalAnimation->direction = direction;
-        ui->horizontalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
-        ui->horizontalAnimation->animating = 1;
-        ui->horizontalAnimation->callback = &horizontalMoveDone;
+    if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
+        if (animationRunning() == 0)
+        {
+            ui->horizontalAnimation->startTick = SDL_GetTicks();
+            ui->horizontalAnimation->direction = direction;
+            ui->horizontalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
+            ui->horizontalAnimation->animating = 1;
+            ui->horizontalAnimation->callback = &horizontalMoveDone;
 
-        ui->infoAnimation->startTick = SDL_GetTicks();
-        ui->infoAnimation->direction = 0;
-        ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
-        ui->infoAnimation->animating = 1;
-        ui->infoAnimation->callback = &infoFaded;
+            ui->infoAnimation->startTick = SDL_GetTicks();
+            ui->infoAnimation->direction = 0;
+            ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
+            ui->infoAnimation->animating = 1;
+            ui->infoAnimation->callback = &infoFaded;
 
-        if (direction == 0) {
-            ui->movingToTarget = 
-                ui->rowCursor->tileCursor->previous->target;
+            if (direction == 0) {
+                ui->movingToTarget = 
+                    ui->rowCursor->tileCursor->previous->target;
+            }
+            else {
+                ui->movingToTarget 
+                    = ui->rowCursor->tileCursor->next->target;
+            }
         }
-        else {
-            ui->movingToTarget 
-                = ui->rowCursor->tileCursor->next->target;
+    }
+    else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
+
+        if (offblast->nUsers > 1) {
+
+            if (direction) {
+                offblast->playerSelectUi.cursor++;
+            }
+            else {
+                offblast->playerSelectUi.cursor--;
+            }
+
+            if (offblast->playerSelectUi.cursor >= offblast->nUsers)
+                offblast->playerSelectUi.cursor = offblast->nUsers - 1;
+
+            // TODO bugged out, ends up at 5
+            if (offblast->playerSelectUi.cursor < 0)
+                offblast->playerSelectUi.cursor = 0;
         }
     }
 }
@@ -2367,7 +2396,7 @@ GLuint createShaderProgram(GLint vertShader, GLint fragShader) {
 }
 
 
-void launch(uint32_t nPaths, Launcher* launchers) {
+void launch() {
     
     LaunchTarget *target = offblast->mainUi.rowCursor->tileCursor->target;
 
@@ -2385,8 +2414,8 @@ void launch(uint32_t nPaths, Launcher* launchers) {
         char *launchString = calloc(PATH_MAX, sizeof(char));
 
         int32_t foundIndex = -1;
-        for (uint32_t i = 0; i < nPaths; i++) {
-            if (strcmp(target->path, launchers[i].path) == 0) {
+        for (uint32_t i = 0; i < offblast->nPaths; i++) {
+            if (strcmp(target->path, offblast->launchers[i].path) == 0) {
                 foundIndex = i;
             }
         }
@@ -2397,8 +2426,8 @@ void launch(uint32_t nPaths, Launcher* launchers) {
         }
 
         memcpy(launchString, 
-                launchers[foundIndex].launcher, 
-                strlen(launchers[foundIndex].launcher));
+                offblast->launchers[foundIndex].launcher, 
+                strlen(offblast->launchers[foundIndex].launcher));
 
         assert(strlen(launchString));
 
@@ -2446,4 +2475,45 @@ void renderTextLayer(TextLayer *layer, float x, float y, float a) {
     glUniform1f(offblast->textAlphaUni, a);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
+}
+
+void pressConfirm(int32_t joystickIndex) {
+
+    if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
+
+        User *theUser = &offblast->users[offblast->playerSelectUi.cursor];
+
+        char *email = theUser->email;
+        uint32_t emailSignature = 0;
+
+        lmmh_x86_32(email, strlen(email), 33, 
+                &emailSignature);
+
+        printf("player selected %d: %s\n%s\n%u\n", 
+                offblast->playerSelectUi.cursor,
+                theUser->name,
+                theUser->email,
+                emailSignature
+                );
+
+        printf("joystick %d\n", joystickIndex);
+
+        for (uint32_t k = 0; k < OFFBLAST_MAX_PLAYERS; k++) {
+
+            if (offblast->players[k].emailHash == 0) {
+                offblast->players[k].emailHash = emailSignature;
+            }
+
+            if (joystickIndex > -1) {
+                offblast->players[k].jsIndex = joystickIndex;
+                printf("Controller: %s\nAdded to Player %d\n",
+                        SDL_GameControllerNameForIndex(joystickIndex), k);
+                break;
+            }
+        }
+
+    }
+    else if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
+        launch();
+    }
 }
