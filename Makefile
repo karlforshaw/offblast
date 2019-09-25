@@ -3,7 +3,7 @@ CFLAGS += $(shell sdl2-config --cflags)
 CFLAGS += $(shell pkg-config --cflags json-c libcurl gl glew)
 CFLAGS += -pthread
 
-LIBS += $(shell pkg-config --libs json-c SDL2_ttf SDL2_image gl glew libmurmurhash libcurl) -pthread
+LIBS += $(shell pkg-config --libs json-c SDL2_ttf gl glew libmurmurhash libcurl) -pthread
 
 PROG = offblast
 OBJS = main.o offblastDbFile.o

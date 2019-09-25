@@ -19,6 +19,11 @@
 
 // ALPHA 0.2 HITLIST
 //      1. STB IMAGE
+//          moving to this will not only allow us to load images bottom up 
+//          and avoid doing annoying math tricks, but also allow us to fix the
+//          jpeg only cover issue, we can open it the file and save it out as
+//          jpg
+//
 //      2. STB TRUETYPE
 //      3. Recently Played and Play Duration
 //      6. watch out for vram! glDeleteTextures
@@ -87,7 +92,6 @@
 #include <errno.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
-#include <SDL2/SDL_image.h>
 #include <json-c/json.h>
 #include <murmurhash.h>
 #include <curl/curl.h>
@@ -96,6 +100,9 @@
         
 #define GL3_PROTOTYPES 1
 #include <GL/glew.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 #include "offblast.h"
 #include "offblastDbFile.h"
@@ -117,8 +124,8 @@ typedef struct Player {
 typedef struct UiTile{
     struct LaunchTarget *target;
     GLuint textureHandle;
-    float textureMaxW;
-    float textureMinH;
+    float textureW;
+    float textureH;
     uint8_t loadState;
     struct UiTile *next; 
     struct UiTile *previous; 
@@ -272,8 +279,8 @@ void updateVbo(GLuint *vbo, UiRect* vertices);
 GLint loadShaderFile(const char *path, GLenum shaderType);
 GLuint createShaderProgram(GLint vertShader, GLint fragShader);
 void launch();
-void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface, 
-        uint32_t *newWidth, uint32_t *newHeight); 
+void imageToGlTexture(GLuint textureHandle, unsigned char *pixelData, 
+        uint32_t newWidth, uint32_t newHeight);
 void updateRect(UiRect *vertices, uint32_t rectWidth, uint32_t rectHeight);
 void generateTextLayer(
         TextLayer *layer, char *text, uint32_t wrapWidth, 
@@ -978,16 +985,22 @@ int main (int argc, char** argv) {
         TextLayer *avatarLayer = &playerSelectUi->playerAvatarLayers[i];
         glGenTextures(1, &avatarLayer->textureHandle);
 
-        SDL_Surface *image = IMG_Load(offblast->users[i].avatarPath);
+        // TODO we could probably move this into the imageToGL call
+        int w, h, n;
+        stbi_set_flip_vertically_on_load(1);
+        unsigned char *imageData = stbi_load(
+                offblast->users[i].avatarPath, &w, &h, &n, 4);
 
-        if(image) {
-            uint32_t newWidth = 0, newHeight = 0;
-            sdlSurfaceToGlTexture(
-                    avatarLayer->textureHandle, image, &newWidth, &newHeight);
+        if(imageData != NULL) {
+
+            imageToGlTexture(
+                    avatarLayer->textureHandle, 
+                    imageData, w, h);
 
             avatarLayer->textureValid = 1;
-            avatarLayer->pixelWidth = image->w;
-            avatarLayer->pixelHeight = image->h;
+            // TODO do we need these now?
+            avatarLayer->pixelWidth = w;
+            avatarLayer->pixelHeight = h;
             updateRect(&avatarLayer->vertices, 
                     offblast->mainUi.boxHeight,
                     offblast->mainUi.boxHeight);
@@ -998,7 +1011,7 @@ int main (int argc, char** argv) {
             printf("couldn't load texture for avatar %s\n", 
                     offblast->users[i].avatarPath);
         }
-        free(image);
+        free(imageData);
 
     }
 
@@ -1382,12 +1395,16 @@ int main (int argc, char** argv) {
                                 getCoverPath(
                                         tileToRender->target->targetSignature); 
 
-                            SDL_Surface *image = IMG_Load(coverArtPath);
+                            int w, h, n;
+                            stbi_set_flip_vertically_on_load(1);
+                            unsigned char *image = stbi_load(
+                                    coverArtPath, &w, &h, &n, 4);
                             free(coverArtPath);
+
 
                             if (tileToRender->loadState == LOAD_STATE_UNKNOWN) {
                                 
-                                if(!image) {
+                                if(image == NULL) {
                                     tileToRender->loadState = 
                                         LOAD_STATE_DOWNLOADING;
                                     pthread_t theThread;
@@ -1406,17 +1423,17 @@ int main (int argc, char** argv) {
                             if (tileToRender->loadState == 
                                     LOAD_STATE_DOWNLOADED) 
                             {
-                                uint32_t newWidth = 0, newHeight = 0;
 
                                 glGenTextures(1, &tileToRender->textureHandle);
-                                sdlSurfaceToGlTexture(
-                                        tileToRender->textureHandle, image,
-                                        &newWidth, &newHeight);
 
-                                tileToRender->textureMaxW = 
-                                    (float)image->w / newWidth;
-                                tileToRender->textureMinH = 
-                                    1.0-((float)image->h / newHeight);
+                                imageToGlTexture(
+                                        tileToRender->textureHandle,
+                                        image, w, h);
+
+                                printf("texture size: %ux%u\n", w, h);
+
+                                tileToRender->textureW = w;
+                                tileToRender->textureH = h;
 
                                 glBindTexture(GL_TEXTURE_2D, 
                                         tileToRender->textureHandle);
@@ -1446,9 +1463,10 @@ int main (int argc, char** argv) {
 
                     glUniform1f(offblast->textAlphaUni, 1.0);
 
+                    // TODO texture size stuff
                     glUniform2f(offblast->textTexturePosUni, 
-                            tileToRender->textureMaxW, 
-                            tileToRender->textureMinH);
+                            0.0, //tileToRender->textureMaxW, 
+                            0.0 /*tileToRender->textureMinH*/);
 
                     glDrawArrays(GL_TRIANGLES, 0, 6);
 
@@ -2178,47 +2196,48 @@ void updateRect(UiRect *vertices, uint32_t rectWidth, uint32_t rectHeight)
     float bottom = -1.0;
     float top = bottom + (2/winHeight*rectHeight);
 
+
     (*vertices)[0][0] = left;
     (*vertices)[0][1] = bottom;
     (*vertices)[0][2] = 0.0f;
     (*vertices)[0][3] = 1.0f;
     (*vertices)[0][4] = 0.0f;
-    (*vertices)[0][5] = 1.0f;
+    (*vertices)[0][5] = 0.0f;
 
     (*vertices)[1][0] = left;
     (*vertices)[1][1] = top;
     (*vertices)[1][2] = 0.0f;
     (*vertices)[1][3] = 1.0f;
     (*vertices)[1][4] = 0.0f;
-    (*vertices)[1][5] = 0.0f;
+    (*vertices)[1][5] = 1.0f;
 
     (*vertices)[2][0] = right;
     (*vertices)[2][1] = top;
     (*vertices)[2][2] = 0.0f;
     (*vertices)[2][3] = 1.0f;
     (*vertices)[2][4] = 1.0f;
-    (*vertices)[2][5] = 0.0f;
+    (*vertices)[2][5] = 1.0f;
 
     (*vertices)[3][0] = right;
     (*vertices)[3][1] = top;
     (*vertices)[3][2] = 0.0f;
     (*vertices)[3][3] = 1.0f;
     (*vertices)[3][4] = 1.0f;
-    (*vertices)[3][5] = 0.0f;
+    (*vertices)[3][5] = 1.0f;
 
     (*vertices)[4][0] = right;
     (*vertices)[4][1] = bottom;
     (*vertices)[4][2] = 0.0f;
     (*vertices)[4][3] = 1.0f;
     (*vertices)[4][4] = 1.0f;
-    (*vertices)[4][5] = 1.0f;
+    (*vertices)[4][5] = 0.0f;
 
     (*vertices)[5][0] = left;
     (*vertices)[5][1] = bottom;
     (*vertices)[5][2] = 0.0f;
     (*vertices)[5][3] = 1.0f;
     (*vertices)[5][4] = 0.0f;
-    (*vertices)[5][5] = 1.0f;
+    (*vertices)[5][5] = 0.0f;
 
 }
 
@@ -2230,20 +2249,20 @@ uint32_t powTwoFloor(uint32_t val) {
     return pow;
 }
 
-
-void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface, 
-        uint32_t *newWidth, uint32_t *newHeight) 
+void imageToGlTexture(GLuint textureHandle, unsigned char *pixelData, 
+        uint32_t newWidth, uint32_t newHeight) 
 {
 
-    *newWidth = powTwoFloor(surface->w);
-    *newHeight = powTwoFloor(surface->h);
+    //*newWidth = powTwoFloor(surface->w);
+    //*newHeight = powTwoFloor(surface->h);
 
-    SDL_Surface *newSurface = SDL_CreateRGBSurface(
+    /*SDL_Surface *newSurface = SDL_CreateRGBSurface(
             0, *newWidth, *newHeight, 32,
             0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
+            */
 
-    SDL_Rect destRect = {0, *newHeight - surface->h, 0, 0};
-    SDL_BlitSurface(surface, NULL, newSurface, &destRect);
+    //SDL_Rect destRect = {0, *newHeight - surface->h, 0, 0};
+    //SDL_BlitSurface(surface, NULL, newSurface, &destRect);
 
     glBindTexture(GL_TEXTURE_2D, textureHandle);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -2251,11 +2270,11 @@ void sdlSurfaceToGlTexture(GLuint textureHandle, SDL_Surface *surface,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, *newWidth, *newHeight,
-            0, GL_BGRA, GL_UNSIGNED_BYTE, newSurface->pixels);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight,
+            0, GL_RGBA, GL_UNSIGNED_BYTE, pixelData);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    free(newSurface);
+    //free(newSurface);
 }
 
 void generateTextLayer(
