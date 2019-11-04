@@ -2,3 +2,4 @@ core
 *.o
 offblast
 Session.vim
+/*.png

@@ -19,6 +19,7 @@
 
 // ALPHA 0.2 HITLIST
 //      2. STB TRUETYPE
+//          - scaling
 //      3. Recently Played and Play Duration
 //      6. watch out for vram! glDeleteTextures
 //
@@ -233,16 +234,25 @@ typedef struct OffblastUi {
     int32_t winFold;
     int32_t winMargin;
 
-    // TODO move to bitmap font
     double titlePointSize;
     double infoPointSize;
+    double debugPointSize;
+
+    // TODO move to bitmap font
     TTF_Font *titleFont;
     TTF_Font *infoFont;
     TTF_Font *debugFont;
 
-    GLuint textTexture;
+    GLuint titleTextTexture;
+    GLuint infoTextTexture;
+    GLuint debugTextTexture;
+
     GLuint textVbo;
-    stbtt_bakedchar charData[96];
+
+    stbtt_bakedchar titleCharData[96];
+    stbtt_bakedchar infoCharData[96];
+    stbtt_bakedchar debugCharData[96];
+
     uint32_t textBitmapHeight;
     uint32_t textBitmapWidth;
 
@@ -298,12 +308,37 @@ void renderTextLayer(TextLayer *layer, float x, float y, float a);
 void pressConfirm();
 
 
-void renderSomeText(OffblastUi *offblast, float x, float y, char *string) 
+#define OFFBLAST_TEXT_TITLE 1
+#define OFFBLAST_TEXT_INFO 2
+#define OFFBLAST_TEXT_DEBUG 3
+void renderSomeText(OffblastUi *offblast, float x, float y, 
+        uint32_t textMode, char *string) 
 {
 
     glUseProgram(offblast->textProgram);
     glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, offblast->textTexture);
+
+    void *cdata = NULL;
+
+    switch (textMode) {
+        case OFFBLAST_TEXT_TITLE:
+            glBindTexture(GL_TEXTURE_2D, offblast->titleTextTexture);
+            cdata = offblast->titleCharData;
+            break;
+
+        case OFFBLAST_TEXT_INFO:
+            glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
+            cdata = offblast->infoCharData;
+            break;
+
+        case OFFBLAST_TEXT_DEBUG:
+            glBindTexture(GL_TEXTURE_2D, offblast->debugTextTexture);
+            cdata = offblast->debugCharData;
+            break;
+
+        default:
+            return;
+    }
 
     float winWidth = (float)offblast->winWidth;
     float winHeight = (float)offblast->winHeight;
@@ -313,7 +348,7 @@ void renderSomeText(OffblastUi *offblast, float x, float y, char *string)
         if (*string >= 32 && *string < 128) {
 
             stbtt_aligned_quad q;
-            stbtt_GetBakedQuad(offblast->charData,
+            stbtt_GetBakedQuad(cdata,
                     offblast->textBitmapWidth, offblast->textBitmapHeight, 
                     *string-32, &x, &y, &q, 1);
 
@@ -1089,20 +1124,64 @@ int main (int argc, char** argv) {
 
     offblast->textBitmapHeight = 1024;
     offblast->textBitmapWidth = 2048;
-    unsigned char atlas[offblast->textBitmapWidth * offblast->textBitmapHeight];
 
-    stbtt_BakeFontBitmap(fontContents, 0, 256.0, atlas, 
+    // TODO this should be a function karl
+    
+    unsigned char *titleAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
+
+    stbtt_BakeFontBitmap(fontContents, 0, offblast->titlePointSize, 
+            titleAtlas, 
             offblast->textBitmapWidth, 
             offblast->textBitmapHeight,
-            32, 95, offblast->charData);
+            32, 95, offblast->titleCharData);
 
-    glGenTextures(1, &offblast->textTexture);
-    glBindTexture(GL_TEXTURE_2D, offblast->textTexture);
+    glGenTextures(1, &offblast->titleTextTexture);
+    glBindTexture(GL_TEXTURE_2D, offblast->titleTextTexture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, 
             offblast->textBitmapWidth, offblast->textBitmapHeight, 
-            0, GL_RED, GL_UNSIGNED_BYTE, atlas); 
+            0, GL_RED, GL_UNSIGNED_BYTE, titleAtlas); 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    //stbi_write_png("fonttest33.png", atlasWidth, atlasHeight, 1, atlas, 0);
+    stbi_write_png("titletest.png", offblast->textBitmapWidth, offblast->textBitmapHeight, 1, titleAtlas, 0);
+
+    free(titleAtlas);
+    titleAtlas = NULL;
+
+    unsigned char *infoAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
+
+    stbtt_BakeFontBitmap(fontContents, 0, offblast->infoPointSize, 
+            infoAtlas, 
+            offblast->textBitmapWidth, 
+            offblast->textBitmapHeight,
+            32, 95, offblast->infoCharData);
+
+    glGenTextures(1, &offblast->infoTextTexture);
+    glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, 
+            offblast->textBitmapWidth, offblast->textBitmapHeight, 
+            0, GL_RED, GL_UNSIGNED_BYTE, infoAtlas); 
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    stbi_write_png("infotest.png", offblast->textBitmapWidth, offblast->textBitmapHeight, 1, infoAtlas, 0);
+
+    free(infoAtlas);
+    infoAtlas = NULL;
+
+    unsigned char *debugAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
+
+    stbtt_BakeFontBitmap(fontContents, 0, offblast->debugPointSize, debugAtlas, 
+            offblast->textBitmapWidth, 
+            offblast->textBitmapHeight,
+            32, 95, offblast->debugCharData);
+
+    glGenTextures(1, &offblast->debugTextTexture);
+    glBindTexture(GL_TEXTURE_2D, offblast->debugTextTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, 
+            offblast->textBitmapWidth, offblast->textBitmapHeight, 
+            0, GL_RED, GL_UNSIGNED_BYTE, debugAtlas); 
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    stbi_write_png("debugtest.png", offblast->textBitmapWidth, offblast->textBitmapHeight, 1, debugAtlas, 0);
+
+    free(debugAtlas);
+    debugAtlas = NULL;
 
     // TODO remove
     glGenTextures(1, &mainUi->titleLayer.textureHandle);
@@ -1467,7 +1546,6 @@ int main (int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT);
 
 
-#if 0
         if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
 
             // Blocks
@@ -1748,30 +1826,31 @@ int main (int argc, char** argv) {
         }
         else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
 
-            TextLayer *layer = &playerSelectUi->promptLayer;
-            glUseProgram(offblast->textProgram);
-            if (!layer->textureValid) {
-                generateTextLayer(layer, "Who's playing?", OFFBLAST_NOWRAP, 1);
-                layer->textureValid = 1;
-            }
-            renderTextLayer(layer, 0.5f, 1.61f, 1.0f);
+
+            // TODO cache all these golden ratio calls they are expensive 
+            // to calculate
+            renderSomeText(offblast, 
+                    300, 
+                    offblast->winHeight - 
+                        goldenRatioLarge(offblast->winHeight, 3), 
+                    OFFBLAST_TEXT_TITLE, 
+                    "Who's playing?");
 
             for (uint32_t i = 0; i < offblast->nUsers; i++) {
 
-                TextLayer *layer = &playerSelectUi->playerNameLayers[i];
                 TextLayer *avatarLayer = 
                     &playerSelectUi->playerAvatarLayers[i];
 
-                if (!layer->textureValid) {
-                    generateTextLayer(layer, offblast->users[i].name, 
-                            OFFBLAST_NOWRAP, 1);
-                    layer->textureValid = 1;
-                }
-
                 float alpha = (i == playerSelectUi->cursor) ? 1.0 : 0.7;
-                renderTextLayer(layer, 
-                        0.25f + i*0.3, 
-                        1.2f, alpha);
+                // TODO implement alpha
+                //
+                renderSomeText(offblast, 
+                        (0.125f * offblast->winWidth) + 
+                            (i * offblast->winWidth * 0.15), 
+                        440,
+                        OFFBLAST_TEXT_INFO,
+                        offblast->users[i].name);
+
                 renderTextLayer(avatarLayer, 
                         0.25f + i*0.3, 
                         0.5f, alpha);
@@ -1779,16 +1858,11 @@ int main (int argc, char** argv) {
     
             // need to handle the event
         }
-#endif
 
-        glUseProgram(offblast->textProgram);
-
-        renderSomeText(offblast, 300, 300, "Hello World!");
-        
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "frame time: %u", frameTime);
-        renderSomeText(offblast, 0, 0, fpsString);
+        renderSomeText(offblast, 0, 0, OFFBLAST_TEXT_DEBUG, fpsString);
         free(fpsString);
 
 
@@ -1907,6 +1981,7 @@ uint32_t needsReRender(SDL_Window *window)
         // TODO Find a better way to enfoce this
         mainUi->descriptionHeight = goldenRatioLarge(offblast->winWidth, 3);
 
+        offblast->debugPointSize = goldenRatioLarge(offblast->winWidth, 9);
         offblast->titlePointSize = goldenRatioLarge(offblast->winWidth, 7);
         offblast->titleFont = TTF_OpenFont(
                 "fonts/Roboto-Regular.ttf", offblast->titlePointSize);
