@@ -294,11 +294,17 @@ void pressConfirm();
 #define OFFBLAST_TEXT_INFO 2
 #define OFFBLAST_TEXT_DEBUG 3
 void renderSomeText(OffblastUi *offblast, float x, float y, 
-        uint32_t textMode, float alpha, char *string) 
+        uint32_t textMode, float alpha, uint32_t lineWidth, char *string) 
 {
 
     glUseProgram(offblast->textProgram);
     glEnable(GL_TEXTURE_2D);
+
+    uint32_t currentLine = 0;
+    uint32_t currentWidth = 0;
+    uint32_t lineHeight = 0;
+    float originalX = x;
+    float originalY= y;
 
     void *cdata = NULL;
 
@@ -306,16 +312,19 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
         case OFFBLAST_TEXT_TITLE:
             glBindTexture(GL_TEXTURE_2D, offblast->titleTextTexture);
             cdata = offblast->titleCharData;
+            lineHeight = offblast->titlePointSize * 1.6;
             break;
 
         case OFFBLAST_TEXT_INFO:
             glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
             cdata = offblast->infoCharData;
+            lineHeight = offblast->infoPointSize * 1.6;
             break;
 
         case OFFBLAST_TEXT_DEBUG:
             glBindTexture(GL_TEXTURE_2D, offblast->debugTextTexture);
             cdata = offblast->debugCharData;
+            lineHeight = offblast->debugPointSize * 1.6;
             break;
 
         default:
@@ -335,6 +344,19 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
                     *string-32, &x, &y, &q, 1);
 
             UiRect vertices = {};
+
+            currentWidth += (q.x1 - q.x0);
+
+            if (lineWidth > 0) {
+                if (currentWidth > lineWidth) {
+                    ++currentLine;
+                    currentWidth = q.x1 - q.x0;
+
+                    x = originalX;
+                    y += lineHeight;
+                }
+            }
+
 
             float left = -1 + (2/winWidth * q.x0);
             float right = -1 + (2/winWidth * q.x1);
@@ -1757,7 +1779,7 @@ int main (int argc, char** argv) {
 
             // TODO we don't swap the text name over until we've faded out now!
             renderSomeText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_TITLE, alpha, mainUi->movingToTarget->name);
+                OFFBLAST_TEXT_TITLE, alpha, 0, mainUi->movingToTarget->name);
 
 
             char *infoString;
@@ -1769,7 +1791,7 @@ int main (int argc, char** argv) {
             pixelY -= offblast->infoPointSize;
 
             renderSomeText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_INFO, alpha, infoString);
+                OFFBLAST_TEXT_INFO, alpha, 0, infoString);
 
             free(infoString);
 
@@ -1779,15 +1801,15 @@ int main (int argc, char** argv) {
                         mainUi->movingToTarget->descriptionOffset];
 
             pixelY -= offblast->infoPointSize + mainUi->boxPad;
-            // TODO 
-            //mainUi->descriptionWidth
+            
             renderSomeText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_INFO, alpha, descriptionBlob->content); 
+                OFFBLAST_TEXT_INFO, alpha, mainUi->descriptionWidth, 
+                descriptionBlob->content); 
 
 
             pixelY = offblast->winFold + mainUi->boxPad;
             renderSomeText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_INFO, rowNameAlpha, mainUi->movingToRow->name); 
+                OFFBLAST_TEXT_INFO, rowNameAlpha, 0, mainUi->movingToRow->name); 
 
 
         }
@@ -1800,7 +1822,7 @@ int main (int argc, char** argv) {
                     300, 
                     offblast->winHeight - 
                         goldenRatioLarge(offblast->winHeight, 3), 
-                    OFFBLAST_TEXT_TITLE, 1.0,
+                    OFFBLAST_TEXT_TITLE, 1.0, 0,
                     "Who's playing?");
 
             for (uint32_t i = 0; i < offblast->nUsers; i++) {
@@ -1809,13 +1831,11 @@ int main (int argc, char** argv) {
                     &playerSelectUi->playerAvatarLayers[i];
 
                 float alpha = (i == playerSelectUi->cursor) ? 1.0 : 0.7;
-                // TODO implement alpha
-                //
                 renderSomeText(offblast, 
                         (0.128f * offblast->winWidth) + 
                             (i * offblast->winWidth * 0.15), 
                         480,
-                        OFFBLAST_TEXT_INFO, alpha,
+                        OFFBLAST_TEXT_INFO, alpha, 0,
                         offblast->users[i].name);
 
                 renderImageLayer(avatarLayer, 
@@ -1829,7 +1849,8 @@ int main (int argc, char** argv) {
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "frame time: %u", frameTime);
-        renderSomeText(offblast, 15, 15, OFFBLAST_TEXT_DEBUG, 1.0, fpsString);
+        renderSomeText(offblast, 15, 15, OFFBLAST_TEXT_DEBUG, 1.0, 0, 
+               fpsString);
         free(fpsString);
 
 
