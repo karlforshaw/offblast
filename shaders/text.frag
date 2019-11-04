@@ -23,7 +23,8 @@ void main()
     }
 
    vec4 mySample = texture(ourTexture, actualTexCoord);
-   //outputColor = mix(mySample, vec4(1,1,1,1), 0.3);
+   //outputColor = vec4(1,0,0, mySample.a);
+   //outputColor = mix(mySample, vec4(1,1,1,1), 0.4);
    outputColor = myAlpha*texture(ourTexture, actualTexCoord);
 
 }

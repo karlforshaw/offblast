@@ -18,12 +18,6 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.2 HITLIST
-//      1. STB IMAGE
-//          moving to this will not only allow us to load images bottom up 
-//          and avoid doing annoying math tricks, but also allow us to fix the
-//          jpeg only cover issue, we can open it the file and save it out as
-//          jpg
-//
 //      2. STB TRUETYPE
 //      3. Recently Played and Play Duration
 //      6. watch out for vram! glDeleteTextures
@@ -42,6 +36,8 @@
 // Known Bugs:
 //      - Invalid date format is a thing
 //      - Only JPG covers are supported
+//          The image library supports writing out images to different formats
+//          we can load the image and then save it as a jpg
 //      * if you add a rom after the platform has been scraped we say we already
 //          have it in the db but this is the target, not the filepath etc
 //
@@ -103,6 +99,14 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
+
+// TODO remove when it's working? maybe we should only gen the bitmap
+// if it doesn't already exist
+#define STB_IMAGE_WRITE_IMPLEMENTATION 1
+#include "stb_image_write.h"
 
 #include "offblast.h"
 #include "offblastDbFile.h"
@@ -232,12 +236,15 @@ typedef struct OffblastUi {
     // TODO move to bitmap font
     double titlePointSize;
     double infoPointSize;
-
     TTF_Font *titleFont;
     TTF_Font *infoFont;
     TTF_Font *debugFont;
 
-    TextLayer debugLayer;
+    GLuint textTexture;
+    GLuint textVbo;
+    stbtt_bakedchar charData[96];
+    uint32_t textBitmapHeight;
+    uint32_t textBitmapWidth;
 
     GLuint textProgram;
     GLint textTranslateUni;
@@ -291,6 +298,108 @@ void renderTextLayer(TextLayer *layer, float x, float y, float a);
 void pressConfirm();
 
 
+void renderSomeText(OffblastUi *offblast, float x, float y, char *string) 
+{
+
+    glUseProgram(offblast->textProgram);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, offblast->textTexture);
+
+    float winWidth = (float)offblast->winWidth;
+    float winHeight = (float)offblast->winHeight;
+    y = winHeight - y;
+
+    for (uint32_t i= 0; *string; ++i) {
+        if (*string >= 32 && *string < 128) {
+
+            stbtt_aligned_quad q;
+            stbtt_GetBakedQuad(offblast->charData,
+                    offblast->textBitmapWidth, offblast->textBitmapHeight, 
+                    *string-32, &x, &y, &q, 1);
+
+            UiRect vertices = {};
+
+            float left = -1 + (2/winWidth * q.x0);
+            float right = -1 + (2/winWidth * q.x1);
+            float top = -1 + (2/winHeight * (winHeight - q.y0));
+            float bottom = -1 + (2/winHeight * (winHeight -q.y1));
+            float texLeft = q.s0;
+            float texRight = q.s1;
+            float texTop = q.t0;
+            float texBottom = q.t1;
+
+            vertices[0][0] = left;
+            vertices[0][1] = bottom;
+            vertices[0][2] = 0.0f;
+            vertices[0][3] = 1.0f;
+            vertices[0][4] = texLeft;
+            vertices[0][5] = texBottom;
+
+            vertices[1][0] = left;
+            vertices[1][1] = top;
+            vertices[1][2] = 0.0f;
+            vertices[1][3] = 1.0f;
+            vertices[1][4] = texLeft;
+            vertices[1][5] = texTop;
+
+            vertices[2][0] = right;
+            vertices[2][1] = top;
+            vertices[2][2] = 0.0f;
+            vertices[2][3] = 1.0f;
+            vertices[2][4] = texRight;
+            vertices[2][5] = texTop;
+
+            vertices[3][0] = right;
+            vertices[3][1] = top;
+            vertices[3][2] = 0.0f;
+            vertices[3][3] = 1.0f;
+            vertices[3][4] = texRight;
+            vertices[3][5] = texTop;
+
+            vertices[4][0] = right;
+            vertices[4][1] = bottom;
+            vertices[4][2] = 0.0f;
+            vertices[4][3] = 1.0f;
+            vertices[4][4] = texRight;
+            vertices[4][5] = texBottom;
+
+            vertices[5][0] = left;
+            vertices[5][1] = bottom;
+            vertices[5][2] = 0.0f;
+            vertices[5][3] = 1.0f;
+            vertices[5][4] = texLeft;
+            vertices[5][5] = texBottom;
+
+            if (offblast->textVbo == 0) {
+                printf("creating vbo\n");
+                glGenBuffers(1, &offblast->textVbo);
+                glBindBuffer(GL_ARRAY_BUFFER, offblast->textVbo);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
+                        &vertices, GL_DYNAMIC_DRAW);
+            }
+            else {
+                glBindBuffer(GL_ARRAY_BUFFER, offblast->textVbo);
+                glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
+                        &vertices);
+            }
+
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+                    (void*)(4*sizeof(float)));
+            glUniform2f(offblast->textTranslateUni, 0, 0);
+            glUniform1f(offblast->textAlphaUni, 1.0f);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
+        ++string;
+    }
+
+    glDisableVertexAttribArray(0);
+    glDisableVertexAttribArray(1);
+    glUseProgram(0);
+
+}
 
 
 OffblastUi *offblast;
@@ -959,13 +1068,47 @@ int main (int argc, char** argv) {
     mainUi->infoAnimation = calloc(1, sizeof(Animation));
     mainUi->rowNameAnimation = calloc(1, sizeof(Animation));
 
-    // TODO all text layers need a texture handle, I can't wait to have
-    // one texture for the font!
+    // § Bitmap font setup
+    FILE *fd = fopen("./fonts/Roboto-Regular.ttf", "r");
+
+    if (!fd) {
+        printf("Could'nt open file\n");
+        return 1;
+    }
+    fseek(fd, 0, SEEK_END);
+    long numBytes = ftell(fd);
+    printf("File is %ld bytes long\n", numBytes);
+    fseek(fd, 0, SEEK_SET);
+
+    unsigned char *fontContents = malloc(numBytes);
+    assert(fontContents);
+
+    int read = fread(fontContents, numBytes, 1, fd);
+    assert(read);
+    fclose(fd);
+
+    offblast->textBitmapHeight = 1024;
+    offblast->textBitmapWidth = 2048;
+    unsigned char atlas[offblast->textBitmapWidth * offblast->textBitmapHeight];
+
+    stbtt_BakeFontBitmap(fontContents, 0, 256.0, atlas, 
+            offblast->textBitmapWidth, 
+            offblast->textBitmapHeight,
+            32, 95, offblast->charData);
+
+    glGenTextures(1, &offblast->textTexture);
+    glBindTexture(GL_TEXTURE_2D, offblast->textTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, 
+            offblast->textBitmapWidth, offblast->textBitmapHeight, 
+            0, GL_RED, GL_UNSIGNED_BYTE, atlas); 
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    //stbi_write_png("fonttest33.png", atlasWidth, atlasHeight, 1, atlas, 0);
+
+    // TODO remove
     glGenTextures(1, &mainUi->titleLayer.textureHandle);
     glGenTextures(1, &mainUi->infoLayer.textureHandle);
     glGenTextures(1, &mainUi->descriptionLayer.textureHandle);
     glGenTextures(1, &mainUi->rowNameLayer.textureHandle);
-    glGenTextures(1, &offblast->debugLayer.textureHandle);
     glGenTextures(1, &playerSelectUi->promptLayer.textureHandle);
 
     for (uint32_t i = 0; i < OFFBLAST_MAX_PLAYERS; i++) {
@@ -1324,6 +1467,7 @@ int main (int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT);
 
 
+#if 0
         if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
 
             // Blocks
@@ -1635,36 +1779,24 @@ int main (int argc, char** argv) {
     
             // need to handle the event
         }
+#endif
 
-
-        
         glUseProgram(offblast->textProgram);
+
+        renderSomeText(offblast, 300, 300, "Hello World!");
+        
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "frame time: %u", frameTime);
-        generateTextLayer(
-                &offblast->debugLayer, fpsString, OFFBLAST_NOWRAP, 1);
+        renderSomeText(offblast, 0, 0, fpsString);
         free(fpsString);
 
-        glBindTexture(GL_TEXTURE_2D, offblast->debugLayer.textureHandle);
-        glBindBuffer(GL_ARRAY_BUFFER, offblast->debugLayer.vbo);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
-                (void*)(4*sizeof(float)));
-        glUniform2f(offblast->textTranslateUni, 0, 0);
-        glUniform1f(offblast->textAlphaUni, 1.0f);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-
-        glDisableVertexAttribArray(0);
-        glDisableVertexAttribArray(1);
-        glUseProgram(0);
 
         animationTick(mainUi->horizontalAnimation);
         animationTick(mainUi->verticalAnimation);
         animationTick(mainUi->infoAnimation);
         animationTick(mainUi->rowNameAnimation);
+
     
         SDL_GL_SwapWindow(window);
 
@@ -1797,16 +1929,6 @@ uint32_t needsReRender(SDL_Window *window)
         mainUi->descriptionLayer.font = offblast->infoFont; 
         mainUi->rowNameLayer.font = offblast->infoFont; 
 
-        offblast->debugFont = TTF_OpenFont(
-                "fonts/Roboto-Regular.ttf", offblast->infoPointSize);
-
-        if (!offblast->debugFont) {
-            printf("Font initialization Failed, %s\n", TTF_GetError());
-            return 1;
-        }
-        offblast->debugLayer.font = offblast->debugFont;
-
-        offblast->debugLayer.textureValid = 0;
         mainUi->infoLayer.textureValid = 0;
         mainUi->titleLayer.textureValid = 0;
         mainUi->descriptionLayer.textureValid = 0;
