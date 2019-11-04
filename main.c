@@ -335,6 +335,8 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
     float winHeight = (float)offblast->winHeight;
     y = winHeight - y;
 
+    char lastRenderedChar = 0;
+
     for (uint32_t i= 0; *string; ++i) {
         if (*string >= 32 && *string < 128) {
 
@@ -348,8 +350,35 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
             currentWidth += (q.x1 - q.x0);
 
             if (lineWidth > 0) {
-                if (currentWidth > lineWidth) {
+
+                // TODO first word isn't picked up
+                float wordWidth = 0.0f;
+                if (lastRenderedChar != 0 && *(string) == ' ') {
+
+                    uint32_t curCharOffset = 1;
+                    wordWidth = 0.0f;
+
+                    while (1) {
+                        if (*(string + curCharOffset) == ' ' ||
+                                *(string + curCharOffset) == 0) break;
+
+                        int arrOffset = *(string + curCharOffset) -32;
+                        stbtt_bakedchar *b = 
+                            (stbtt_bakedchar*) cdata + arrOffset;
+
+                        wordWidth += b->xadvance;
+                        curCharOffset++;
+                    }
+
+                }
+
+                if (currentWidth + (int)(wordWidth + 0.5f) > lineWidth) {
+                    printf("breaking\n");
                     ++currentLine;
+
+                    // TODO we need to add "..." and a terminating character?
+                    if (currentLine >= 6) return;
+
                     currentWidth = q.x1 - q.x0;
 
                     x = originalX;
@@ -432,6 +461,8 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
 
             glUniform1f(offblast->textAlphaUni, 1.0f);
         }
+
+        lastRenderedChar = *string;
         ++string;
     }
 
