@@ -1688,7 +1688,7 @@ int main (int argc, char** argv) {
             glUseProgram(gradientProgram);
             glUniform1f(gradientOffsetYUniform, 
                     2.0/offblast->winHeight * offblast->winFold);
-            glUniform1f(gradientFlipYUniform, 1.0);
+            glUniform1f(gradientFlipYUniform, 0.0);
             glUniform1f(gradientStartUniform, 1.0);
             glBindBuffer(GL_ARRAY_BUFFER, topGradient.vbo);
             glEnableVertexAttribArray(0);
@@ -1701,7 +1701,7 @@ int main (int argc, char** argv) {
 
             glUseProgram(gradientProgram);
             glUniform1f(gradientOffsetYUniform, 0.0);
-            glUniform1f(gradientFlipYUniform, 0.0);
+            glUniform1f(gradientFlipYUniform, 1.0);
             glUniform1f(gradientStartUniform, 0.1);
             glBindBuffer(GL_ARRAY_BUFFER, bottomGradient.vbo);
             glEnableVertexAttribArray(0);
