@@ -19,7 +19,12 @@
 
 // ALPHA 0.2 HITLIST
 //      2. STB TRUETYPE
-//          - scaling
+//          -- create a new shader for images, 
+//              text shader should be for text only
+//          -- multiline
+//          -- trailing off ... 
+//          -- align center, right
+//          -- remove all text layer code and sdl_font deps
 //      3. Recently Played and Play Duration
 //      6. watch out for vram! glDeleteTextures
 //
@@ -30,15 +35,12 @@
 //          turning TextLayer into TexturedRect, and create a new TextLayer
 //          struct that uses the bitmap font.
 //
-// TODO font rasterization and rendering
-//      - SDL_TTF doesn't give us a lot of flexibility when it comes to
-//        blocks of text..
-//
 // Known Bugs:
 //      - Invalid date format is a thing
 //      - Only JPG covers are supported
 //          The image library supports writing out images to different formats
 //          we can load the image and then save it as a jpg
+//          USE STB IMAGE WRITE FOR THIS
 //      * if you add a rom after the platform has been scraped we say we already
 //          have it in the db but this is the target, not the filepath etc
 //
@@ -1555,7 +1557,6 @@ int main (int argc, char** argv) {
             // § blocks
             for (int32_t iRow = -2; iRow < ROWS_TOTAL-2; iRow++) {
 
-
                 UiTile *tileToRender = 
                     rewindTiles(rowToRender->tileCursor, 2);
 
@@ -1764,64 +1765,54 @@ int main (int argc, char** argv) {
                 rowNameAlpha = change;
             }
 
+            // TODO remove
             float marginNormalized = (2.0f/offblast->winWidth) * 
                 (float)offblast->winMargin;
 
-            if (!mainUi->titleLayer.textureValid) {
-                generateTextLayer(
-                        &mainUi->titleLayer,mainUi->movingToTarget->name, 
-                        OFFBLAST_NOWRAP, 1);
-                mainUi->titleLayer.textureValid = 1;
-            }
-
+            // TODO calculate elsewhere
             float pixelY = 
                 offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
                     - mainUi->titleLayer.pixelHeight;
             float newY  = (2.0f/offblast->winHeight) * pixelY;
-            renderTextLayer(&mainUi->titleLayer, marginNormalized, newY, alpha);
 
-            if (!mainUi->infoLayer.textureValid) {
-                char *infoString;
-                asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
-                        mainUi->movingToTarget->date, 
-                        platformString(mainUi->movingToTarget->platform),
-                        mainUi->movingToTarget->ranking);
+            // TODO alpha
+            renderSomeText(offblast, offblast->winMargin, pixelY, 
+                OFFBLAST_TEXT_TITLE, mainUi->movingToTarget->name);
 
-                generateTextLayer(
-                        &mainUi->infoLayer, infoString, OFFBLAST_NOWRAP, 1);
-                mainUi->infoLayer.textureValid = 1;
 
-                free(infoString);
-            }
+            char *infoString;
+            asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
+                    mainUi->movingToTarget->date, 
+                    platformString(mainUi->movingToTarget->platform),
+                    mainUi->movingToTarget->ranking);
+
             pixelY -= offblast->infoPointSize;
-            newY = (2.0f/offblast->winHeight) * pixelY;
-            renderTextLayer(&mainUi->infoLayer, marginNormalized, newY, alpha);
 
-            if (!mainUi->descriptionLayer.textureValid) {
+            // TODO alpha
+            renderSomeText(offblast, offblast->winMargin, pixelY, 
+                OFFBLAST_TEXT_INFO, infoString);
+
+            free(infoString);
+
+
                 OffblastBlob *descriptionBlob = (OffblastBlob*)
                     &descriptionFile->memory[
                         mainUi->movingToTarget->descriptionOffset];
 
-                generateTextLayer(
-                        &mainUi->descriptionLayer, descriptionBlob->content, 
-                        mainUi->descriptionWidth, 1);
-                mainUi->descriptionLayer.textureValid = 1;
-            }
             pixelY -= mainUi->descriptionLayer.pixelHeight + mainUi->boxPad;
-            newY = (2.0f/offblast->winHeight) * pixelY;
-            renderTextLayer(&mainUi->descriptionLayer, marginNormalized, newY, 
-                    alpha);
+            // TODO 
+            //mainUi->descriptionWidth
+            //alpha
+            renderSomeText(offblast, offblast->winMargin, pixelY, 
+                OFFBLAST_TEXT_INFO, descriptionBlob->content); 
 
-            if (!mainUi->rowNameLayer.textureValid) {
-                generateTextLayer(
-                        &mainUi->rowNameLayer, mainUi->movingToRow->name, 
-                        OFFBLAST_NOWRAP, 1);
-                mainUi->rowNameLayer.textureValid = 1;
-            }
+
             pixelY = offblast->winFold + mainUi->boxPad;
-            newY = (2.0f/offblast->winHeight) * pixelY;
-            renderTextLayer(&mainUi->rowNameLayer, marginNormalized, newY, 
-                    rowNameAlpha);
+            // TODO
+            //rowNameAlpha
+            renderSomeText(offblast, offblast->winMargin, pixelY, 
+                OFFBLAST_TEXT_INFO, mainUi->movingToRow->name); 
+
 
         }
         else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
@@ -1845,9 +1836,9 @@ int main (int argc, char** argv) {
                 // TODO implement alpha
                 //
                 renderSomeText(offblast, 
-                        (0.125f * offblast->winWidth) + 
+                        (0.128f * offblast->winWidth) + 
                             (i * offblast->winWidth * 0.15), 
-                        440,
+                        480,
                         OFFBLAST_TEXT_INFO,
                         offblast->users[i].name);
 
@@ -1862,7 +1853,7 @@ int main (int argc, char** argv) {
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "frame time: %u", frameTime);
-        renderSomeText(offblast, 0, 0, OFFBLAST_TEXT_DEBUG, fpsString);
+        renderSomeText(offblast, 15, 15, OFFBLAST_TEXT_DEBUG, fpsString);
         free(fpsString);
 
 
