@@ -19,8 +19,6 @@
 
 // ALPHA 0.2 HITLIST
 //      2. STB TRUETYPE
-//          -- create a new shader for images, 
-//              text shader should be for text only
 //          -- multiline
 //          -- trailing off ... 
 //          -- align center, right
@@ -28,14 +26,10 @@
 //      3. Recently Played and Play Duration
 //      6. watch out for vram! glDeleteTextures
 //
-// Refactoring:
-//      - I'd love to have a better way of generating textured rectangles as I
-//          suspect i'm going to be doing a lot of it, I think the bext thing
-//          we need to do is get around to having a prerendered font texture,
-//          turning TextLayer into TexturedRect, and create a new TextLayer
-//          struct that uses the bitmap font.
-//
 // Known Bugs:
+//      -- ** Animation method for alpha no longer works as we're rendering 
+//          text char by char, we need to choose which string to render based
+//          on the animations half way point.
 //      - Invalid date format is a thing
 //      - Only JPG covers are supported
 //          The image library supports writing out images to different formats
@@ -159,15 +153,14 @@ typedef struct Animation {
     void (* callback)();
 } Animation;
 
-typedef struct TextLayer {
+typedef struct ImageLayer {
     uint32_t textureValid;
     GLuint textureHandle;
     GLuint vbo;
     UiRect vertices;
     uint32_t pixelWidth;
     uint32_t pixelHeight;
-    TTF_Font *font;
-} TextLayer;
+} ImageLayer;
 
 typedef struct GradientLayer {
     GLuint vbo;
@@ -184,10 +177,7 @@ enum UiMode {
 };
 
 typedef struct PlayerSelectUi {
-    TextLayer promptLayer;
-    TextLayer *playerNameLayers;
-    // TODO change to an image layer?
-    TextLayer *playerAvatarLayers;
+    ImageLayer *playerAvatarLayers;
     int32_t cursor;
 } PlayerSelectUi;
 
@@ -197,11 +187,6 @@ typedef struct MainUi {
     int32_t boxWidth;
     int32_t boxHeight;
     int32_t boxPad;
-
-    TextLayer titleLayer;
-    TextLayer infoLayer;
-    TextLayer descriptionLayer;
-    TextLayer rowNameLayer;
 
     Animation *horizontalAnimation;
     Animation *verticalAnimation;
@@ -239,11 +224,6 @@ typedef struct OffblastUi {
     double titlePointSize;
     double infoPointSize;
     double debugPointSize;
-
-    // TODO move to bitmap font
-    TTF_Font *titleFont;
-    TTF_Font *infoFont;
-    TTF_Font *debugFont;
 
     GLuint titleTextTexture;
     GLuint infoTextTexture;
@@ -304,12 +284,9 @@ void launch();
 void imageToGlTexture(GLuint textureHandle, unsigned char *pixelData, 
         uint32_t newWidth, uint32_t newHeight);
 void updateRect(UiRect *vertices, uint32_t rectWidth, uint32_t rectHeight);
-void generateTextLayer(
-        TextLayer *layer, char *text, uint32_t wrapWidth, 
-        uint32_t updateVertices);
 void changeRow(uint32_t direction);
 void changeColumn(uint32_t direction);
-void renderTextLayer(TextLayer *layer, float x, float y, float a);
+void renderImageLayer(ImageLayer *layer, float x, float y, float a);
 void pressConfirm();
 
 
@@ -317,7 +294,7 @@ void pressConfirm();
 #define OFFBLAST_TEXT_INFO 2
 #define OFFBLAST_TEXT_DEBUG 3
 void renderSomeText(OffblastUi *offblast, float x, float y, 
-        uint32_t textMode, char *string) 
+        uint32_t textMode, float alpha, char *string) 
 {
 
     glUseProgram(offblast->textProgram);
@@ -415,7 +392,7 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
                 glGenBuffers(1, &offblast->textVbo);
                 glBindBuffer(GL_ARRAY_BUFFER, offblast->textVbo);
                 glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
-                        &vertices, GL_DYNAMIC_DRAW);
+                        &vertices, GL_STREAM_DRAW);
             }
             else {
                 glBindBuffer(GL_ARRAY_BUFFER, offblast->textVbo);
@@ -428,8 +405,10 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
             glEnableVertexAttribArray(1);
             glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                     (void*)(4*sizeof(float)));
-            glUniform1f(offblast->textAlphaUni, 1.0f);
+            glUniform1f(offblast->textAlphaUni, alpha);
             glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            glUniform1f(offblast->textAlphaUni, 1.0f);
         }
         ++string;
     }
@@ -1063,11 +1042,6 @@ int main (int argc, char** argv) {
         return 1;
     }
 
-    if (TTF_Init() == -1) {
-        printf("TTF initialization Failed, exiting..\n");
-        return 1;
-    }
-
     // Let's create the window
     //SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, 
             //SDL_GL_CONTEXT_PROFILE_CORE);
@@ -1187,28 +1161,17 @@ int main (int argc, char** argv) {
     free(debugAtlas);
     debugAtlas = NULL;
 
-    // TODO remove
-    glGenTextures(1, &mainUi->titleLayer.textureHandle);
-    glGenTextures(1, &mainUi->infoLayer.textureHandle);
-    glGenTextures(1, &mainUi->descriptionLayer.textureHandle);
-    glGenTextures(1, &mainUi->rowNameLayer.textureHandle);
-    glGenTextures(1, &playerSelectUi->promptLayer.textureHandle);
-
     for (uint32_t i = 0; i < OFFBLAST_MAX_PLAYERS; i++) {
         offblast->players[i].jsIndex = -1;
     }
 
-    playerSelectUi->playerNameLayers = calloc(offblast->nUsers, 
-            sizeof(TextLayer));
     playerSelectUi->playerAvatarLayers = calloc(offblast->nUsers, 
-            sizeof(TextLayer));
+            sizeof(ImageLayer));
+
     // TODO can't wait to get rid of this font shit
     for (uint32_t i = 0; i < offblast->nUsers; i++) {
 
-        playerSelectUi->playerNameLayers[i].font = offblast->infoFont;
-        glGenTextures(1, &playerSelectUi->playerNameLayers[i].textureHandle);
-
-        TextLayer *avatarLayer = &playerSelectUi->playerAvatarLayers[i];
+        ImageLayer *avatarLayer = &playerSelectUi->playerAvatarLayers[i];
         glGenTextures(1, &avatarLayer->textureHandle);
 
         // TODO we could probably move this into the imageToGL call
@@ -1790,11 +1753,11 @@ int main (int argc, char** argv) {
             // TODO calculate elsewhere
             float pixelY = 
                 offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
-                    - mainUi->titleLayer.pixelHeight;
+                    - offblast->titlePointSize;
 
-            // TODO alpha
+            // TODO we don't swap the text name over until we've faded out now!
             renderSomeText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_TITLE, mainUi->movingToTarget->name);
+                OFFBLAST_TEXT_TITLE, alpha, mainUi->movingToTarget->name);
 
 
             char *infoString;
@@ -1805,9 +1768,8 @@ int main (int argc, char** argv) {
 
             pixelY -= offblast->infoPointSize;
 
-            // TODO alpha
             renderSomeText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_INFO, infoString);
+                OFFBLAST_TEXT_INFO, alpha, infoString);
 
             free(infoString);
 
@@ -1816,19 +1778,16 @@ int main (int argc, char** argv) {
                     &descriptionFile->memory[
                         mainUi->movingToTarget->descriptionOffset];
 
-            pixelY -= mainUi->descriptionLayer.pixelHeight + mainUi->boxPad;
+            pixelY -= offblast->infoPointSize + mainUi->boxPad;
             // TODO 
             //mainUi->descriptionWidth
-            //alpha
             renderSomeText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_INFO, descriptionBlob->content); 
+                OFFBLAST_TEXT_INFO, alpha, descriptionBlob->content); 
 
 
             pixelY = offblast->winFold + mainUi->boxPad;
-            // TODO
-            //rowNameAlpha
             renderSomeText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_INFO, mainUi->movingToRow->name); 
+                OFFBLAST_TEXT_INFO, rowNameAlpha, mainUi->movingToRow->name); 
 
 
         }
@@ -1841,12 +1800,12 @@ int main (int argc, char** argv) {
                     300, 
                     offblast->winHeight - 
                         goldenRatioLarge(offblast->winHeight, 3), 
-                    OFFBLAST_TEXT_TITLE, 
+                    OFFBLAST_TEXT_TITLE, 1.0,
                     "Who's playing?");
 
             for (uint32_t i = 0; i < offblast->nUsers; i++) {
 
-                TextLayer *avatarLayer = 
+                ImageLayer *avatarLayer = 
                     &playerSelectUi->playerAvatarLayers[i];
 
                 float alpha = (i == playerSelectUi->cursor) ? 1.0 : 0.7;
@@ -1856,10 +1815,10 @@ int main (int argc, char** argv) {
                         (0.128f * offblast->winWidth) + 
                             (i * offblast->winWidth * 0.15), 
                         480,
-                        OFFBLAST_TEXT_INFO,
+                        OFFBLAST_TEXT_INFO, alpha,
                         offblast->users[i].name);
 
-                renderTextLayer(avatarLayer, 
+                renderImageLayer(avatarLayer, 
                         0.25f + i*0.3, 
                         0.5f, alpha);
             }
@@ -1870,7 +1829,7 @@ int main (int argc, char** argv) {
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "frame time: %u", frameTime);
-        renderSomeText(offblast, 15, 15, OFFBLAST_TEXT_DEBUG, fpsString);
+        renderSomeText(offblast, 15, 15, OFFBLAST_TEXT_DEBUG, 1.0, fpsString);
         free(fpsString);
 
 
@@ -1991,32 +1950,7 @@ uint32_t needsReRender(SDL_Window *window)
 
         offblast->debugPointSize = goldenRatioLarge(offblast->winWidth, 9);
         offblast->titlePointSize = goldenRatioLarge(offblast->winWidth, 7);
-        offblast->titleFont = TTF_OpenFont(
-                "fonts/Roboto-Regular.ttf", offblast->titlePointSize);
-        if (!offblast->titleFont) {
-            printf("Title font initialization Failed, %s\n", TTF_GetError());
-            return 1;
-        }
-        mainUi->titleLayer.font = offblast->titleFont;
-        offblast->playerSelectUi.promptLayer.font = offblast->titleFont;
-
         offblast->infoPointSize = goldenRatioLarge(offblast->winWidth, 9);
-        offblast->infoFont = TTF_OpenFont(
-                "fonts/Roboto-Regular.ttf", offblast->infoPointSize);
-
-        if (!offblast->infoFont) {
-            printf("Font initialization Failed, %s\n", TTF_GetError());
-            return 1;
-        }
-        mainUi->infoLayer.font = offblast->infoFont; 
-        mainUi->descriptionLayer.font = offblast->infoFont; 
-        mainUi->rowNameLayer.font = offblast->infoFont; 
-
-        mainUi->infoLayer.textureValid = 0;
-        mainUi->titleLayer.textureValid = 0;
-        mainUi->descriptionLayer.textureValid = 0;
-        mainUi->rowNameLayer.textureValid = 0;
-        offblast->playerSelectUi.promptLayer.textureValid = 0;
 
         updated = 1;
     }
@@ -2177,11 +2111,6 @@ void infoFaded() {
     MainUi *ui = &offblast->mainUi;
     if (ui->infoAnimation->direction == 0) {
 
-        ui->titleLayer.textureValid = 0;
-        ui->infoLayer.textureValid = 0;
-        ui->descriptionLayer.textureValid = 0;
-        ui->rowNameLayer.textureValid = 0;
-
         ui->infoAnimation->startTick = SDL_GetTicks();
         ui->infoAnimation->direction = 1;
         ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
@@ -2197,9 +2126,6 @@ void rowNameFaded() {
 
     MainUi *ui = &offblast->mainUi;
     if (ui->rowNameAnimation->direction == 0) {
-
-        ui->rowNameLayer.textureValid = 0;
-
         ui->rowNameAnimation->startTick = SDL_GetTicks();
         ui->rowNameAnimation->direction = 1;
         ui->rowNameAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
@@ -2482,60 +2408,6 @@ void imageToGlTexture(GLuint textureHandle, unsigned char *pixelData,
     //free(newSurface);
 }
 
-void generateTextLayer(
-        TextLayer *layer, char *text, uint32_t wrapWidth, 
-        uint32_t updateVertices) 
-{
-    SDL_Color color = {255,255,255,255};
-    
-    assert(layer->font);
-    SDL_Surface *surface;
-    if (wrapWidth == OFFBLAST_NOWRAP) {
-        surface = TTF_RenderText_Blended(layer->font, text, color);
-    }
-    else {
-        surface = TTF_RenderText_Blended_Wrapped(layer->font, text, 
-                color, wrapWidth);
-    }
-
-    if (!surface) {
-        printf("Text render failed, %s\n", TTF_GetError());
-        return;
-    }
-
-    /* TODO keep these two line */
-    uint32_t newWidth = powTwoFloor(surface->w);
-    uint32_t newHeight = powTwoFloor(surface->h);
-
-    SDL_Surface *newSurface = SDL_CreateRGBSurface(
-            0, newWidth, newHeight, 32,
-            0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
-
-    SDL_Rect destRect = {0, newHeight - surface->h, 0, 0};
-    SDL_BlitSurface(surface, NULL, newSurface, &destRect);
-
-    layer->pixelWidth = surface->w;
-    layer->pixelHeight = surface->h;
-
-    glBindTexture(GL_TEXTURE_2D, layer->textureHandle);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight,
-            0, GL_BGRA, GL_UNSIGNED_BYTE, newSurface->pixels);
-
-    SDL_FreeSurface(surface);
-    SDL_FreeSurface(newSurface);
-
-    if (updateVertices) {
-        updateRect(&layer->vertices, newWidth, newHeight);
-
-        updateVbo(&layer->vbo, &layer->vertices);
-    }
-}
-
 void updateVbo(GLuint *vbo, UiRect* vertices) {
 
         if (*vbo == 0) {
@@ -2683,7 +2555,7 @@ void launch() {
     }
 }
 
-void renderTextLayer(TextLayer *layer, float x, float y, float a) {
+void renderImageLayer(ImageLayer *layer, float x, float y, float a) {
 
     glUseProgram(offblast->imageProgram);
     assert(layer->textureValid);
