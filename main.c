@@ -258,10 +258,13 @@ typedef struct OffblastUi {
     uint32_t textBitmapHeight;
     uint32_t textBitmapWidth;
 
+    GLuint imageProgram;
+    GLint imageTranslateUni;
+    GLint imageAlphaUni;
+    GLint imageTexturePosUni; 
+
     GLuint textProgram;
-    GLint textTranslateUni;
     GLint textAlphaUni;
-    GLint textTexturePosUni; 
 
     Player players[OFFBLAST_MAX_PLAYERS];
 
@@ -425,7 +428,6 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
             glEnableVertexAttribArray(1);
             glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                     (void*)(4*sizeof(float)));
-            glUniform2f(offblast->textTranslateUni, 0, 0);
             glUniform1f(offblast->textAlphaUni, 1.0f);
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
@@ -1251,14 +1253,30 @@ int main (int argc, char** argv) {
     assert(textVertShader);
     assert(textFragShader);
 
-    offblast->textProgram = createShaderProgram(textVertShader, textFragShader);
+    offblast->textProgram = 
+        createShaderProgram(textVertShader, textFragShader);
     assert(offblast->textProgram);
-    offblast->textTranslateUni = glGetUniformLocation(
-            offblast->textProgram, "myOffset");
+
     offblast->textAlphaUni = glGetUniformLocation(
             offblast->textProgram, "myAlpha");
-    offblast->textTexturePosUni = glGetUniformLocation(
-            offblast->textProgram, "textureSize");
+
+
+    // Image Pipeline
+    GLint imageVertShader = loadShaderFile("shaders/image.vert", 
+            GL_VERTEX_SHADER);
+    GLint imageFragShader = loadShaderFile("shaders/image.frag", 
+            GL_FRAGMENT_SHADER);
+    assert(imageVertShader);
+    assert(imageFragShader);
+
+    offblast->imageProgram = createShaderProgram(imageVertShader, imageFragShader);
+    assert(offblast->imageProgram);
+    offblast->imageTranslateUni = glGetUniformLocation(
+            offblast->imageProgram, "myOffset");
+    offblast->imageAlphaUni = glGetUniformLocation(
+            offblast->imageProgram, "myAlpha");
+    offblast->imageTexturePosUni = glGetUniformLocation(
+            offblast->imageProgram, "textureSize");
 
     // Gradient Pipeline
     GLint gradientVertShader = loadShaderFile("shaders/gradient.vert", 
@@ -1608,7 +1626,7 @@ int main (int argc, char** argv) {
                     float yOffsetNormalized = (2.0 / offblast->winHeight) * yOffset;
 
                     // Generate the texture 
-                    glUseProgram(offblast->textProgram);
+                    glUseProgram(offblast->imageProgram);
                     if (tileToRender->textureHandle == 0 &&
                             tileToRender->target->coverUrl != NULL) 
                     {
@@ -1681,13 +1699,13 @@ int main (int argc, char** argv) {
                     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
                             6*sizeof(float), (void*)(4*sizeof(float)));
 
-                    glUniform2f(offblast->textTranslateUni, xOffsetNormalized, 
+                    glUniform2f(offblast->imageTranslateUni, xOffsetNormalized, 
                             yOffsetNormalized);
 
                     glUniform1f(offblast->textAlphaUni, 1.0);
 
                     // TODO texture size stuff
-                    glUniform2f(offblast->textTexturePosUni, 
+                    glUniform2f(offblast->imageTexturePosUni, 
                             0.0, //tileToRender->textureMaxW, 
                             0.0 /*tileToRender->textureMinH*/);
 
@@ -1699,9 +1717,9 @@ int main (int argc, char** argv) {
                 rowToRender = rowToRender->nextRow;
             }
 
-            glUniform2f(offblast->textTranslateUni, 0.0f, 0.0f);
-            glUniform1f(offblast->textAlphaUni, 1.0);
-            glUniform2f(offblast->textTexturePosUni, 0.0f, 0.0f);
+            glUniform2f(offblast->imageTranslateUni, 0.0f, 0.0f);
+            glUniform1f(offblast->imageAlphaUni, 1.0);
+            glUniform2f(offblast->imageTexturePosUni, 0.0f, 0.0f);
 
             // § GRADIENT LAYERS
             glUseProgram(gradientProgram);
@@ -1773,7 +1791,6 @@ int main (int argc, char** argv) {
             float pixelY = 
                 offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
                     - mainUi->titleLayer.pixelHeight;
-            float newY  = (2.0f/offblast->winHeight) * pixelY;
 
             // TODO alpha
             renderSomeText(offblast, offblast->winMargin, pixelY, 
@@ -2668,7 +2685,7 @@ void launch() {
 
 void renderTextLayer(TextLayer *layer, float x, float y, float a) {
 
-    glUseProgram(offblast->textProgram);
+    glUseProgram(offblast->imageProgram);
     assert(layer->textureValid);
 
     glBindTexture(GL_TEXTURE_2D, layer->textureHandle);
@@ -2678,8 +2695,8 @@ void renderTextLayer(TextLayer *layer, float x, float y, float a) {
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
             (void*)(4*sizeof(float)));
-    glUniform2f(offblast->textTranslateUni, x, y);
-    glUniform1f(offblast->textAlphaUni, a);
+    glUniform2f(offblast->imageTranslateUni, x, y);
+    glUniform1f(offblast->imageAlphaUni, a);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
 }
