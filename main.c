@@ -200,6 +200,12 @@ typedef struct MainUi {
     LaunchTarget *movingToTarget;
     UiRow *movingToRow;
 
+    char *titleText;
+    char *infoText;
+    char *descriptionText;
+
+    char *rowNameText;
+
 } MainUi ;
 
 typedef struct Launcher {
@@ -252,6 +258,7 @@ typedef struct OffblastUi {
     size_t nPaths;
     Launcher *launchers;
 
+    OffblastBlobFile *descriptionFile;
 
 } OffblastUi;
 
@@ -286,6 +293,8 @@ void changeRow(uint32_t direction);
 void changeColumn(uint32_t direction);
 void renderImageLayer(ImageLayer *layer, float x, float y, float a);
 void pressConfirm();
+void updateInfoText();
+void updateDescriptionText();
 
 
 #define OFFBLAST_TEXT_TITLE 1
@@ -585,7 +594,7 @@ int main (int argc, char** argv) {
         printf("couldn't initialize the descriptions file, exiting\n");
         return 1;
     }
-    OffblastBlobFile *descriptionFile = 
+    offblast->descriptionFile = 
         (OffblastBlobFile*) descriptionDb.memory;
     free(descriptionDbPath);
 
@@ -793,15 +802,16 @@ int main (int argc, char** argv) {
                             return 1;
                         }
                         else { 
-                            descriptionFile = 
+                            offblast->descriptionFile = 
                                 (OffblastBlobFile*) pDescriptionFile;
                         }
 
                         printf("description file just after cursor is now %lu\n", 
-                                descriptionFile->cursor);
+                                offblast->descriptionFile->cursor);
 
                         OffblastBlob *newDescription = (OffblastBlob*) 
-                            &descriptionFile->memory[descriptionFile->cursor];
+                            &offblast->descriptionFile->memory[
+                                offblast->descriptionFile->cursor];
 
                         newDescription->targetSignature = targetSignature;
                         newDescription->length = strlen(description);
@@ -810,13 +820,14 @@ int main (int argc, char** argv) {
                                 strlen(description));
                         *(newDescription->content + strlen(description)) = '\0';
 
-                        newEntry->descriptionOffset = descriptionFile->cursor;
+                        newEntry->descriptionOffset = 
+                            offblast->descriptionFile->cursor;
                         
-                        descriptionFile->cursor += 
+                        offblast->descriptionFile->cursor += 
                             sizeof(OffblastBlob) + strlen(description) + 1;
 
                         printf("description file cursor is now %lu\n", 
-                                descriptionFile->cursor);
+                                offblast->descriptionFile->cursor);
 
 
                         // TODO round properly
@@ -1432,6 +1443,12 @@ int main (int argc, char** argv) {
     mainUi->movingToTarget = mainUi->rowCursor->tileCursor->target;
     mainUi->movingToRow = mainUi->rowCursor;
 
+    // Initialize the text to render
+    offblast->mainUi.titleText = mainUi->movingToTarget->name;
+    updateInfoText();
+    updateDescriptionText();
+    offblast->mainUi.rowNameText = offblast->mainUi.movingToRow->name;
+
     GradientLayer bottomGradient = {};
     updateRect(&bottomGradient.vertices, offblast->winWidth, 
             goldenRatioLargef(offblast->winHeight, 5));
@@ -1804,39 +1821,24 @@ int main (int argc, char** argv) {
                 offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
                     - offblast->titlePointSize;
 
-            // TODO we don't swap the text name over until we've faded out now!
             renderSomeText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_TITLE, alpha, 0, mainUi->movingToTarget->name);
+                OFFBLAST_TEXT_TITLE, alpha, 0, mainUi->titleText);
 
-
-            char *infoString;
-            asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
-                    mainUi->movingToTarget->date, 
-                    platformString(mainUi->movingToTarget->platform),
-                    mainUi->movingToTarget->ranking);
 
             pixelY -= offblast->infoPointSize * 1.4;
-
             renderSomeText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_INFO, alpha, 0, infoString);
+                OFFBLAST_TEXT_INFO, alpha, 0, mainUi->infoText);
 
-            free(infoString);
-
-
-                OffblastBlob *descriptionBlob = (OffblastBlob*)
-                    &descriptionFile->memory[
-                        mainUi->movingToTarget->descriptionOffset];
 
             pixelY -= offblast->infoPointSize + mainUi->boxPad;
-            
             renderSomeText(offblast, offblast->winMargin, pixelY, 
                 OFFBLAST_TEXT_INFO, alpha, mainUi->descriptionWidth, 
-                descriptionBlob->content); 
+                mainUi->descriptionText); 
 
 
             pixelY = offblast->winFold + mainUi->boxPad;
             renderSomeText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_INFO, rowNameAlpha, 0, mainUi->movingToRow->name); 
+                OFFBLAST_TEXT_INFO, rowNameAlpha, 0, mainUi->rowNameText); 
 
 
         }
@@ -2158,6 +2160,12 @@ void infoFaded() {
 
     MainUi *ui = &offblast->mainUi;
     if (ui->infoAnimation->direction == 0) {
+
+        offblast->mainUi.titleText = 
+            offblast->mainUi.movingToTarget->name;
+        updateInfoText();
+        updateDescriptionText();
+        offblast->mainUi.rowNameText = offblast->mainUi.movingToRow->name;
 
         ui->infoAnimation->startTick = SDL_GetTicks();
         ui->infoAnimation->direction = 1;
@@ -2660,4 +2668,27 @@ void pressConfirm(int32_t joystickIndex) {
     else if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
         launch();
     }
+}
+
+void updateInfoText() {
+
+    if (offblast->mainUi.infoText != NULL) {
+        free(offblast->mainUi.infoText);
+    }
+
+    char *infoString;
+    asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
+            offblast->mainUi.movingToTarget->date, 
+            platformString(offblast->mainUi.movingToTarget->platform),
+            offblast->mainUi.movingToTarget->ranking);
+
+    offblast->mainUi.infoText = infoString;
+}
+
+void updateDescriptionText() {
+    OffblastBlob *descriptionBlob = 
+    (OffblastBlob*) &offblast->descriptionFile->memory[
+       offblast->mainUi.movingToTarget->descriptionOffset];
+
+    offblast->mainUi.descriptionText = descriptionBlob->content;
 }
