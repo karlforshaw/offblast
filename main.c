@@ -19,10 +19,8 @@
 
 // ALPHA 0.2 HITLIST
 //      2. STB TRUETYPE
-//          -- multiline
 //          -- trailing off ... 
 //          -- align center, right
-//          -- remove all text layer code and sdl_font deps
 //      3. Recently Played and Play Duration
 //      6. watch out for vram! glDeleteTextures
 //
@@ -304,7 +302,6 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
     uint32_t currentWidth = 0;
     uint32_t lineHeight = 0;
     float originalX = x;
-    float originalY= y;
 
     void *cdata = NULL;
 
@@ -312,19 +309,19 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
         case OFFBLAST_TEXT_TITLE:
             glBindTexture(GL_TEXTURE_2D, offblast->titleTextTexture);
             cdata = offblast->titleCharData;
-            lineHeight = offblast->titlePointSize * 1.6;
+            lineHeight = offblast->titlePointSize * 1.2;
             break;
 
         case OFFBLAST_TEXT_INFO:
             glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
             cdata = offblast->infoCharData;
-            lineHeight = offblast->infoPointSize * 1.6;
+            lineHeight = offblast->infoPointSize * 1.2;
             break;
 
         case OFFBLAST_TEXT_DEBUG:
             glBindTexture(GL_TEXTURE_2D, offblast->debugTextTexture);
             cdata = offblast->debugCharData;
-            lineHeight = offblast->debugPointSize * 1.6;
+            lineHeight = offblast->debugPointSize * 1.2;
             break;
 
         default:
@@ -373,7 +370,6 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
                 }
 
                 if (currentWidth + (int)(wordWidth + 0.5f) > lineWidth) {
-                    printf("breaking\n");
                     ++currentLine;
 
                     // TODO we need to add "..." and a terminating character?
@@ -439,7 +435,6 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
             vertices[5][5] = texBottom;
 
             if (offblast->textVbo == 0) {
-                printf("creating vbo\n");
                 glGenBuffers(1, &offblast->textVbo);
                 glBindBuffer(GL_ARRAY_BUFFER, offblast->textVbo);
                 glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
@@ -1221,7 +1216,6 @@ int main (int argc, char** argv) {
     playerSelectUi->playerAvatarLayers = calloc(offblast->nUsers, 
             sizeof(ImageLayer));
 
-    // TODO can't wait to get rid of this font shit
     for (uint32_t i = 0; i < offblast->nUsers; i++) {
 
         ImageLayer *avatarLayer = &playerSelectUi->playerAvatarLayers[i];
@@ -1799,10 +1793,6 @@ int main (int argc, char** argv) {
                 rowNameAlpha = change;
             }
 
-            // TODO remove
-            float marginNormalized = (2.0f/offblast->winWidth) * 
-                (float)offblast->winMargin;
-
             // TODO calculate elsewhere
             float pixelY = 
                 offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
@@ -1819,7 +1809,7 @@ int main (int argc, char** argv) {
                     platformString(mainUi->movingToTarget->platform),
                     mainUi->movingToTarget->ranking);
 
-            pixelY -= offblast->infoPointSize;
+            pixelY -= offblast->infoPointSize * 1.4;
 
             renderSomeText(offblast, offblast->winMargin, pixelY, 
                 OFFBLAST_TEXT_INFO, alpha, 0, infoString);
