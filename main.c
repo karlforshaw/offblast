@@ -292,7 +292,7 @@ void pressConfirm();
 #define OFFBLAST_TEXT_INFO 2
 #define OFFBLAST_TEXT_DEBUG 3
 void renderSomeText(OffblastUi *offblast, float x, float y, 
-        uint32_t textMode, float alpha, uint32_t lineWidth, char *string) 
+        uint32_t textMode, float alpha, uint32_t lineMaxW, char *string) 
 {
 
     glUseProgram(offblast->textProgram);
@@ -332,7 +332,7 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
     float winHeight = (float)offblast->winHeight;
     y = winHeight - y;
 
-    char lastRenderedChar = 0;
+    char *trailingString = NULL;
 
     for (uint32_t i= 0; *string; ++i) {
         if (*string >= 32 && *string < 128) {
@@ -346,11 +346,10 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
 
             currentWidth += (q.x1 - q.x0);
 
-            if (lineWidth > 0) {
+            if (lineMaxW > 0 && trailingString == NULL) {
 
-                // TODO first word isn't picked up
                 float wordWidth = 0.0f;
-                if (lastRenderedChar != 0 && *(string) == ' ') {
+                if (*(string) == ' ') {
 
                     uint32_t curCharOffset = 1;
                     wordWidth = 0.0f;
@@ -369,12 +368,15 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
 
                 }
 
-                if (currentWidth + (int)(wordWidth + 0.5f) > lineWidth) {
+                if (currentWidth + (int)(wordWidth + 0.5f) > lineMaxW) {
+
+                    if (currentLine >= 6) {
+                        trailingString = "...";
+                        string = trailingString;
+                        continue;
+                    }
+
                     ++currentLine;
-
-                    // TODO we need to add "..." and a terminating character?
-                    if (currentLine >= 6) return;
-
                     currentWidth = q.x1 - q.x0;
 
                     x = originalX;
@@ -451,13 +453,17 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
             glEnableVertexAttribArray(1);
             glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
                     (void*)(4*sizeof(float)));
+
+            if (trailingString) {
+                alpha *= 0.85;
+            }
+
             glUniform1f(offblast->textAlphaUni, alpha);
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
             glUniform1f(offblast->textAlphaUni, 1.0f);
         }
 
-        lastRenderedChar = *string;
         ++string;
     }
 
