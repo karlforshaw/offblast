@@ -9,6 +9,8 @@ LIBS += $(shell pkg-config --libs json-c gl glew libmurmurhash libcurl) -pthread
 PROG = offblast
 OBJS = main.o offblastDbFile.o
 
+#TODO Optimization on for production!
+
 ${PROG}: ${OBJS}
 	gcc -g -o ${PROG} ${OBJS} -lm ${LIBS} 
 

@@ -18,19 +18,27 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.2 HITLIST
-//      1. cover shader program..
-//      2. STB TRUETYPE
+//      *. STB TRUETYPE
 //          -- align center, right
-//      3. Recently Played and Play Duration
-//      6. watch out for vram! glDeleteTextures
+//
+//      *. Recently Played list
+//          --  need to start logging play time which means going into a
+//              slow rendering cycle or pause mode when another game is 
+//              running and every 30 seconds or so incrementing the play
+//              count for this user
+//
+//      *. watch out for vram! glDeleteTextures
 //
 // Known Bugs:
 //      - slight flicker on animation sometimes at the end of the fade
+//
 //      - Invalid date format is a thing
+//
 //      - Only JPG covers are supported
 //          The image library supports writing out images to different formats
 //          we can load the image and then save it as a jpg
 //          USE STB IMAGE WRITE FOR THIS
+//
 //      * if you add a rom after the platform has been scraped we say we already
 //          have it in the db but this is the target, not the filepath etc
 //
@@ -243,6 +251,7 @@ typedef struct OffblastUi {
     GLuint imageProgram;
     GLint imageTranslateUni;
     GLint imageAlphaUni;
+    GLint imageDesaturateUni;
     GLint imageTexturePosUni; 
 
     GLuint textProgram;
@@ -1300,6 +1309,8 @@ int main (int argc, char** argv) {
             offblast->imageProgram, "myOffset");
     offblast->imageAlphaUni = glGetUniformLocation(
             offblast->imageProgram, "myAlpha");
+    offblast->imageDesaturateUni = glGetUniformLocation(
+            offblast->imageProgram, "whiteMix");
     offblast->imageTexturePosUni = glGetUniformLocation(
             offblast->imageProgram, "textureSize");
 
@@ -1733,7 +1744,18 @@ int main (int argc, char** argv) {
                     glUniform2f(offblast->imageTranslateUni, xOffsetNormalized, 
                             yOffsetNormalized);
 
-                    glUniform1f(offblast->textAlphaUni, 1.0);
+
+                    if (strlen(tileToRender->target->path) == 0 || 
+                            strlen(tileToRender->target->fileName) == 0) 
+                    {
+                        glUniform1f(offblast->imageDesaturateUni, 0.3);
+                        glUniform1f(offblast->imageAlphaUni, 0.7);
+                    }
+                    else {
+                        glUniform1f(offblast->imageDesaturateUni, 0.2);
+                        glUniform1f(offblast->imageAlphaUni, 1);
+                    }
+
 
                     // TODO texture size stuff
                     glUniform2f(offblast->imageTexturePosUni, 
@@ -1748,6 +1770,7 @@ int main (int argc, char** argv) {
                 rowToRender = rowToRender->nextRow;
             }
 
+            glUniform1f(offblast->imageDesaturateUni, 0.0f);
             glUniform2f(offblast->imageTranslateUni, 0.0f, 0.0f);
             glUniform1f(offblast->imageAlphaUni, 1.0);
             glUniform2f(offblast->imageTexturePosUni, 0.0f, 0.0f);
