@@ -18,16 +18,14 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.2 HITLIST
+//      1. cover shader program..
 //      2. STB TRUETYPE
-//          -- trailing off ... 
 //          -- align center, right
 //      3. Recently Played and Play Duration
 //      6. watch out for vram! glDeleteTextures
 //
 // Known Bugs:
-//      -- ** Animation method for alpha no longer works as we're rendering 
-//          text char by char, we need to choose which string to render based
-//          on the animations half way point.
+//      - slight flicker on animation sometimes at the end of the fade
 //      - Invalid date format is a thing
 //      - Only JPG covers are supported
 //          The image library supports writing out images to different formats
@@ -601,7 +599,7 @@ int main (int argc, char** argv) {
 
 #if 0
     // XXX DEBUG Dump out all launch targets
-    for (int i = 0; i < launchTargetFile->nEntries; i++) {
+    for (int i = 0; i < launchTargetFile->nEntries; ++i) {
         printf("Reading from local game db (%u) entries\n", 
                 launchTargetFile->nEntries);
         printf("found game\t%d\t%u\n", 
@@ -621,7 +619,7 @@ int main (int argc, char** argv) {
     offblast->nPaths = json_object_array_length(paths);
     offblast->launchers = calloc(offblast->nPaths, sizeof(Launcher));
 
-    for (int i=0; i < offblast->nPaths; i++) {
+    for (int i=0; i < offblast->nPaths; ++i) {
 
         json_object *workingPathNode = NULL;
         json_object *workingPathStringNode = NULL;
@@ -661,7 +659,7 @@ int main (int argc, char** argv) {
         }
         else {
             uint8_t gotPlatform = 0;
-            for (uint32_t i = 0; i < nPlatforms; i++) {
+            for (uint32_t i = 0; i < nPlatforms; ++i) {
                 if (strcmp(platforms[i], thePlatform) == 0) gotPlatform = 1;
             }
             if (!gotPlatform) {
@@ -925,7 +923,7 @@ int main (int argc, char** argv) {
         // This goes through everything we have in the file now
         // We need something to detect whether it's in the file
         uint32_t isInFile = 0;
-        for (uint32_t i=0; i < pathInfoFile->nEntries; i++) {
+        for (uint32_t i=0; i < pathInfoFile->nEntries; ++i) {
             if (pathInfoFile->entries[i].signature == pathSignature
                     && pathInfoFile->entries[i].contentsHash 
                     != contentSignature) 
@@ -975,7 +973,7 @@ int main (int argc, char** argv) {
                     printf("cannot open from rom\n");
                 }
 
-                for (uint32_t i = 0; i < ROM_PEEK_SIZE; i++) {
+                for (uint32_t i = 0; i < ROM_PEEK_SIZE; ++i) {
                     if (!fread(romData + i, sizeof(char), 1, romFd)) {
                         if (i == 0) {
                             printf("cannot read from rom %s\n",
@@ -1226,14 +1224,14 @@ int main (int argc, char** argv) {
     free(debugAtlas);
     debugAtlas = NULL;
 
-    for (uint32_t i = 0; i < OFFBLAST_MAX_PLAYERS; i++) {
+    for (uint32_t i = 0; i < OFFBLAST_MAX_PLAYERS; ++i) {
         offblast->players[i].jsIndex = -1;
     }
 
     playerSelectUi->playerAvatarLayers = calloc(offblast->nUsers, 
             sizeof(ImageLayer));
 
-    for (uint32_t i = 0; i < offblast->nUsers; i++) {
+    for (uint32_t i = 0; i < offblast->nUsers; ++i) {
 
         ImageLayer *avatarLayer = &playerSelectUi->playerAvatarLayers[i];
         glGenTextures(1, &avatarLayer->textureHandle);
@@ -1332,7 +1330,7 @@ int main (int argc, char** argv) {
 
     // __ROW__ "Your Library"
     uint32_t libraryLength = 0;
-    for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
+    for (uint32_t i = 0; i < launchTargetFile->nEntries; ++i) {
         LaunchTarget *target = &launchTargetFile->entries[i];
         if (strlen(target->fileName) != 0) 
             libraryLength++;
@@ -1387,7 +1385,7 @@ int main (int argc, char** argv) {
         assert(tiles);
 
         uint32_t numTiles = 0;
-        for (uint32_t i = 0; i < launchTargetFile->nEntries; i++) {
+        for (uint32_t i = 0; i < launchTargetFile->nEntries; ++i) {
 
             LaunchTarget *target = &launchTargetFile->entries[i];
 
@@ -1424,7 +1422,7 @@ int main (int argc, char** argv) {
     }
 
 
-    for (uint32_t i = 0; i < mainUi->numRows; i++) {
+    for (uint32_t i = 0; i < mainUi->numRows; ++i) {
         if (i == 0) {
             mainUi->rows[i].previousRow = &mainUi->rows[mainUi->numRows-1];
         }
@@ -1854,7 +1852,7 @@ int main (int argc, char** argv) {
                     OFFBLAST_TEXT_TITLE, 1.0, 0,
                     "Who's playing?");
 
-            for (uint32_t i = 0; i < offblast->nUsers; i++) {
+            for (uint32_t i = 0; i < offblast->nUsers; ++i) {
 
                 ImageLayer *avatarLayer = 
                     &playerSelectUi->playerAvatarLayers[i];
@@ -2566,7 +2564,7 @@ void launch() {
         char *launchString = calloc(PATH_MAX, sizeof(char));
 
         int32_t foundIndex = -1;
-        for (uint32_t i = 0; i < offblast->nPaths; i++) {
+        for (uint32_t i = 0; i < offblast->nPaths; ++i) {
             if (strcmp(target->path, offblast->launchers[i].path) == 0) {
                 foundIndex = i;
             }
