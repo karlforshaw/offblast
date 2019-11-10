@@ -3,7 +3,7 @@
 
 #define COLS_ON_SCREEN 5
 #define COLS_TOTAL 10 
-#define ROWS_TOTAL 4
+#define ROWS_TOTAL 5
 #define MAX_LAUNCH_COMMAND_LENGTH 512
 #define MAX_PLATFORMS 50 
 
@@ -145,6 +145,25 @@ typedef struct UiRow {
     struct UiRow *previousRow;
 } UiRow;
 
+typedef struct Color {
+    float r, g, b, a;
+} Color;
+
+typedef struct Vertex {
+    float x;
+    float y;
+    float z;
+    float s;
+    float tx;
+    float ty;
+    Color color;
+} Vertex;
+
+typedef struct Quad {
+    Vertex vertices[6];
+} Quad;
+
+// TODO remove
 typedef float UiRect[6][6]; 
 
 struct OffblastUi;
@@ -253,6 +272,12 @@ typedef struct OffblastUi {
     GLint imageAlphaUni;
     GLint imageDesaturateUni;
     GLint imageTexturePosUni; 
+
+    GLuint gradientProgram;
+    GLuint gradientVbo;
+    GLint gradientColorStartUniform; 
+    GLint gradientColorEndUniform; 
+
 
     GLuint textProgram;
     GLint textAlphaUni;
@@ -490,7 +515,108 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
 }
 
 
+
 OffblastUi *offblast;
+
+
+
+void initQuad(Quad* quad) {
+    for (uint32_t i = 0; i < 6; ++i) {
+        quad->vertices[i].x = 0.0f;
+        quad->vertices[i].y = 0.0f;
+        quad->vertices[i].z = 0.0f;
+        quad->vertices[i].s = 1.0f;
+        quad->vertices[i].tx = 0.0f;
+        quad->vertices[i].ty = 0.0f;
+    }
+}
+
+void renderGradient(uint32_t x, uint32_t y, uint32_t w, uint32_t h, 
+        uint32_t horizontal, Color colorStart, Color colorEnd) 
+{
+    float left = -1.0f + (2.0f/offblast->winWidth * x);
+    float bottom = -1.0f + (2.0f/offblast->winHeight * y);
+    float right = -1.0f + (2.0f/offblast->winWidth * (x+w));
+    float top = -1.0f + (2.0f/offblast->winHeight * (y+h));
+
+    Quad quad = {};
+    initQuad(&quad);
+    
+    quad.vertices[0].x = left;
+    quad.vertices[0].y = bottom;
+
+    quad.vertices[1].x = left;
+    quad.vertices[1].y = top;
+
+    quad.vertices[2].x = right;
+    quad.vertices[2].y = top;
+
+    quad.vertices[3].x = right;
+    quad.vertices[3].y = top;
+
+    quad.vertices[4].x = right;
+    quad.vertices[4].y = bottom;
+
+    quad.vertices[5].x = left;
+    quad.vertices[5].y = bottom;
+
+    if (horizontal) {
+        quad.vertices[0].color = colorStart;
+        quad.vertices[1].color = colorStart;
+        quad.vertices[2].color = colorEnd;
+        quad.vertices[3].color = colorEnd;
+        quad.vertices[4].color = colorEnd;
+        quad.vertices[5].color = colorStart;
+    }
+    else {
+        quad.vertices[0].color = colorStart;
+        quad.vertices[1].color = colorEnd;
+        quad.vertices[2].color = colorEnd;
+        quad.vertices[3].color = colorEnd;
+        quad.vertices[4].color = colorStart;
+        quad.vertices[5].color = colorStart;
+    }
+
+
+    // TODO if the h and w haven't changed we don't actually
+    // need to rebuffer the vertex data, we could just use a uniform
+    // for the vertex shader?
+
+    if (!offblast->gradientVbo) {
+        glGenBuffers(1, &offblast->gradientVbo);
+        glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(Quad), 
+                &quad, GL_STREAM_DRAW);
+    }
+    else {
+        glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(Quad), 
+                &quad);
+    }
+
+    glUniform4f(offblast->gradientColorStartUniform, 
+            colorStart.r, colorStart.g, colorStart.b, colorStart.a);
+    glUniform4f(offblast->gradientColorEndUniform, 
+            colorEnd.r, colorEnd.g, colorEnd.b, colorEnd.a);
+
+    glUseProgram(offblast->gradientProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
+            sizeof(Vertex), 0);
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 
+            sizeof(Vertex), (void*)(6*sizeof(float)));
+
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+
+
+
+
+
 
 int main (int argc, char** argv) {
 
@@ -1321,9 +1447,9 @@ int main (int argc, char** argv) {
             GL_FRAGMENT_SHADER);
     assert(gradientVertShader);
     assert(gradientFragShader);
-    GLuint gradientProgram = createShaderProgram(gradientVertShader, 
+    offblast->gradientProgram = createShaderProgram(gradientVertShader, 
             gradientFragShader);
-    assert(gradientProgram);
+    assert(offblast->gradientProgram);
 
 
     int running = 1;
@@ -1469,12 +1595,10 @@ int main (int argc, char** argv) {
             offblast->winHeight - offblast->winFold);
 
     updateVbo(&topGradient.vbo, &topGradient.vertices);
-    GLint gradientOffsetYUniform = 
-        glGetUniformLocation(gradientProgram, "yOffset");
-    GLint gradientFlipYUniform = 
-        glGetUniformLocation(gradientProgram, "yFlip");
-    GLint gradientStartUniform = 
-        glGetUniformLocation(gradientProgram, "startPos");
+    offblast->gradientColorStartUniform = 
+        glGetUniformLocation(offblast->gradientProgram, "colorStart");
+    offblast->gradientColorEndUniform = 
+        glGetUniformLocation(offblast->gradientProgram, "colorEnd");
 
 
     // § Main loop
@@ -1733,6 +1857,13 @@ int main (int argc, char** argv) {
                     }
 
                     // ACTUAL DRAW
+                    // BG GRADIENT LAYER
+                    //renderGradient(x, y, w, h, 
+                     //       horizontal, direction, colorStart, colorEnd);
+                    
+                    // COVER
+                    // Need to calculate new vertices based on the AR
+                    // of the cover
                     glBindBuffer(GL_ARRAY_BUFFER, mainUi->blockVbo);
                     glEnableVertexAttribArray(0);
                     glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
@@ -1764,6 +1895,9 @@ int main (int argc, char** argv) {
 
                     glDrawArrays(GL_TRIANGLES, 0, 6);
 
+                    // PLATFORM INDICATOR
+
+
                     tileToRender = tileToRender->next;
                 }
 
@@ -1775,34 +1909,19 @@ int main (int argc, char** argv) {
             glUniform1f(offblast->imageAlphaUni, 1.0);
             glUniform2f(offblast->imageTexturePosUni, 0.0f, 0.0f);
 
-            // § GRADIENT LAYERS
-            glUseProgram(gradientProgram);
-            glUniform1f(gradientOffsetYUniform, 
-                    2.0/offblast->winHeight * offblast->winFold);
-            glUniform1f(gradientFlipYUniform, 0.0);
-            glUniform1f(gradientStartUniform, 1.0);
-            glBindBuffer(GL_ARRAY_BUFFER, topGradient.vbo);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
-                    6*sizeof(float), 0);
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
-                    6*sizeof(float), (void*)(4*sizeof(float)));
-            glDrawArrays(GL_TRIANGLES, 0, 6);
+            Color bwStartColor = {0.0, 0.0, 0.0, 1.0};
+            Color foldGrEndColor = {0.0, 0.0, 0.0, 0.7};
+            renderGradient(0, offblast->winFold, 
+                    offblast->winWidth, 
+                    offblast->winHeight - offblast->winFold, 
+                    1,
+                    bwStartColor, foldGrEndColor);
 
-            glUseProgram(gradientProgram);
-            glUniform1f(gradientOffsetYUniform, 0.0);
-            glUniform1f(gradientFlipYUniform, 1.0);
-            glUniform1f(gradientStartUniform, 0.1);
-            glBindBuffer(GL_ARRAY_BUFFER, bottomGradient.vbo);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
-                    6*sizeof(float), 0);
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
-                    6*sizeof(float), (void*)(4*sizeof(float)));
-            glDrawArrays(GL_TRIANGLES, 0, 6);
-
+            Color bwEndColor = {0.0, 0.0, 0.0, 0.0};
+            renderGradient(0, 0, 
+                    offblast->winWidth, offblast->titlePointSize*2, 
+                    0,
+                    bwStartColor, bwEndColor);
 
             // § INFO AREA
             float alpha = 1.0;
