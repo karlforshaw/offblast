@@ -55,15 +55,7 @@
 //          file present we use that instead?
 //
 // TODO GFX
-//      * can we do a blurred background layer?
-//              https://www.shadertoy.com/view/XdfGDH
-//
-//      * I quite liked the look of the white mix of 0.3 on the cover art
-//          slightly desaturated - might have a shader for covers and do 
-//          an average color gradient to the right, white mix 0.3 AND anchor
-//          texture to the left with proper ratio, locking in the height
 //      * a loading animation 
-//      * PLATFORM BADGES ON MIXED LISTS
 //
 //
 // TODO steam support
@@ -643,6 +635,15 @@ void renderGradient(float x, float y, float w, float h,
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
+float getWidthForScaledTile(float scaledHeight, UiTile *tile) {
+    if (tile->textureH == 0) {
+        return 0;
+    }
+    else {
+        float exponent = scaledHeight / tile->textureH;
+        return tile->textureW * exponent;
+    }
+}
 
 void renderCover(float x, float y, float w, float h, UiTile* tile) 
 {
@@ -651,18 +652,7 @@ void renderCover(float x, float y, float w, float h, UiTile* tile)
     Quad quad = {};
     initQuad(&quad);
 
-    float exponent = h / tile->textureH;
-    float newWidth = tile->textureW * exponent;
-
-    if (newWidth > w) {
-        float clip = w / newWidth;
-        quad.vertices[2].tx = clip;
-        quad.vertices[3].tx = clip;
-        quad.vertices[4].tx = clip;
-    }
-    else {
-        w = tile->textureW * exponent;
-    }
+    w = getWidthForScaledTile(h, tile);
 
     resizeQuad(x, y, w, h, &quad);
 
@@ -706,6 +696,68 @@ void renderCover(float x, float y, float w, float h, UiTile* tile)
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
+void loadTexture(UiTile *tile) {
+
+    // Generate the texture 
+    if (tile->textureHandle == 0 &&
+            tile->target->coverUrl != NULL) 
+    {
+        if (tile->loadState != LOAD_STATE_LOADED) {
+
+            char *coverArtPath =
+                getCoverPath(
+                        tile->target->targetSignature); 
+
+            int w, h, n;
+            stbi_set_flip_vertically_on_load(1);
+            unsigned char *image = stbi_load(
+                    coverArtPath, &w, &h, &n, 4);
+            free(coverArtPath);
+
+
+            if (tile->loadState == LOAD_STATE_UNKNOWN) {
+
+                if(image == NULL) {
+                    tile->loadState = 
+                        LOAD_STATE_DOWNLOADING;
+                    pthread_t theThread;
+                    pthread_create(
+                            &theThread, 
+                            NULL, 
+                            downloadCover, 
+                            (void*)tile);
+                }
+                else {
+                    tile->loadState = 
+                        LOAD_STATE_DOWNLOADED;
+                }
+            }
+
+            if (tile->loadState == 
+                    LOAD_STATE_DOWNLOADED) 
+            {
+
+                glGenTextures(1, &tile->textureHandle);
+
+                imageToGlTexture(
+                        tile->textureHandle,
+                        image, w, h);
+
+                printf("texture size: %ux%u\n", w, h);
+
+                tile->textureW = w;
+                tile->textureH = h;
+
+                glBindTexture(GL_TEXTURE_2D, 
+                        tile->textureHandle);
+
+                tile->loadState = LOAD_STATE_LOADED;
+            }
+
+            free(image);
+        }
+    }
+}
 
 int main (int argc, char** argv) {
 
@@ -1812,24 +1864,79 @@ int main (int argc, char** argv) {
             // § blocks
             for (int32_t iRow = -2; iRow < ROWS_TOTAL-2; iRow++) {
 
-                UiTile *tileToRender = 
-                    rewindTiles(rowToRender->tileCursor, 2);
+                UiTile *startTile = rowToRender->tileCursor;
+                float startTileW = 
+                    getWidthForScaledTile(mainUi->boxHeight, startTile);
+                float prevTileW = getWidthForScaledTile(
+                        mainUi->boxHeight, startTile->previous);
 
-                for (int32_t iTile = -2; iTile < COLS_TOTAL; iTile++) {
+                UiTile *tileToRender = startTile;
+                int32_t xAdvance = offblast->winMargin;
+                int32_t nextTileWidth = 0;
+
+                // TODO loadTexture - if we've got the 
+                // same tile in two lists, it's going to have the same 
+                // texture loaded on to the gpu multiple times
+
+                for (int32_t iTile = -2; 
+                        xAdvance < offblast->winWidth + nextTileWidth; 
+                        iTile++) 
+                {
+
+                    float tileW = 0;
+
+                    if (iTile < 0) {
+                        tileToRender = tileToRender->previous;
+                        loadTexture(tileToRender);
+                        tileW = getWidthForScaledTile(mainUi->boxHeight,
+                                tileToRender);
+
+                        if (tileToRender->textureW == 0) {
+                            xAdvance -= (mainUi->boxWidth + mainUi->boxPad);
+                        } else {
+                            xAdvance -= 
+                                (tileW + mainUi->boxPad);
+                        }
+                    }
+                    else if (iTile == 0) {
+                        tileToRender = startTile;
+                        loadTexture(tileToRender);
+                        xAdvance = offblast->winMargin;
+                    }
+                    else {
+                        tileW = getWidthForScaledTile(mainUi->boxHeight,
+                                tileToRender);
+
+                        tileToRender = tileToRender->next;
+                        loadTexture(tileToRender);
+
+                        if (tileToRender->textureW == 0) {
+                            xAdvance += (mainUi->boxWidth + mainUi->boxPad);
+                        } else {
+                            xAdvance += 
+                                (tileW + mainUi->boxPad);
+                        }
+                    }
 
                     float xOffset = 0;
                     float yOffset = 0;
 
-                    xOffset = offblast->winMargin + iTile * 
-                        (mainUi->boxWidth + mainUi->boxPad);
-
                     if (mainUi->horizontalAnimation->animating != 0 && iRow == 0) 
                     {
+
+                        double displace = 0;
+                        if (mainUi->horizontalAnimation->direction > 0) {
+                            displace = (double)(startTileW + mainUi->boxPad);
+                        }
+                        else {
+                            displace = (double)(prevTileW + mainUi->boxPad);
+                        }
+
                         double change = easeInOutCirc(
                                 (double)SDL_GetTicks() 
                                     - mainUi->horizontalAnimation->startTick,
                                 0.0,
-                                (double)mainUi->boxWidth + mainUi->boxPad,
+                                displace,
                                 (double)mainUi->horizontalAnimation->durationMs);
 
                         if (mainUi->horizontalAnimation->direction > 0) {
@@ -1859,88 +1966,13 @@ int main (int argc, char** argv) {
 
                     }
 
-                    // Generate the texture 
-                    if (tileToRender->textureHandle == 0 &&
-                            tileToRender->target->coverUrl != NULL) 
-                    {
-                        if (tileToRender->loadState != LOAD_STATE_LOADED) {
-
-                            char *coverArtPath =
-                                getCoverPath(
-                                        tileToRender->target->targetSignature); 
-
-                            int w, h, n;
-                            stbi_set_flip_vertically_on_load(1);
-                            unsigned char *image = stbi_load(
-                                    coverArtPath, &w, &h, &n, 4);
-                            free(coverArtPath);
-
-
-                            if (tileToRender->loadState == LOAD_STATE_UNKNOWN) {
-                                
-                                if(image == NULL) {
-                                    tileToRender->loadState = 
-                                        LOAD_STATE_DOWNLOADING;
-                                    pthread_t theThread;
-                                    pthread_create(
-                                            &theThread, 
-                                            NULL, 
-                                            downloadCover, 
-                                            (void*)tileToRender);
-                                }
-                                else {
-                                    tileToRender->loadState = 
-                                        LOAD_STATE_DOWNLOADED;
-                                }
-                            }
-                            
-                            if (tileToRender->loadState == 
-                                    LOAD_STATE_DOWNLOADED) 
-                            {
-
-                                glGenTextures(1, &tileToRender->textureHandle);
-
-                                imageToGlTexture(
-                                        tileToRender->textureHandle,
-                                        image, w, h);
-
-                                printf("texture size: %ux%u\n", w, h);
-
-                                tileToRender->textureW = w;
-                                tileToRender->textureH = h;
-
-                                glBindTexture(GL_TEXTURE_2D, 
-                                        tileToRender->textureHandle);
-
-                                tileToRender->loadState = LOAD_STATE_LOADED;
-                            }
-
-                            free(image);
-                        }
-                    }
-                    else {
-                        glBindTexture(GL_TEXTURE_2D, 
-                                tileToRender->textureHandle);
-                    }
-
-                    // ACTUAL DRAW
-                    // BG GRADIENT LAYER
-                    Color bwStartColor = {0.5, 0.5, 0.5, 0.0};
-                    Color foldGrEndColor = {0.5, 0.5, 0.5, 0.3};
-                    renderGradient(xOffset, yOffset, 
-                            mainUi->boxWidth, 
-                            mainUi->boxHeight, 
-                            0,
-                            bwStartColor, foldGrEndColor);
                     
                     // COVER
-                    renderCover(xOffset, yOffset,
-                            mainUi->boxWidth, 
+                    renderCover(xAdvance + xOffset, yOffset,
+                            0, 
                             mainUi->boxHeight, 
                             tileToRender);
 
-
-                    tileToRender = tileToRender->next;
                 }
 
                 rowToRender = rowToRender->nextRow;
