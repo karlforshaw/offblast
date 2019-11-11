@@ -18,6 +18,9 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.2 HITLIST
+//      * get rid of image layers, and anything layer, move to using
+//          quad (remove update VBO, update rect, uirect etc
+//
 //      *. STB TRUETYPE
 //          -- align center, right
 //
@@ -104,8 +107,6 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
-// TODO remove when it's working? maybe we should only gen the bitmap
-// if it doesn't already exist
 #define STB_IMAGE_WRITE_IMPLEMENTATION 1
 #include "stb_image_write.h"
 
@@ -1937,30 +1938,6 @@ int main (int argc, char** argv) {
                             mainUi->boxWidth, 
                             mainUi->boxHeight, 
                             tileToRender);
-
-#if 0
-                    glUseProgram(offblast->imageProgram);
-                    glBindBuffer(GL_ARRAY_BUFFER, mainUi->blockVbo);
-                    glEnableVertexAttribArray(0);
-                    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
-                            6*sizeof(float), 0);
-                    glEnableVertexAttribArray(1);
-                    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
-                            6*sizeof(float), (void*)(4*sizeof(float)));
-
-                    glUniform2f(offblast->imageTranslateUni, xOffsetNormalized, 
-                            yOffsetNormalized);
-
-
-                    // TODO texture size stuff
-                    glUniform2f(offblast->imageTexturePosUni, 
-                            0.0, //tileToRender->textureMaxW, 
-                            0.0 /*tileToRender->textureMinH*/);
-
-                    glDrawArrays(GL_TRIANGLES, 0, 6);
-#endif
-
-                    // PLATFORM INDICATOR
 
 
                     tileToRender = tileToRender->next;
