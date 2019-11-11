@@ -217,8 +217,7 @@ typedef struct MainUi {
     Animation *rowNameAnimation;
 
     uint32_t numRows;
-    UiRect blockVertices;
-    GLuint blockVbo;
+    GLuint coverVbo;
 
     UiRow *rowCursor;
     UiRow *rows;
@@ -271,7 +270,6 @@ typedef struct OffblastUi {
     GLint imageTranslateUni;
     GLint imageAlphaUni;
     GLint imageDesaturateUni;
-    GLint imageTexturePosUni; 
 
     GLuint gradientProgram;
     GLuint gradientVbo;
@@ -526,39 +524,71 @@ void initQuad(Quad* quad) {
         quad->vertices[i].y = 0.0f;
         quad->vertices[i].z = 0.0f;
         quad->vertices[i].s = 1.0f;
-        quad->vertices[i].tx = 0.0f;
-        quad->vertices[i].ty = 0.0f;
+
+        if (i == 0) {
+            quad->vertices[i].tx = 0.0f;
+            quad->vertices[i].ty = 0.0f;
+        }
+        if (i == 1) {
+            quad->vertices[i].tx = 0.0f;
+            quad->vertices[i].ty = 1.0f;
+        }
+        if (i == 2) {
+            quad->vertices[i].tx = 1.0f;
+            quad->vertices[i].ty = 1.0f;
+        }
+        if (i == 3) {
+            quad->vertices[i].tx = 1.0f;
+            quad->vertices[i].ty = 1.0f;
+        }
+        if (i == 4) {
+            quad->vertices[i].tx = 1.0f;
+            quad->vertices[i].ty = 0.0f;
+        }
+        if (i == 5) {
+            quad->vertices[i].tx = 0.0f;
+            quad->vertices[i].ty = 0.0f;
+        }
+
+        // TODO should probably init the color to black
     }
 }
 
-void renderGradient(uint32_t x, uint32_t y, uint32_t w, uint32_t h, 
-        uint32_t horizontal, Color colorStart, Color colorEnd) 
-{
+
+void resizeQuad(float x, float y, float w, float h, Quad *quad) {
+
     float left = -1.0f + (2.0f/offblast->winWidth * x);
     float bottom = -1.0f + (2.0f/offblast->winHeight * y);
     float right = -1.0f + (2.0f/offblast->winWidth * (x+w));
     float top = -1.0f + (2.0f/offblast->winHeight * (y+h));
 
+    quad->vertices[0].x = left;
+    quad->vertices[0].y = bottom;
+
+    quad->vertices[1].x = left;
+    quad->vertices[1].y = top;
+
+    quad->vertices[2].x = right;
+    quad->vertices[2].y = top;
+
+    quad->vertices[3].x = right;
+    quad->vertices[3].y = top;
+
+    quad->vertices[4].x = right;
+    quad->vertices[4].y = bottom;
+
+    quad->vertices[5].x = left;
+    quad->vertices[5].y = bottom;
+}
+
+
+void renderGradient(float x, float y, float w, float h, 
+        uint32_t horizontal, Color colorStart, Color colorEnd) 
+{
+
     Quad quad = {};
     initQuad(&quad);
-    
-    quad.vertices[0].x = left;
-    quad.vertices[0].y = bottom;
-
-    quad.vertices[1].x = left;
-    quad.vertices[1].y = top;
-
-    quad.vertices[2].x = right;
-    quad.vertices[2].y = top;
-
-    quad.vertices[3].x = right;
-    quad.vertices[3].y = top;
-
-    quad.vertices[4].x = right;
-    quad.vertices[4].y = bottom;
-
-    quad.vertices[5].x = left;
-    quad.vertices[5].y = bottom;
+    resizeQuad(x, y, w, h, &quad);
 
     if (horizontal) {
         quad.vertices[0].color = colorStart;
@@ -576,7 +606,6 @@ void renderGradient(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
         quad.vertices[4].color = colorStart;
         quad.vertices[5].color = colorStart;
     }
-
 
     // TODO if the h and w haven't changed we don't actually
     // need to rebuffer the vertex data, we could just use a uniform
@@ -614,8 +643,67 @@ void renderGradient(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
 }
 
 
+void renderCover(float x, float y, float w, float h, UiTile* tile) 
+{
+
+    glUseProgram(offblast->imageProgram);
+    Quad quad = {};
+    initQuad(&quad);
+
+    float exponent = h / tile->textureH;
+    float newWidth = tile->textureW * exponent;
+
+    if (newWidth > w) {
+        float clip = w / newWidth;
+        quad.vertices[2].tx = clip;
+        quad.vertices[3].tx = clip;
+        quad.vertices[4].tx = clip;
+    }
+    else {
+        w = tile->textureW * exponent;
+    }
+
+    resizeQuad(x, y, w, h, &quad);
+
+    if (!offblast->mainUi.coverVbo) {
+        glGenBuffers(1, &offblast->mainUi.coverVbo);
+        glBindBuffer(GL_ARRAY_BUFFER, offblast->mainUi.coverVbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(Quad), 
+                &quad, GL_STREAM_DRAW);
+    }
+    else {
+        glBindBuffer(GL_ARRAY_BUFFER, offblast->mainUi.coverVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(Quad), 
+                &quad);
+    }
+
+    if (strlen(tile->target->path) == 0 || 
+            strlen(tile->target->fileName) == 0) 
+    {
+        glUniform1f(offblast->imageDesaturateUni, 0.3);
+        glUniform1f(offblast->imageAlphaUni, 0.7);
+    }
+    else {
+        glUniform1f(offblast->imageDesaturateUni, 0.2);
+        glUniform1f(offblast->imageAlphaUni, 1);
+    }
 
 
+    glBindTexture(GL_TEXTURE_2D, tile->textureHandle);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
+            sizeof(Vertex), 0);
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
+            sizeof(Vertex), (void*)(4*sizeof(float)));
+
+    // TODO remove this uniform
+    glUniform2f(offblast->imageTranslateUni, 0, 0);
+
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+}
 
 
 int main (int argc, char** argv) {
@@ -1437,8 +1525,6 @@ int main (int argc, char** argv) {
             offblast->imageProgram, "myAlpha");
     offblast->imageDesaturateUni = glGetUniformLocation(
             offblast->imageProgram, "whiteMix");
-    offblast->imageTexturePosUni = glGetUniformLocation(
-            offblast->imageProgram, "textureSize");
 
     // Gradient Pipeline
     GLint gradientVertShader = loadShaderFile("shaders/gradient.vert", 
@@ -1583,22 +1669,6 @@ int main (int argc, char** argv) {
     updateInfoText();
     updateDescriptionText();
     offblast->mainUi.rowNameText = offblast->mainUi.movingToRow->name;
-
-    GradientLayer bottomGradient = {};
-    updateRect(&bottomGradient.vertices, offblast->winWidth, 
-            goldenRatioLargef(offblast->winHeight, 5));
-
-    updateVbo(&bottomGradient.vbo, &bottomGradient.vertices);
-
-    GradientLayer topGradient = {};
-    updateRect(&topGradient.vertices, offblast->winWidth, 
-            offblast->winHeight - offblast->winFold);
-
-    updateVbo(&topGradient.vbo, &topGradient.vertices);
-    offblast->gradientColorStartUniform = 
-        glGetUniformLocation(offblast->gradientProgram, "colorStart");
-    offblast->gradientColorEndUniform = 
-        glGetUniformLocation(offblast->gradientProgram, "colorEnd");
 
 
     // § Main loop
@@ -1788,11 +1858,7 @@ int main (int argc, char** argv) {
 
                     }
 
-                    float xOffsetNormalized = (2.0 / offblast->winWidth) * xOffset;
-                    float yOffsetNormalized = (2.0 / offblast->winHeight) * yOffset;
-
                     // Generate the texture 
-                    glUseProgram(offblast->imageProgram);
                     if (tileToRender->textureHandle == 0 &&
                             tileToRender->target->coverUrl != NULL) 
                     {
@@ -1858,12 +1924,22 @@ int main (int argc, char** argv) {
 
                     // ACTUAL DRAW
                     // BG GRADIENT LAYER
-                    //renderGradient(x, y, w, h, 
-                     //       horizontal, direction, colorStart, colorEnd);
+                    Color bwStartColor = {0.5, 0.5, 0.5, 0.0};
+                    Color foldGrEndColor = {0.5, 0.5, 0.5, 0.3};
+                    renderGradient(xOffset, yOffset, 
+                            mainUi->boxWidth, 
+                            mainUi->boxHeight, 
+                            0,
+                            bwStartColor, foldGrEndColor);
                     
                     // COVER
-                    // Need to calculate new vertices based on the AR
-                    // of the cover
+                    renderCover(xOffset, yOffset,
+                            mainUi->boxWidth, 
+                            mainUi->boxHeight, 
+                            tileToRender);
+
+#if 0
+                    glUseProgram(offblast->imageProgram);
                     glBindBuffer(GL_ARRAY_BUFFER, mainUi->blockVbo);
                     glEnableVertexAttribArray(0);
                     glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
@@ -1876,24 +1952,13 @@ int main (int argc, char** argv) {
                             yOffsetNormalized);
 
 
-                    if (strlen(tileToRender->target->path) == 0 || 
-                            strlen(tileToRender->target->fileName) == 0) 
-                    {
-                        glUniform1f(offblast->imageDesaturateUni, 0.3);
-                        glUniform1f(offblast->imageAlphaUni, 0.7);
-                    }
-                    else {
-                        glUniform1f(offblast->imageDesaturateUni, 0.2);
-                        glUniform1f(offblast->imageAlphaUni, 1);
-                    }
-
-
                     // TODO texture size stuff
                     glUniform2f(offblast->imageTexturePosUni, 
                             0.0, //tileToRender->textureMaxW, 
                             0.0 /*tileToRender->textureMinH*/);
 
                     glDrawArrays(GL_TRIANGLES, 0, 6);
+#endif
 
                     // PLATFORM INDICATOR
 
@@ -1907,7 +1972,6 @@ int main (int argc, char** argv) {
             glUniform1f(offblast->imageDesaturateUni, 0.0f);
             glUniform2f(offblast->imageTranslateUni, 0.0f, 0.0f);
             glUniform1f(offblast->imageAlphaUni, 1.0);
-            glUniform2f(offblast->imageTexturePosUni, 0.0f, 0.0f);
 
             Color bwStartColor = {0.0, 0.0, 0.0, 1.0};
             Color foldGrEndColor = {0.0, 0.0, 0.0, 0.7};
@@ -2124,12 +2188,9 @@ uint32_t needsReRender(SDL_Window *window)
         offblast->winFold = newHeight * 0.5;
         offblast->winMargin = goldenRatioLarge((double) newWidth, 5);
 
-        // 7:5
+        // 7:5 TODO I don't think this is actually 7:5
         mainUi->boxHeight = goldenRatioLarge(offblast->winWidth, 4);
         mainUi->boxWidth = mainUi->boxHeight/5 * 7;
-        updateRect(&mainUi->blockVertices, mainUi->boxWidth, mainUi->boxHeight);
-        updateVbo(&mainUi->blockVbo, &mainUi->blockVertices);
-
         mainUi->boxPad = goldenRatioLarge((double) offblast->winWidth, 9);
 
         mainUi->descriptionWidth = 
