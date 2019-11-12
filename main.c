@@ -3,7 +3,7 @@
 
 #define COLS_ON_SCREEN 5
 #define COLS_TOTAL 10 
-#define ROWS_TOTAL 5
+#define ROWS_TOTAL 6
 #define MAX_LAUNCH_COMMAND_LENGTH 512
 #define MAX_PLATFORMS 50 
 
@@ -18,6 +18,8 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.2 HITLIST
+//      * add another row on top, did we acidentally add on on the
+//          bottom?
 //      * get rid of image layers, and anything layer, move to using
 //          quad (remove update VBO, update rect, uirect etc
 //
