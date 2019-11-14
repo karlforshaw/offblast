@@ -18,8 +18,6 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.2 HITLIST
-//      * get rid of image layers, and anything layer, move to using
-//          quad (remove update VBO, update rect, uirect etc
 //
 //      -. STB TRUETYPE
 //          -- align center (login screen)
@@ -172,9 +170,6 @@ typedef struct Quad {
     Vertex vertices[6];
 } Quad;
 
-// TODO remove
-typedef float UiRect[6][6]; 
-
 struct OffblastUi;
 typedef struct Animation {
     uint32_t animating;
@@ -313,12 +308,13 @@ void changeColumn(uint32_t direction);
 void pressConfirm();
 void updateInfoText();
 void updateDescriptionText();
+void initQuad(Quad* quad);
 
 
 #define OFFBLAST_TEXT_TITLE 1
 #define OFFBLAST_TEXT_INFO 2
 #define OFFBLAST_TEXT_DEBUG 3
-void renderSomeText(OffblastUi *offblast, float x, float y, 
+void renderText(OffblastUi *offblast, float x, float y, 
         uint32_t textMode, float alpha, uint32_t lineMaxW, char *string) 
 {
 
@@ -368,8 +364,6 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
             stbtt_GetBakedQuad(cdata,
                     offblast->textBitmapWidth, offblast->textBitmapHeight, 
                     *string-32, &x, &y, &q, 1);
-
-            UiRect vertices = {};
 
             currentWidth += (q.x1 - q.x0);
 
@@ -421,64 +415,55 @@ void renderSomeText(OffblastUi *offblast, float x, float y,
             float texTop = q.t0;
             float texBottom = q.t1;
 
-            vertices[0][0] = left;
-            vertices[0][1] = bottom;
-            vertices[0][2] = 0.0f;
-            vertices[0][3] = 1.0f;
-            vertices[0][4] = texLeft;
-            vertices[0][5] = texBottom;
+            Quad quad = {};
+            initQuad(&quad);
 
-            vertices[1][0] = left;
-            vertices[1][1] = top;
-            vertices[1][2] = 0.0f;
-            vertices[1][3] = 1.0f;
-            vertices[1][4] = texLeft;
-            vertices[1][5] = texTop;
+            quad.vertices[0].x = left;
+            quad.vertices[0].y = bottom;
+            quad.vertices[0].tx = texLeft;
+            quad.vertices[0].ty = texBottom;
 
-            vertices[2][0] = right;
-            vertices[2][1] = top;
-            vertices[2][2] = 0.0f;
-            vertices[2][3] = 1.0f;
-            vertices[2][4] = texRight;
-            vertices[2][5] = texTop;
+            quad.vertices[1].x = left;
+            quad.vertices[1].y = top;
+            quad.vertices[1].tx = texLeft;
+            quad.vertices[1].ty = texTop;
 
-            vertices[3][0] = right;
-            vertices[3][1] = top;
-            vertices[3][2] = 0.0f;
-            vertices[3][3] = 1.0f;
-            vertices[3][4] = texRight;
-            vertices[3][5] = texTop;
+            quad.vertices[2].x = right;
+            quad.vertices[2].y = top;
+            quad.vertices[2].tx = texRight;
+            quad.vertices[2].ty = texTop;
 
-            vertices[4][0] = right;
-            vertices[4][1] = bottom;
-            vertices[4][2] = 0.0f;
-            vertices[4][3] = 1.0f;
-            vertices[4][4] = texRight;
-            vertices[4][5] = texBottom;
+            quad.vertices[3].x = right;
+            quad.vertices[3].y = top;
+            quad.vertices[3].tx = texRight;
+            quad.vertices[3].ty = texTop;
 
-            vertices[5][0] = left;
-            vertices[5][1] = bottom;
-            vertices[5][2] = 0.0f;
-            vertices[5][3] = 1.0f;
-            vertices[5][4] = texLeft;
-            vertices[5][5] = texBottom;
+            quad.vertices[4].x = right;
+            quad.vertices[4].y = bottom;
+            quad.vertices[4].tx = texRight;
+            quad.vertices[4].ty = texBottom;
+
+            quad.vertices[5].x = left;
+            quad.vertices[5].y = bottom;
+            quad.vertices[5].tx = texLeft;
+            quad.vertices[5].ty = texBottom;
 
             if (offblast->textVbo == 0) {
                 glGenBuffers(1, &offblast->textVbo);
                 glBindBuffer(GL_ARRAY_BUFFER, offblast->textVbo);
-                glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
-                        &vertices, GL_STREAM_DRAW);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(Quad), 
+                        &quad.vertices, GL_STREAM_DRAW);
             }
             else {
                 glBindBuffer(GL_ARRAY_BUFFER, offblast->textVbo);
-                glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
-                        &vertices);
+                glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(Quad), 
+                        &quad.vertices);
             }
 
             glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
+            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), 0);
             glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), 
                     (void*)(4*sizeof(float)));
 
             if (trailingString) {
@@ -2033,23 +2018,23 @@ int main(int argc, char** argv) {
                 offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
                     - offblast->titlePointSize;
 
-            renderSomeText(offblast, offblast->winMargin, pixelY, 
+            renderText(offblast, offblast->winMargin, pixelY, 
                 OFFBLAST_TEXT_TITLE, alpha, 0, mainUi->titleText);
 
 
             pixelY -= offblast->infoPointSize * 1.4;
-            renderSomeText(offblast, offblast->winMargin, pixelY, 
+            renderText(offblast, offblast->winMargin, pixelY, 
                 OFFBLAST_TEXT_INFO, alpha, 0, mainUi->infoText);
 
 
             pixelY -= offblast->infoPointSize + mainUi->boxPad;
-            renderSomeText(offblast, offblast->winMargin, pixelY, 
+            renderText(offblast, offblast->winMargin, pixelY, 
                 OFFBLAST_TEXT_INFO, alpha, mainUi->descriptionWidth, 
                 mainUi->descriptionText); 
 
 
             pixelY = offblast->winFold + mainUi->boxPad;
-            renderSomeText(offblast, offblast->winMargin, pixelY, 
+            renderText(offblast, offblast->winMargin, pixelY, 
                 OFFBLAST_TEXT_INFO, rowNameAlpha, 0, mainUi->rowNameText); 
 
 
@@ -2058,7 +2043,7 @@ int main(int argc, char** argv) {
 
             // TODO cache all these golden ratio calls they are expensive 
             // to calculate
-            renderSomeText(offblast, 
+            renderText(offblast, 
                     300, 
                     offblast->winHeight - 
                         goldenRatioLarge(offblast->winHeight, 3), 
@@ -2072,7 +2057,7 @@ int main(int argc, char** argv) {
                 Image *image = &playerSelectUi->images[i];
 
                 float alpha = (i == playerSelectUi->cursor) ? 1.0 : 0.7;
-                renderSomeText(offblast, 
+                renderText(offblast, 
                         xAdvance,
                         480,
                         OFFBLAST_TEXT_INFO, alpha, 0,
@@ -2095,7 +2080,7 @@ int main(int argc, char** argv) {
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
         asprintf(&fpsString, "frame time: %u", frameTime);
-        renderSomeText(offblast, 15, 15, OFFBLAST_TEXT_DEBUG, 1.0, 0, 
+        renderText(offblast, 15, 15, OFFBLAST_TEXT_DEBUG, 1.0, 0, 
                fpsString);
         free(fpsString);
 
