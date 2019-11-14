@@ -18,19 +18,15 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.2 HITLIST
-//      * add another row on top, did we acidentally add on on the
-//          bottom?
 //      * get rid of image layers, and anything layer, move to using
 //          quad (remove update VBO, update rect, uirect etc
 //
 //      *. STB TRUETYPE
-//          -- align center, right
+//          -- align center (login screen)
 //
 //      *. Recently Played list
-//          --  need to start logging play time which means going into a
-//              slow rendering cycle or pause mode when another game is 
-//              running and every 30 seconds or so incrementing the play
-//              count for this user
+//          -- Use the playtime file to find out which of the games were
+//              most recently played
 //
 //      *. watch out for vram! glDeleteTextures
 //
@@ -91,6 +87,7 @@
 #include <curl/curl.h>
 #include <math.h>
 #include <pthread.h>
+#include <time.h>
         
 #define GL3_PROTOTYPES 1
 #include <GL/glew.h>
@@ -284,6 +281,8 @@ typedef struct OffblastUi {
     Launcher *launchers;
 
     OffblastBlobFile *descriptionFile;
+    OffblastDbFile playTimeDb;
+    PlayTimeFile *playTimeFile;
 
 } OffblastUi;
 
@@ -761,7 +760,7 @@ void loadTexture(UiTile *tile) {
     }
 }
 
-int main (int argc, char** argv) {
+int main(int argc, char** argv) {
 
     printf("\nStarting up OffBlast with %d args.\n\n", argc);
     offblast = calloc(1, sizeof(OffblastUi));
@@ -873,6 +872,20 @@ int main (int argc, char** argv) {
     offblast->descriptionFile = 
         (OffblastBlobFile*) descriptionDb.memory;
     free(descriptionDbPath);
+
+    char *playTimeDbPath;
+    asprintf(&playTimeDbPath, "%s/playtime.bin", configPath);
+    OffblastDbFile playTimeDb = {0};
+    if (!InitDbFile(playTimeDbPath, &playTimeDb, 
+                1))
+    {
+        printf("couldn't initialize the playTime file, exiting\n");
+        return 1;
+    }
+    offblast->playTimeFile = 
+        (PlayTimeFile*) playTimeDb.memory;
+    offblast->playTimeDb = playTimeDb;
+    free(playTimeDbPath);
 
 
 #if 0
@@ -2651,18 +2664,6 @@ uint32_t powTwoFloor(uint32_t val) {
 void imageToGlTexture(GLuint textureHandle, unsigned char *pixelData, 
         uint32_t newWidth, uint32_t newHeight) 
 {
-
-    //*newWidth = powTwoFloor(surface->w);
-    //*newHeight = powTwoFloor(surface->h);
-
-    /*SDL_Surface *newSurface = SDL_CreateRGBSurface(
-            0, *newWidth, *newHeight, 32,
-            0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
-            */
-
-    //SDL_Rect destRect = {0, *newHeight - surface->h, 0, 0};
-    //SDL_BlitSurface(surface, NULL, newSurface, &destRect);
-
     glBindTexture(GL_TEXTURE_2D, textureHandle);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -2672,8 +2673,6 @@ void imageToGlTexture(GLuint textureHandle, unsigned char *pixelData,
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight,
             0, GL_RGBA, GL_UNSIGNED_BYTE, pixelData);
     glBindTexture(GL_TEXTURE_2D, 0);
-
-    //free(newSurface);
 }
 
 void updateVbo(GLuint *vbo, UiRect* vertices) {
@@ -2815,11 +2814,46 @@ void launch() {
             }
         }
 
+        uint32_t beforeTick = SDL_GetTicks();
         printf("OFFBLAST! %s\n", launchString);
         system(launchString);
+        uint32_t afterTick = SDL_GetTicks();
 
         free(romSlug);
         free(launchString);
+
+        PlayTime *pt = NULL;
+        for (uint32_t i = 0; i < offblast->playTimeFile->nEntries; ++i) {
+            if (offblast->playTimeFile->entries[i].targetSignature 
+                    == target->targetSignature) 
+            {
+                pt = &offblast->playTimeFile->entries[i];
+            }
+        }
+
+        if (pt == NULL) {
+            void *growState = growDbFileIfNecessary(
+                    &offblast->playTimeDb, 
+                    sizeof(PlayTime),
+                    OFFBLAST_DB_TYPE_FIXED); 
+
+            if(growState == NULL) {
+                printf("Couldn't expand the playtime file to "
+                        "accomodate all the playtimes\n");
+                return;
+            }
+            else { 
+                offblast->playTimeFile = (PlayTimeFile*) growState;
+            }
+
+            pt = &offblast->playTimeFile->entries[
+                offblast->playTimeFile->nEntries++];
+
+        }
+
+        pt->msPlayed += (afterTick - beforeTick);
+        pt->lastPlayed = (uint32_t)time(NULL);
+
     }
 }
 

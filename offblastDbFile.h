@@ -60,6 +60,17 @@ typedef struct OffblastBlob {
     char content[];
 } OffblastBlob;
 
+typedef struct PlayTime {
+    uint32_t targetSignature;
+    uint32_t msPlayed;
+    uint32_t lastPlayed;
+} PlayTime;
+
+typedef struct PlayTimeFile {
+    uint32_t nEntries;
+    PlayTime entries[];
+} PlayTimeFile;
+
 
 int InitDbFile(char *, OffblastDbFile *dbFileStruct, 
         size_t itemSize);
