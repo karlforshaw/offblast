@@ -2849,6 +2849,7 @@ void launch() {
             pt = &offblast->playTimeFile->entries[
                 offblast->playTimeFile->nEntries++];
 
+            pt->targetSignature = target->targetSignature;
         }
 
         pt->msPlayed += (afterTick - beforeTick);
