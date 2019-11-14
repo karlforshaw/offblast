@@ -131,12 +131,16 @@ typedef struct Player {
     uint8_t emailHash;
 } Player;
 
+typedef struct Image {
+    uint8_t loadState;
+    GLuint textureHandle;
+    uint32_t width;
+    uint32_t height;
+} Image;
+
 typedef struct UiTile{
     struct LaunchTarget *target;
-    GLuint textureHandle;
-    float textureW;
-    float textureH;
-    uint8_t loadState;
+    Image image;
     struct UiTile *next; 
     struct UiTile *previous; 
 } UiTile;
@@ -181,31 +185,13 @@ typedef struct Animation {
     void (* callback)();
 } Animation;
 
-typedef struct ImageLayer {
-    uint32_t textureValid;
-    GLuint textureHandle;
-    GLuint vbo;
-    UiRect vertices;
-    uint32_t pixelWidth;
-    uint32_t pixelHeight;
-} ImageLayer;
-
-typedef struct GradientLayer {
-    GLuint vbo;
-    UiRect vertices;
-    float xSwap;
-    float ySwap;
-    float offset;
-} GradientLayer;
-
-
 enum UiMode {
     OFFBLAST_UI_MODE_MAIN = 1,
     OFFBLAST_UI_MODE_PLAYER_SELECT = 2,
 };
 
 typedef struct PlayerSelectUi {
-    ImageLayer *playerAvatarLayers;
+    Image *images;
     int32_t cursor;
 } PlayerSelectUi;
 
@@ -222,7 +208,7 @@ typedef struct MainUi {
     Animation *rowNameAnimation;
 
     uint32_t numRows;
-    GLuint coverVbo;
+    GLuint imageVbo;
 
     UiRow *rowCursor;
     UiRow *rows;
@@ -281,7 +267,6 @@ typedef struct OffblastUi {
     GLint gradientColorStartUniform; 
     GLint gradientColorEndUniform; 
 
-
     GLuint textProgram;
     GLint textAlphaUni;
 
@@ -311,7 +296,6 @@ double goldenRatioLarge(double in, uint32_t exponent);
 float goldenRatioLargef(float in, uint32_t exponent);
 void horizontalMoveDone();
 void verticalMoveDone();
-UiTile *rewindTiles(UiTile *fromTile, uint32_t depth);
 void infoFaded();
 void rowNameFaded();
 uint32_t animationRunning();
@@ -319,16 +303,13 @@ void animationTick(Animation *theAnimation);
 const char *platformString(char *key);
 void *downloadCover(void *arg);
 char *getCoverPath();
-void updateVbo(GLuint *vbo, UiRect* vertices);
 GLint loadShaderFile(const char *path, GLenum shaderType);
 GLuint createShaderProgram(GLint vertShader, GLint fragShader);
 void launch();
-void imageToGlTexture(GLuint textureHandle, unsigned char *pixelData, 
+void imageToGlTexture(GLuint *textureHandle, unsigned char *pixelData, 
         uint32_t newWidth, uint32_t newHeight);
-void updateRect(UiRect *vertices, uint32_t rectWidth, uint32_t rectHeight);
 void changeRow(uint32_t direction);
 void changeColumn(uint32_t direction);
-void renderImageLayer(ImageLayer *layer, float x, float y, float a);
 void pressConfirm();
 void updateInfoText();
 void updateDescriptionText();
@@ -649,52 +630,45 @@ void renderGradient(float x, float y, float w, float h,
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
-float getWidthForScaledTile(float scaledHeight, UiTile *tile) {
-    if (tile->textureH == 0) {
+float getWidthForScaledImage(float scaledHeight, Image *image) {
+    if (image->height == 0) {
         return 0;
     }
     else {
-        float exponent = scaledHeight / tile->textureH;
-        return tile->textureW * exponent;
+        float exponent = scaledHeight / image->height;
+        return image->width * exponent;
     }
 }
 
-void renderCover(float x, float y, float w, float h, UiTile* tile) 
+void renderImage(float x, float y, float w, float h, Image* image,
+        float desaturation, float alpha) 
 {
 
     glUseProgram(offblast->imageProgram);
     Quad quad = {};
     initQuad(&quad);
 
-    w = getWidthForScaledTile(h, tile);
+    w = getWidthForScaledImage(h, image);
 
     resizeQuad(x, y, w, h, &quad);
 
-    if (!offblast->mainUi.coverVbo) {
-        glGenBuffers(1, &offblast->mainUi.coverVbo);
-        glBindBuffer(GL_ARRAY_BUFFER, offblast->mainUi.coverVbo);
+    if (!offblast->mainUi.imageVbo) {
+        glGenBuffers(1, &offblast->mainUi.imageVbo);
+        glBindBuffer(GL_ARRAY_BUFFER, offblast->mainUi.imageVbo);
         glBufferData(GL_ARRAY_BUFFER, sizeof(Quad), 
                 &quad, GL_STREAM_DRAW);
     }
     else {
-        glBindBuffer(GL_ARRAY_BUFFER, offblast->mainUi.coverVbo);
+        glBindBuffer(GL_ARRAY_BUFFER, offblast->mainUi.imageVbo);
         glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(Quad), 
                 &quad);
     }
 
-    if (strlen(tile->target->path) == 0 || 
-            strlen(tile->target->fileName) == 0) 
-    {
-        glUniform1f(offblast->imageDesaturateUni, 0.3);
-        glUniform1f(offblast->imageAlphaUni, 0.7);
-    }
-    else {
-        glUniform1f(offblast->imageDesaturateUni, 0.2);
-        glUniform1f(offblast->imageAlphaUni, 1);
-    }
+    glUniform1f(offblast->imageDesaturateUni, desaturation);
+    glUniform1f(offblast->imageAlphaUni, alpha);
 
 
-    glBindTexture(GL_TEXTURE_2D, tile->textureHandle);
+    glBindTexture(GL_TEXTURE_2D, image->textureHandle);
 
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
@@ -713,10 +687,10 @@ void renderCover(float x, float y, float w, float h, UiTile* tile)
 void loadTexture(UiTile *tile) {
 
     // Generate the texture 
-    if (tile->textureHandle == 0 &&
+    if (tile->image.textureHandle == 0 &&
             tile->target->coverUrl != NULL) 
     {
-        if (tile->loadState != LOAD_STATE_LOADED) {
+        if (tile->image.loadState != LOAD_STATE_LOADED) {
 
             char *coverArtPath =
                 getCoverPath(
@@ -729,10 +703,10 @@ void loadTexture(UiTile *tile) {
             free(coverArtPath);
 
 
-            if (tile->loadState == LOAD_STATE_UNKNOWN) {
+            if (tile->image.loadState == LOAD_STATE_UNKNOWN) {
 
                 if(image == NULL) {
-                    tile->loadState = 
+                    tile->image.loadState = 
                         LOAD_STATE_DOWNLOADING;
                     pthread_t theThread;
                     pthread_create(
@@ -742,30 +716,30 @@ void loadTexture(UiTile *tile) {
                             (void*)tile);
                 }
                 else {
-                    tile->loadState = 
+                    tile->image.loadState = 
                         LOAD_STATE_DOWNLOADED;
                 }
             }
 
-            if (tile->loadState == 
+            if (tile->image.loadState == 
                     LOAD_STATE_DOWNLOADED) 
             {
 
-                glGenTextures(1, &tile->textureHandle);
+                glGenTextures(1, &tile->image.textureHandle);
 
                 imageToGlTexture(
-                        tile->textureHandle,
+                        &tile->image.textureHandle,
                         image, w, h);
 
                 printf("texture size: %ux%u\n", w, h);
 
-                tile->textureW = w;
-                tile->textureH = h;
+                tile->image.width = w;
+                tile->image.height = h;
 
                 glBindTexture(GL_TEXTURE_2D, 
-                        tile->textureHandle);
+                        tile->image.textureHandle);
 
-                tile->loadState = LOAD_STATE_LOADED;
+                tile->image.loadState = LOAD_STATE_LOADED;
             }
 
             free(image);
@@ -1384,8 +1358,6 @@ int main(int argc, char** argv) {
         memcpy(&pUser->email, theEmail, emailLen);
         memcpy(&pUser->avatarPath, theAvatarPath, avatarLen);
 
-        printf("got user %u --\n%s\n%s\n%s\n", iUser, 
-                theName, theEmail, theAvatarPath);
     }
 
     User *pUser = &offblast->users[iUser];
@@ -1532,15 +1504,10 @@ int main(int argc, char** argv) {
         offblast->players[i].jsIndex = -1;
     }
 
-    playerSelectUi->playerAvatarLayers = calloc(offblast->nUsers, 
-            sizeof(ImageLayer));
+    playerSelectUi->images = calloc(offblast->nUsers, sizeof(Image));
 
     for (uint32_t i = 0; i < offblast->nUsers; ++i) {
 
-        ImageLayer *avatarLayer = &playerSelectUi->playerAvatarLayers[i];
-        glGenTextures(1, &avatarLayer->textureHandle);
-
-        // TODO we could probably move this into the imageToGL call
         int w, h, n;
         stbi_set_flip_vertically_on_load(1);
         unsigned char *imageData = stbi_load(
@@ -1549,18 +1516,12 @@ int main(int argc, char** argv) {
         if(imageData != NULL) {
 
             imageToGlTexture(
-                    avatarLayer->textureHandle, 
+                    &playerSelectUi->images[i].textureHandle, 
                     imageData, w, h);
 
-            avatarLayer->textureValid = 1;
-            // TODO do we need these now?
-            avatarLayer->pixelWidth = w;
-            avatarLayer->pixelHeight = h;
-            updateRect(&avatarLayer->vertices, 
-                    offblast->mainUi.boxHeight,
-                    offblast->mainUi.boxHeight);
-            updateVbo(&avatarLayer->vbo, &avatarLayer->vertices);
-
+            playerSelectUi->images[i].loadState = 1;
+            playerSelectUi->images[i].width = w;
+            playerSelectUi->images[i].height = h;
         }
         else {
             printf("couldn't load texture for avatar %s\n", 
@@ -1894,9 +1855,9 @@ int main(int argc, char** argv) {
 
                 UiTile *startTile = rowToRender->tileCursor;
                 float startTileW = 
-                    getWidthForScaledTile(mainUi->boxHeight, startTile);
-                float prevTileW = getWidthForScaledTile(
-                        mainUi->boxHeight, startTile->previous);
+                    getWidthForScaledImage(mainUi->boxHeight, &startTile->image);
+                float prevTileW = getWidthForScaledImage(
+                        mainUi->boxHeight, &startTile->previous->image);
 
                 UiTile *tileToRender = startTile;
                 int32_t xAdvance = offblast->winMargin;
@@ -1916,10 +1877,10 @@ int main(int argc, char** argv) {
                     if (iTile < 0) {
                         tileToRender = tileToRender->previous;
                         loadTexture(tileToRender);
-                        tileW = getWidthForScaledTile(mainUi->boxHeight,
-                                tileToRender);
+                        tileW = getWidthForScaledImage(mainUi->boxHeight,
+                                &tileToRender->image);
 
-                        if (tileToRender->textureW == 0) {
+                        if (tileToRender->image.width == 0) {
                             xAdvance -= (mainUi->boxWidth + mainUi->boxPad);
                         } else {
                             xAdvance -= 
@@ -1932,13 +1893,13 @@ int main(int argc, char** argv) {
                         xAdvance = offblast->winMargin;
                     }
                     else {
-                        tileW = getWidthForScaledTile(mainUi->boxHeight,
-                                tileToRender);
+                        tileW = getWidthForScaledImage(mainUi->boxHeight,
+                                &tileToRender->image);
 
                         tileToRender = tileToRender->next;
                         loadTexture(tileToRender);
 
-                        if (tileToRender->textureW == 0) {
+                        if (tileToRender->image.width == 0) {
                             xAdvance += (mainUi->boxWidth + mainUi->boxPad);
                         } else {
                             xAdvance += 
@@ -1994,12 +1955,22 @@ int main(int argc, char** argv) {
 
                     }
 
-                    
                     // COVER
-                    renderCover(xAdvance + xOffset, yOffset,
+                    float desaturate = 0.2;
+                    float alpha = 1.0;
+                    if (strlen(tileToRender->target->path) == 0 || 
+                            strlen(tileToRender->target->fileName) == 0) 
+                    {
+                        desaturate = 0.3;
+                        alpha = 0.7;
+                    }
+
+                    renderImage(xAdvance + xOffset, yOffset,
                             0, 
                             mainUi->boxHeight, 
-                            tileToRender);
+                            &tileToRender->image, 
+                            desaturate, 
+                            alpha);
 
                 }
 
@@ -2085,7 +2056,6 @@ int main(int argc, char** argv) {
         }
         else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
 
-
             // TODO cache all these golden ratio calls they are expensive 
             // to calculate
             renderSomeText(offblast, 
@@ -2095,25 +2065,31 @@ int main(int argc, char** argv) {
                     OFFBLAST_TEXT_TITLE, 1.0, 0,
                     "Who's playing?");
 
+            uint32_t xAdvance = offblast->winMargin;
+
             for (uint32_t i = 0; i < offblast->nUsers; ++i) {
 
-                ImageLayer *avatarLayer = 
-                    &playerSelectUi->playerAvatarLayers[i];
+                Image *image = &playerSelectUi->images[i];
 
                 float alpha = (i == playerSelectUi->cursor) ? 1.0 : 0.7;
                 renderSomeText(offblast, 
-                        (0.128f * offblast->winWidth) + 
-                            (i * offblast->winWidth * 0.15), 
+                        xAdvance,
                         480,
                         OFFBLAST_TEXT_INFO, alpha, 0,
                         offblast->users[i].name);
 
-                renderImageLayer(avatarLayer, 
-                        0.25f + i*0.3, 
-                        0.5f, alpha);
+                float w = getWidthForScaledImage(
+                        offblast->mainUi.boxHeight, image);
+
+                renderImage(
+                        xAdvance,  
+                        offblast->winFold - offblast->mainUi.boxHeight, 
+                        0, offblast->mainUi.boxHeight, 
+                        image, 0.0f, alpha);
+
+                xAdvance += w;
             }
     
-            // need to handle the event
         }
 
         uint32_t frameTime = SDL_GetTicks() - lastTick;
@@ -2339,16 +2315,6 @@ void startVerticalAnimation(
         Animation *titleAnimation,
         uint32_t direction)
 {
-}
-
-UiTile *rewindTiles(UiTile *fromTile, uint32_t depth) {
-    if (depth == 0) {
-        return fromTile;
-    }
-    else {
-        fromTile = fromTile->previous;
-        return rewindTiles(fromTile, --depth);
-    }
 }
 
 
@@ -2603,67 +2569,11 @@ void *downloadCover(void *arg) {
             printf("%s\n", curl_easy_strerror(res));
         }
         else {
-            tileToRender->loadState = LOAD_STATE_DOWNLOADED;
+            tileToRender->image.loadState = LOAD_STATE_DOWNLOADED;
         }
     }
 
     return NULL;
-}
-
-
-void updateRect(UiRect *vertices, uint32_t rectWidth, uint32_t rectHeight) 
-{
-    float winWidth = (float)offblast->winWidth;
-    float winHeight = (float)offblast->winHeight;
-
-    float left = -1.0;
-    float right = left + (2/winWidth*rectWidth);
-    float bottom = -1.0;
-    float top = bottom + (2/winHeight*rectHeight);
-
-
-    (*vertices)[0][0] = left;
-    (*vertices)[0][1] = bottom;
-    (*vertices)[0][2] = 0.0f;
-    (*vertices)[0][3] = 1.0f;
-    (*vertices)[0][4] = 0.0f;
-    (*vertices)[0][5] = 0.0f;
-
-    (*vertices)[1][0] = left;
-    (*vertices)[1][1] = top;
-    (*vertices)[1][2] = 0.0f;
-    (*vertices)[1][3] = 1.0f;
-    (*vertices)[1][4] = 0.0f;
-    (*vertices)[1][5] = 1.0f;
-
-    (*vertices)[2][0] = right;
-    (*vertices)[2][1] = top;
-    (*vertices)[2][2] = 0.0f;
-    (*vertices)[2][3] = 1.0f;
-    (*vertices)[2][4] = 1.0f;
-    (*vertices)[2][5] = 1.0f;
-
-    (*vertices)[3][0] = right;
-    (*vertices)[3][1] = top;
-    (*vertices)[3][2] = 0.0f;
-    (*vertices)[3][3] = 1.0f;
-    (*vertices)[3][4] = 1.0f;
-    (*vertices)[3][5] = 1.0f;
-
-    (*vertices)[4][0] = right;
-    (*vertices)[4][1] = bottom;
-    (*vertices)[4][2] = 0.0f;
-    (*vertices)[4][3] = 1.0f;
-    (*vertices)[4][4] = 1.0f;
-    (*vertices)[4][5] = 0.0f;
-
-    (*vertices)[5][0] = left;
-    (*vertices)[5][1] = bottom;
-    (*vertices)[5][2] = 0.0f;
-    (*vertices)[5][3] = 1.0f;
-    (*vertices)[5][4] = 0.0f;
-    (*vertices)[5][5] = 0.0f;
-
 }
 
 uint32_t powTwoFloor(uint32_t val) {
@@ -2674,10 +2584,11 @@ uint32_t powTwoFloor(uint32_t val) {
     return pow;
 }
 
-void imageToGlTexture(GLuint textureHandle, unsigned char *pixelData, 
+void imageToGlTexture(GLuint *textureHandle, unsigned char *pixelData, 
         uint32_t newWidth, uint32_t newHeight) 
 {
-    glBindTexture(GL_TEXTURE_2D, textureHandle);
+    glGenTextures(1, textureHandle);
+    glBindTexture(GL_TEXTURE_2D, *textureHandle);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -2686,23 +2597,6 @@ void imageToGlTexture(GLuint textureHandle, unsigned char *pixelData,
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight,
             0, GL_RGBA, GL_UNSIGNED_BYTE, pixelData);
     glBindTexture(GL_TEXTURE_2D, 0);
-}
-
-void updateVbo(GLuint *vbo, UiRect* vertices) {
-
-        if (*vbo == 0) {
-            glGenBuffers(1, vbo);
-            glBindBuffer(GL_ARRAY_BUFFER, *vbo);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(UiRect), 
-                    vertices, GL_STATIC_DRAW);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-        }
-        else {
-            glBindBuffer(GL_ARRAY_BUFFER, *vbo);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(UiRect), 
-                    vertices);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-        }
 }
 
 
@@ -2869,24 +2763,6 @@ void launch() {
         pt->lastPlayed = (uint32_t)time(NULL);
 
     }
-}
-
-void renderImageLayer(ImageLayer *layer, float x, float y, float a) {
-
-    glUseProgram(offblast->imageProgram);
-    assert(layer->textureValid);
-
-    glBindTexture(GL_TEXTURE_2D, layer->textureHandle);
-    glBindBuffer(GL_ARRAY_BUFFER, layer->vbo);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 6*sizeof(float), 0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float), 
-            (void*)(4*sizeof(float)));
-    glUniform2f(offblast->imageTranslateUni, x, y);
-    glUniform1f(offblast->imageAlphaUni, a);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
 }
 
 void pressConfirm(int32_t joystickIndex) {
