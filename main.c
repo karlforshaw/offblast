@@ -21,16 +21,15 @@
 //      * get rid of image layers, and anything layer, move to using
 //          quad (remove update VBO, update rect, uirect etc
 //
-//      *. STB TRUETYPE
+//      -. STB TRUETYPE
 //          -- align center (login screen)
 //
-//      *. Recently Played list
+//      -. Recently Played list
 //          -- Use the playtime file to find out which of the games were
 //              most recently played
 //
-//      *. watch out for vram! glDeleteTextures
 //
-// Known Bugs:
+//      BUGS:
 //      - slight flicker on animation sometimes at the end of the fade
 //
 //      - Invalid date format is a thing
@@ -40,8 +39,26 @@
 //          we can load the image and then save it as a jpg
 //          USE STB IMAGE WRITE FOR THIS
 //
-//      * if you add a rom after the platform has been scraped we say we already
+//      - if you add a rom after the platform has been scraped we say we already
 //          have it in the db but this is the target, not the filepath etc
+//
+// Alpha 0.3
+//      - a loading animation for covers
+//      -. watch out for vram! glDeleteTextures
+//          We could move to a tile store object which has a fixed array of
+//          tiles (enough to fill 1.5 screens on both sides) each tile has a 
+//          last on screen tick and when we need to load new textures we evict
+//          the oldest before loading the new texture
+//
+//      - R and L buttons jump to the beginning or end of a list
+//      - better aniations that support incremental jumps if you input a command
+//          during a running animation
+//      - no infinite ribbons, pressing left will eventually load the menu
+//
+//
+// Alpha 0.4 
+//      * pull out side menu, with platform browsing, and exit / shutdown 
+//
 //
 // TODO multidisk PS games.
 //      - need to get smart about detection of multidisk PS games and not
@@ -51,10 +68,6 @@
 //          perhaps when we are detecting tokens we could see if theres a 
 //          "(Disk X)" token in the string and if there is and theres an m3u
 //          file present we use that instead?
-//
-// TODO GFX
-//      * a loading animation 
-//
 //
 // TODO steam support
 //      * looks like if you ls .steam/steam/userdata there's a folder for 
