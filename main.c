@@ -19,9 +19,6 @@
 
 // ALPHA 0.2 HITLIST
 //
-//      -. STB TRUETYPE
-//          -- align center (login screen)
-//
 //      -. Recently Played list
 //          -- Use the playtime file to find out which of the games were
 //              most recently played
@@ -309,6 +306,22 @@ void pressConfirm();
 void updateInfoText();
 void updateDescriptionText();
 void initQuad(Quad* quad);
+
+
+uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata) {
+
+    uint32_t width = 0;
+
+    for (uint32_t i = 0; i < strlen(string); ++i) {
+        int arrOffset = *(string + i) -32;
+        stbtt_bakedchar *b = 
+            (stbtt_bakedchar*) cdata + arrOffset;
+
+        width += b->xadvance;
+    }
+
+    return width;
+}
 
 
 #define OFFBLAST_TEXT_TITLE 1
@@ -2043,26 +2056,24 @@ int main(int argc, char** argv) {
 
             // TODO cache all these golden ratio calls they are expensive 
             // to calculate
+            // cache all the x positions of the text perhaps too?
+            char *titleText = "Who's playing?";
+            uint32_t titleWidth = getTextLineWidth(titleText, 
+                    offblast->titleCharData);
+
             renderText(offblast, 
-                    300, 
+                    offblast->winWidth / 2 - titleWidth / 2, 
                     offblast->winHeight - 
                         goldenRatioLarge(offblast->winHeight, 3), 
                     OFFBLAST_TEXT_TITLE, 1.0, 0,
-                    "Who's playing?");
+                    titleText);
 
             uint32_t xAdvance = offblast->winMargin;
 
             for (uint32_t i = 0; i < offblast->nUsers; ++i) {
 
                 Image *image = &playerSelectUi->images[i];
-
                 float alpha = (i == playerSelectUi->cursor) ? 1.0 : 0.7;
-                renderText(offblast, 
-                        xAdvance,
-                        480,
-                        OFFBLAST_TEXT_INFO, alpha, 0,
-                        offblast->users[i].name);
-
                 float w = getWidthForScaledImage(
                         offblast->mainUi.boxHeight, image);
 
@@ -2071,6 +2082,17 @@ int main(int argc, char** argv) {
                         offblast->winFold - offblast->mainUi.boxHeight, 
                         0, offblast->mainUi.boxHeight, 
                         image, 0.0f, alpha);
+
+                uint32_t nameWidth = getTextLineWidth(
+                        offblast->users[i].name,
+                        offblast->infoCharData);
+
+                renderText(offblast, 
+                        xAdvance +  w / 2 - nameWidth / 2,
+                        offblast->winFold - offblast->mainUi.boxHeight - 
+                            offblast->mainUi.boxPad - offblast->infoPointSize, 
+                        OFFBLAST_TEXT_INFO, alpha, 0,
+                        offblast->users[i].name);
 
                 xAdvance += w;
             }
