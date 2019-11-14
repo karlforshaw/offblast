@@ -20,9 +20,8 @@
 // ALPHA 0.2 HITLIST
 //
 //      -. Recently Played list
-//          -- Use the playtime file to find out which of the games were
-//              most recently played
-//
+//          got jump back in and most played working but theres a bug in the
+//          order of the lists I need to figure out
 //
 //      BUGS:
 //      - slight flicker on animation sometimes at the end of the fade
@@ -307,6 +306,31 @@ void updateInfoText();
 void updateDescriptionText();
 void initQuad(Quad* quad);
 
+int playTimeSort(const void *a, const void *b) {
+
+    PlayTime *ra = (PlayTime*) a;
+    PlayTime *rb = (PlayTime*) b;
+
+    if (ra->msPlayed < rb->msPlayed)
+        return -1;
+    else if (ra->msPlayed > rb->msPlayed)
+        return +1;
+    else
+        return 0;
+}
+
+int lastPlayedSort(const void *a, const void *b) {
+
+    PlayTime *ra = (PlayTime*) a;
+    PlayTime *rb = (PlayTime*) b;
+
+    if (ra->lastPlayed < rb->lastPlayed)
+        return -1;
+    else if (ra->lastPlayed > rb->lastPlayed)
+        return +1;
+    else
+        return 0;
+}
 
 uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata) {
 
@@ -1587,9 +1611,107 @@ int main(int argc, char** argv) {
     // rows for now:
     // 1. Your Library
     // 2. Essential *platform" 
-    mainUi->rows = calloc(1 + nPlatforms, sizeof(UiRow));
+    mainUi->rows = calloc(3 + nPlatforms, sizeof(UiRow));
     mainUi->numRows = 0;
     mainUi->rowCursor = mainUi->rows;
+
+
+    size_t playTimeFileSize = sizeof(PlayTimeFile) + 
+        offblast->playTimeFile->nEntries * sizeof(PlayTime);
+    PlayTimeFile *tempFile = malloc(playTimeFileSize);
+    assert(tempFile);
+    memcpy(tempFile, offblast->playTimeFile, playTimeFileSize);
+
+    // __ROW__ "Jump back in" 
+    if (offblast->playTimeFile->nEntries) {
+
+        uint32_t tileLimit = 25;
+        UiTile *tiles = calloc(tileLimit, sizeof(UiTile));
+        assert(tiles);
+
+        uint32_t tileCount = 0;
+
+        // TODO regen these lists after we exit a play session
+        qsort(tempFile->entries, tempFile->nEntries, 
+               sizeof(PlayTime),
+               lastPlayedSort);
+
+        // Sort
+        for (int32_t i = tempFile->nEntries-1; i >= 0; --i) {
+
+            PlayTime* pt = (PlayTime*) &tempFile->entries[i];
+            int32_t targetIndex = launchTargetIndexByTargetSignature(
+                    launchTargetFile,
+                    pt->targetSignature);
+
+            LaunchTarget *target = &launchTargetFile->entries[targetIndex];
+            tiles[tileCount].target = target;
+            tiles[tileCount].next = &tiles[tileCount+1];
+            if (tileCount != 0) 
+                tiles[tileCount].previous = &tiles[tileCount-1];
+
+            tileCount++;
+            if (tileCount >= tileLimit) break;
+        }
+
+        if (tileCount > 0) {
+
+            tiles[tileCount-1].next = &tiles[0];
+            tiles[0].previous = &tiles[tileCount-1];
+
+            mainUi->rows[mainUi->numRows].tiles = tiles; 
+            mainUi->rows[mainUi->numRows].tileCursor = tiles;
+            mainUi->rows[mainUi->numRows].name = "Jump back in";
+            mainUi->rows[mainUi->numRows].length = tileCount; 
+            mainUi->numRows++;
+        }
+    }
+
+    // __ROW__ "Most played" 
+    if (offblast->playTimeFile->nEntries) {
+
+        uint32_t tileLimit = 25;
+        UiTile *tiles = calloc(tileLimit, sizeof(UiTile));
+        assert(tiles);
+
+        uint32_t tileCount = 0;
+
+        qsort(tempFile->entries, tempFile->nEntries, 
+               sizeof(PlayTime),
+               playTimeSort);
+
+        // Sort
+        for (int32_t i = tempFile->nEntries-1; i >= 0; --i) {
+
+            PlayTime* pt = (PlayTime*) &tempFile->entries[i];
+            int32_t targetIndex = launchTargetIndexByTargetSignature(
+                    launchTargetFile,
+                    pt->targetSignature);
+
+            LaunchTarget *target = &launchTargetFile->entries[targetIndex];
+            tiles[tileCount].target = target;
+            tiles[tileCount].next = &tiles[tileCount+1];
+            if (tileCount != 0) 
+                tiles[tileCount].previous = &tiles[tileCount-1];
+
+            tileCount++;
+            if (tileCount >= tileLimit) break;
+        }
+
+
+        if (tileCount > 0) {
+
+            tiles[tileCount-1].next = &tiles[0];
+            tiles[0].previous = &tiles[tileCount-1];
+
+            mainUi->rows[mainUi->numRows].tiles = tiles; 
+            mainUi->rows[mainUi->numRows].tileCursor = tiles;
+            mainUi->rows[mainUi->numRows].name = "Most played";
+            mainUi->rows[mainUi->numRows].length = tileCount; 
+            mainUi->numRows++;
+        }
+    }
+    free(tempFile);
 
     // __ROW__ "Your Library"
     uint32_t libraryLength = 0;
