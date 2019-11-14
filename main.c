@@ -20,8 +20,7 @@
 // ALPHA 0.2 HITLIST
 //
 //      -. Recently Played list
-//          got jump back in and most played working but theres a bug in the
-//          order of the lists I need to figure out
+//          rows are being drawn from the top upwards! need to reverse the order
 //
 //      BUGS:
 //      - slight flicker on animation sometimes at the end of the fade
