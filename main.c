@@ -19,9 +19,6 @@
 
 // ALPHA 0.2 HITLIST
 //
-//      -. Recently Played list
-//          rows are being drawn from the top upwards! need to reverse the order
-//
 //      BUGS:
 //      - slight flicker on animation sometimes at the end of the fade
 //
@@ -1966,8 +1963,8 @@ int main(int argc, char** argv) {
         if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
 
             // Blocks
-            UiRow *rowToRender = mainUi->rowCursor->previousRow;
-            rowToRender = rowToRender->previousRow;
+            UiRow *rowToRender = mainUi->rowCursor->nextRow;
+            rowToRender = rowToRender->nextRow;
 
             // § blocks
             for (int32_t iRow = -2; iRow < ROWS_TOTAL-2; iRow++) {
@@ -2093,7 +2090,7 @@ int main(int argc, char** argv) {
 
                 }
 
-                rowToRender = rowToRender->nextRow;
+                rowToRender = rowToRender->previousRow;
             }
 
             glUniform1f(offblast->imageDesaturateUni, 0.0f);
@@ -2426,14 +2423,14 @@ void changeRow(uint32_t direction)
         ui->rowNameAnimation->callback = &rowNameFaded;
 
         if (direction == 0) {
-            ui->movingToRow = ui->rowCursor->previousRow;
-            ui->movingToTarget = 
-                ui->rowCursor->previousRow->tileCursor->target;
-        }
-        else {
             ui->movingToRow = ui->rowCursor->nextRow;
             ui->movingToTarget = 
                 ui->rowCursor->nextRow->tileCursor->target;
+        }
+        else {
+            ui->movingToRow = ui->rowCursor->previousRow;
+            ui->movingToTarget = 
+                ui->rowCursor->previousRow->tileCursor->target;
         }
     }
 }
@@ -2478,7 +2475,7 @@ void horizontalMoveDone() {
 
 void verticalMoveDone() {
     MainUi *ui = &offblast->mainUi;
-    if (ui->verticalAnimation->direction == 1) {
+    if (ui->verticalAnimation->direction == 0) {
         ui->rowCursor = 
             ui->rowCursor->nextRow;
     }
