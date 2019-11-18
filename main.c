@@ -2475,14 +2475,7 @@ void horizontalMoveDone() {
 
 void verticalMoveDone() {
     MainUi *ui = &offblast->mainUi;
-    if (ui->verticalAnimation->direction == 0) {
-        ui->rowCursor = 
-            ui->rowCursor->nextRow;
-    }
-    else {
-        ui->rowCursor = 
-            ui->rowCursor->previousRow;
-    }
+        ui->rowCursor = ui->movingToRow;
 }
 
 void infoFaded() {
