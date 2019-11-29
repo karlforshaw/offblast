@@ -271,6 +271,10 @@ typedef struct OffblastUi {
 
 } OffblastUi;
 
+typedef struct CurlFetch {
+    size_t size;
+    char *data;
+} CurlFetch;
 
 
 uint32_t megabytes(uint32_t n);
@@ -301,6 +305,27 @@ void pressConfirm();
 void updateInfoText();
 void updateDescriptionText();
 void initQuad(Quad* quad);
+
+size_t curlWrite(void *contents, size_t size, size_t nmemb, void *userP)
+{
+    size_t realSize = size * nmemb;
+    CurlFetch *fetch = (CurlFetch *)userP;
+
+    // TODO why add one byte?
+    fetch->data = realloc(fetch->data, fetch->size + realSize + 1);
+
+    if (fetch->data == NULL) {
+        printf("Error: couldn't expand cover buffer\n");
+        free(fetch->data);
+        return -1;
+    }
+
+    memcpy(&(fetch->data[fetch->size]), contents, realSize);
+    fetch->size =+ realSize;
+    fetch->data[fetch->size] = 0;
+
+    return realSize;
+}
 
 int playTimeSort(const void *a, const void *b) {
 
@@ -2652,44 +2677,55 @@ void *downloadCover(void *arg) {
 
     UiTile* tileToRender = (UiTile *)arg;
     char *coverArtPath = getCoverPath(tileToRender->target->targetSignature); 
-    FILE *fd = fopen(coverArtPath, "wb");
-    free(coverArtPath);
+    CurlFetch fetch = {};
 
-    if (!fd) {
-        printf("Can't open file for write\n");
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        printf("CURL init fail.\n");
+        return NULL;
     }
-    else {
+    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
-        curl_global_init(CURL_GLOBAL_DEFAULT);
-        CURL *curl = curl_easy_init();
-        if (!curl) {
-            printf("CURL init fail.\n");
+    char *url = (char *) 
+        tileToRender->target->coverUrl;
+
+    printf("Downloading Art for %s\n", 
+            tileToRender->target->name);
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+
+    uint32_t res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        printf("%s\n", curl_easy_strerror(res));
+        return NULL;
+    } else {
+
+        int w, h, channels;
+        unsigned char *image = stbi_load_from_memory((void*)&fetch.data, fetch.size, &w, &h, &channels, 4);
+
+        if (image == NULL) {
+            printf("Couldnt load the image from memory");
             return NULL;
         }
-        //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-        curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
-        char *url = (char *) 
-            tileToRender->target->coverUrl;
-
-        printf("Downloading Art for %s\n", 
-                tileToRender->target->name);
-
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fd);
-
-        uint32_t res = curl_easy_perform(curl);
-
-        curl_easy_cleanup(curl);
-        fclose(fd);
-
-        if (res != CURLE_OK) {
-            printf("%s\n", curl_easy_strerror(res));
+        if (!stbi_write_jpg(coverArtPath, w, h, 1, image, 100)) {
+            printf("Couldnt save JPG");
         }
         else {
+            free(image);
             tileToRender->image.loadState = LOAD_STATE_DOWNLOADED;
         }
     }
+
+    // TODO free image? 
+    free(coverArtPath);
+    free(fetch.data);
 
     return NULL;
 }
