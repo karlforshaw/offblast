@@ -273,7 +273,7 @@ typedef struct OffblastUi {
 
 typedef struct CurlFetch {
     size_t size;
-    char *data;
+    unsigned char *data;
 } CurlFetch;
 
 
@@ -312,7 +312,7 @@ size_t curlWrite(void *contents, size_t size, size_t nmemb, void *userP)
     CurlFetch *fetch = (CurlFetch *)userP;
 
     // TODO why add one byte?
-    fetch->data = realloc(fetch->data, fetch->size + realSize + 1);
+    fetch->data = realloc(fetch->data, fetch->size + realSize);
 
     if (fetch->data == NULL) {
         printf("Error: couldn't expand cover buffer\n");
@@ -321,8 +321,8 @@ size_t curlWrite(void *contents, size_t size, size_t nmemb, void *userP)
     }
 
     memcpy(&(fetch->data[fetch->size]), contents, realSize);
-    fetch->size =+ realSize;
-    fetch->data[fetch->size] = 0;
+    fetch->size += realSize;
+    //fetch->data[fetch->size] = 0;
 
     return realSize;
 }
@@ -2707,14 +2707,16 @@ void *downloadCover(void *arg) {
     } else {
 
         int w, h, channels;
-        unsigned char *image = stbi_load_from_memory((void*)&fetch.data, fetch.size, &w, &h, &channels, 4);
+        unsigned char *image = stbi_load_from_memory(fetch.data, fetch.size, &w, &h, &channels, 4);
 
         if (image == NULL) {
-            printf("Couldnt load the image from memory");
+            printf("Couldnt load the image from memory\n");
             return NULL;
         }
 
-        if (!stbi_write_jpg(coverArtPath, w, h, 1, image, 100)) {
+        stbi_flip_vertically_on_write(1);
+        if (!stbi_write_jpg(coverArtPath, w, h, 4, image, 100)) {
+            free(image);
             printf("Couldnt save JPG");
         }
         else {
@@ -2723,7 +2725,6 @@ void *downloadCover(void *arg) {
         }
     }
 
-    // TODO free image? 
     free(coverArtPath);
     free(fetch.data);
 
