@@ -21,14 +21,7 @@
 //
 //      BUGS:
 //      - slight flicker on animation sometimes at the end of the fade
-//
 //      - Invalid date format is a thing
-//
-//      - Only JPG covers are supported
-//          The image library supports writing out images to different formats
-//          we can load the image and then save it as a jpg
-//          USE STB IMAGE WRITE FOR THIS
-//
 //      - if you add a rom after the platform has been scraped we say we already
 //          have it in the db but this is the target, not the filepath etc
 //
