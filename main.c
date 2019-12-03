@@ -7,10 +7,10 @@
 #define MAX_LAUNCH_COMMAND_LENGTH 512
 #define MAX_PLATFORMS 50 
 
-#define LOAD_STATE_UNKNOWN 0
-#define LOAD_STATE_DOWNLOADING 1
-#define LOAD_STATE_DOWNLOADED 2
-#define LOAD_STATE_LOADED 3
+#define LOAD_STATE_COLD 0
+#define LOAD_STATE_LOADING 1
+#define LOAD_STATE_READY 2
+#define LOAD_STATE_COMPLETE 3
 
 #define OFFBLAST_NOWRAP 0
 #define OFFBLAST_MAX_PLAYERS 4
@@ -18,10 +18,6 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // ALPHA 0.2 HITLIST
-//
-//      BUGS:
-//      - slight flicker on animation sometimes at the end of the fade
-//      - Invalid date format is a thing
 //      - if you add a rom after the platform has been scraped we say we already
 //          have it in the db but this is the target, not the filepath etc
 //
@@ -39,8 +35,10 @@
 //      - no infinite ribbons, pressing left will eventually load the menu
 //
 //
+//
 // Alpha 0.4 
 //      * pull out side menu, with platform browsing, and exit / shutdown 
+//      - Invalid date format is a thing
 //
 //
 // TODO multidisk PS games.
@@ -119,6 +117,7 @@ typedef struct Image {
     GLuint textureHandle;
     uint32_t width;
     uint32_t height;
+    unsigned char *atlas;
 } Image;
 
 typedef struct UiTile{
@@ -285,7 +284,8 @@ void rowNameFaded();
 uint32_t animationRunning();
 void animationTick(Animation *theAnimation);
 const char *platformString(char *key);
-void *downloadCover(void *arg);
+void *downloadCover(char *coverArtUrl, UiTile *tile);
+void *loadCover(void *arg);
 char *getCoverPath();
 GLint loadShaderFile(const char *path, GLenum shaderType);
 GLuint createShaderProgram(GLint vertShader, GLint fragShader);
@@ -726,59 +726,31 @@ void loadTexture(UiTile *tile) {
     if (tile->image.textureHandle == 0 &&
             tile->target->coverUrl != NULL) 
     {
-        if (tile->image.loadState != LOAD_STATE_LOADED) {
+        if (tile->image.loadState == LOAD_STATE_COLD) {
 
-            char *coverArtPath =
-                getCoverPath(
-                        tile->target->targetSignature); 
+            // Start a loading thread
+            pthread_t theThread;
+            pthread_create(
+                    &theThread, 
+                    NULL, 
+                    loadCover, 
+                    (void*)tile);
+        }
 
-            int w, h, n;
-            stbi_set_flip_vertically_on_load(1);
-            unsigned char *image = stbi_load(
-                    coverArtPath, &w, &h, &n, 4);
-            free(coverArtPath);
+        if (tile->image.loadState == LOAD_STATE_READY) {
 
+            glGenTextures(1, &tile->image.textureHandle);
+            imageToGlTexture(
+                    &tile->image.textureHandle,
+                    tile->image.atlas, 
+                    tile->image.width,
+                    tile->image.height);
 
-            if (tile->image.loadState == LOAD_STATE_UNKNOWN) {
+            glBindTexture(GL_TEXTURE_2D, 
+                    tile->image.textureHandle);
 
-                if(image == NULL) {
-                    tile->image.loadState = 
-                        LOAD_STATE_DOWNLOADING;
-                    pthread_t theThread;
-                    pthread_create(
-                            &theThread, 
-                            NULL, 
-                            downloadCover, 
-                            (void*)tile);
-                }
-                else {
-                    tile->image.loadState = 
-                        LOAD_STATE_DOWNLOADED;
-                }
-            }
-
-            if (tile->image.loadState == 
-                    LOAD_STATE_DOWNLOADED) 
-            {
-
-                glGenTextures(1, &tile->image.textureHandle);
-
-                imageToGlTexture(
-                        &tile->image.textureHandle,
-                        image, w, h);
-
-                printf("texture size: %ux%u\n", w, h);
-
-                tile->image.width = w;
-                tile->image.height = h;
-
-                glBindTexture(GL_TEXTURE_2D, 
-                        tile->image.textureHandle);
-
-                tile->image.loadState = LOAD_STATE_LOADED;
-            }
-
-            free(image);
+            tile->image.loadState = LOAD_STATE_COMPLETE;
+            free(tile->image.atlas);
         }
     }
 }
@@ -2665,11 +2637,48 @@ char *getCoverPath(uint32_t signature) {
     return coverArtPath;
 }
 
+void *loadCover(void *arg) {
 
-void *downloadCover(void *arg) {
+    UiTile* tile = (UiTile *)arg;
+    tile->image.loadState = 
+        LOAD_STATE_LOADING;
 
-    UiTile* tileToRender = (UiTile *)arg;
-    char *coverArtPath = getCoverPath(tileToRender->target->targetSignature); 
+    char *coverArtPath = getCoverPath(tile->target->targetSignature); 
+
+    int n;
+    stbi_set_flip_vertically_on_load(1);
+    tile->image.atlas = stbi_load(
+            coverArtPath,
+            (int*)&tile->image.width, (int*)&tile->image.height, 
+            &n, 4);
+
+    if(tile->image.atlas == NULL) {
+
+        printf("need to download %s\n", coverArtPath);
+
+        downloadCover(coverArtPath, tile);
+        tile->image.atlas = stbi_load(
+                coverArtPath,
+                (int*)&tile->image.width, (int*)&tile->image.height, 
+                &n, 4);
+
+        if (tile->image.atlas == NULL) {
+            printf("giving up on downloading cover\n");
+            free(coverArtPath);
+            return NULL;
+        }
+
+    }
+
+    tile->image.loadState = LOAD_STATE_READY;
+
+    free(coverArtPath);
+
+    return NULL;
+}
+
+void *downloadCover(char *coverArtPath, UiTile *tile) {
+
     CurlFetch fetch = {};
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -2682,10 +2691,10 @@ void *downloadCover(void *arg) {
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
     char *url = (char *) 
-        tileToRender->target->coverUrl;
+        tile->target->coverUrl;
 
     printf("Downloading Art for %s\n", 
-            tileToRender->target->name);
+            tile->target->name);
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
@@ -2714,13 +2723,10 @@ void *downloadCover(void *arg) {
         }
         else {
             free(image);
-            tileToRender->image.loadState = LOAD_STATE_DOWNLOADED;
         }
     }
 
-    free(coverArtPath);
     free(fetch.data);
-
     return NULL;
 }
 
