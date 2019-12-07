@@ -15,12 +15,12 @@
 #define OFFBLAST_NOWRAP 0
 #define OFFBLAST_MAX_PLAYERS 4
 
+#define OFFBLAST_TEXT_TITLE 1
+#define OFFBLAST_TEXT_INFO 2
+#define OFFBLAST_TEXT_DEBUG 3
+
 #define NAVIGATION_MOVE_DURATION 250 
 
-// ALPHA 0.2 HITLIST
-//      - if you add a rom after the platform has been scraped we say we already
-//          have it in the db but this is the target, not the filepath etc
-//
 // Alpha 0.3
 //      - a loading animation for covers
 //      -. watch out for vram! glDeleteTextures
@@ -298,462 +298,26 @@ void pressConfirm();
 void updateInfoText();
 void updateDescriptionText();
 void initQuad(Quad* quad);
-
-size_t curlWrite(void *contents, size_t size, size_t nmemb, void *userP)
-{
-    size_t realSize = size * nmemb;
-    CurlFetch *fetch = (CurlFetch *)userP;
-
-    // TODO why add one byte?
-    fetch->data = realloc(fetch->data, fetch->size + realSize);
-
-    if (fetch->data == NULL) {
-        printf("Error: couldn't expand cover buffer\n");
-        free(fetch->data);
-        return -1;
-    }
-
-    memcpy(&(fetch->data[fetch->size]), contents, realSize);
-    fetch->size += realSize;
-    //fetch->data[fetch->size] = 0;
-
-    return realSize;
-}
-
-int playTimeSort(const void *a, const void *b) {
-
-    PlayTime *ra = (PlayTime*) a;
-    PlayTime *rb = (PlayTime*) b;
-
-    if (ra->msPlayed < rb->msPlayed)
-        return -1;
-    else if (ra->msPlayed > rb->msPlayed)
-        return +1;
-    else
-        return 0;
-}
-
-int lastPlayedSort(const void *a, const void *b) {
-
-    PlayTime *ra = (PlayTime*) a;
-    PlayTime *rb = (PlayTime*) b;
-
-    if (ra->lastPlayed < rb->lastPlayed)
-        return -1;
-    else if (ra->lastPlayed > rb->lastPlayed)
-        return +1;
-    else
-        return 0;
-}
-
-uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata) {
-
-    uint32_t width = 0;
-
-    for (uint32_t i = 0; i < strlen(string); ++i) {
-        int arrOffset = *(string + i) -32;
-        stbtt_bakedchar *b = 
-            (stbtt_bakedchar*) cdata + arrOffset;
-
-        width += b->xadvance;
-    }
-
-    return width;
-}
-
-
-#define OFFBLAST_TEXT_TITLE 1
-#define OFFBLAST_TEXT_INFO 2
-#define OFFBLAST_TEXT_DEBUG 3
+size_t curlWrite(void *contents, size_t size, size_t nmemb, void *userP);
+int playTimeSort(const void *a, const void *b);
+int lastPlayedSort(const void *a, const void *b);
+uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata);
 void renderText(OffblastUi *offblast, float x, float y, 
-        uint32_t textMode, float alpha, uint32_t lineMaxW, char *string) 
-{
-
-    glUseProgram(offblast->textProgram);
-    glEnable(GL_TEXTURE_2D);
-
-    uint32_t currentLine = 0;
-    uint32_t currentWidth = 0;
-    uint32_t lineHeight = 0;
-    float originalX = x;
-
-    void *cdata = NULL;
-
-    switch (textMode) {
-        case OFFBLAST_TEXT_TITLE:
-            glBindTexture(GL_TEXTURE_2D, offblast->titleTextTexture);
-            cdata = offblast->titleCharData;
-            lineHeight = offblast->titlePointSize * 1.2;
-            break;
-
-        case OFFBLAST_TEXT_INFO:
-            glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
-            cdata = offblast->infoCharData;
-            lineHeight = offblast->infoPointSize * 1.2;
-            break;
-
-        case OFFBLAST_TEXT_DEBUG:
-            glBindTexture(GL_TEXTURE_2D, offblast->debugTextTexture);
-            cdata = offblast->debugCharData;
-            lineHeight = offblast->debugPointSize * 1.2;
-            break;
-
-        default:
-            return;
-    }
-
-    float winWidth = (float)offblast->winWidth;
-    float winHeight = (float)offblast->winHeight;
-    y = winHeight - y;
-
-    char *trailingString = NULL;
-
-    for (uint32_t i= 0; *string; ++i) {
-        if (*string >= 32 && *string < 128) {
-
-            stbtt_aligned_quad q;
-            stbtt_GetBakedQuad(cdata,
-                    offblast->textBitmapWidth, offblast->textBitmapHeight, 
-                    *string-32, &x, &y, &q, 1);
-
-            currentWidth += (q.x1 - q.x0);
-
-            if (lineMaxW > 0 && trailingString == NULL) {
-
-                float wordWidth = 0.0f;
-                if (*(string) == ' ') {
-
-                    uint32_t curCharOffset = 1;
-                    wordWidth = 0.0f;
-
-                    while (1) {
-                        if (*(string + curCharOffset) == ' ' ||
-                                *(string + curCharOffset) == 0) break;
-
-                        int arrOffset = *(string + curCharOffset) -32;
-                        stbtt_bakedchar *b = 
-                            (stbtt_bakedchar*) cdata + arrOffset;
-
-                        wordWidth += b->xadvance;
-                        curCharOffset++;
-                    }
-
-                }
-
-                if (currentWidth + (int)(wordWidth + 0.5f) > lineMaxW) {
-
-                    if (currentLine >= 6) {
-                        trailingString = "...";
-                        string = trailingString;
-                        continue;
-                    }
-
-                    ++currentLine;
-                    currentWidth = q.x1 - q.x0;
-
-                    x = originalX;
-                    y += lineHeight;
-                }
-            }
-
-
-            float left = -1 + (2/winWidth * q.x0);
-            float right = -1 + (2/winWidth * q.x1);
-            float top = -1 + (2/winHeight * (winHeight - q.y0));
-            float bottom = -1 + (2/winHeight * (winHeight -q.y1));
-            float texLeft = q.s0;
-            float texRight = q.s1;
-            float texTop = q.t0;
-            float texBottom = q.t1;
-
-            Quad quad = {};
-            initQuad(&quad);
-
-            quad.vertices[0].x = left;
-            quad.vertices[0].y = bottom;
-            quad.vertices[0].tx = texLeft;
-            quad.vertices[0].ty = texBottom;
-
-            quad.vertices[1].x = left;
-            quad.vertices[1].y = top;
-            quad.vertices[1].tx = texLeft;
-            quad.vertices[1].ty = texTop;
-
-            quad.vertices[2].x = right;
-            quad.vertices[2].y = top;
-            quad.vertices[2].tx = texRight;
-            quad.vertices[2].ty = texTop;
-
-            quad.vertices[3].x = right;
-            quad.vertices[3].y = top;
-            quad.vertices[3].tx = texRight;
-            quad.vertices[3].ty = texTop;
-
-            quad.vertices[4].x = right;
-            quad.vertices[4].y = bottom;
-            quad.vertices[4].tx = texRight;
-            quad.vertices[4].ty = texBottom;
-
-            quad.vertices[5].x = left;
-            quad.vertices[5].y = bottom;
-            quad.vertices[5].tx = texLeft;
-            quad.vertices[5].ty = texBottom;
-
-            if (offblast->textVbo == 0) {
-                glGenBuffers(1, &offblast->textVbo);
-                glBindBuffer(GL_ARRAY_BUFFER, offblast->textVbo);
-                glBufferData(GL_ARRAY_BUFFER, sizeof(Quad), 
-                        &quad.vertices, GL_STREAM_DRAW);
-            }
-            else {
-                glBindBuffer(GL_ARRAY_BUFFER, offblast->textVbo);
-                glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(Quad), 
-                        &quad.vertices);
-            }
-
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), 0);
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), 
-                    (void*)(4*sizeof(float)));
-
-            if (trailingString) {
-                alpha *= 0.85;
-            }
-
-            glUniform1f(offblast->textAlphaUni, alpha);
-            glDrawArrays(GL_TRIANGLES, 0, 6);
-
-            glUniform1f(offblast->textAlphaUni, 1.0f);
-        }
-
-        ++string;
-    }
-
-    glDisableVertexAttribArray(0);
-    glDisableVertexAttribArray(1);
-    glUseProgram(0);
-
-}
-
+        uint32_t textMode, float alpha, uint32_t lineMaxW, char *string);
+void initQuad(Quad* quad);
+void resizeQuad(float x, float y, float w, float h, Quad *quad);
+void renderGradient(float x, float y, float w, float h, 
+        uint32_t horizontal, Color colorStart, Color colorEnd);
+float getWidthForScaledImage(float scaledHeight, Image *image);
+void renderImage(float x, float y, float w, float h, Image* image,
+        float desaturation, float alpha);
+void loadTexture(UiTile *tile);
 
 
 OffblastUi *offblast;
 
 
 
-void initQuad(Quad* quad) {
-    for (uint32_t i = 0; i < 6; ++i) {
-        quad->vertices[i].x = 0.0f;
-        quad->vertices[i].y = 0.0f;
-        quad->vertices[i].z = 0.0f;
-        quad->vertices[i].s = 1.0f;
-
-        if (i == 0) {
-            quad->vertices[i].tx = 0.0f;
-            quad->vertices[i].ty = 0.0f;
-        }
-        if (i == 1) {
-            quad->vertices[i].tx = 0.0f;
-            quad->vertices[i].ty = 1.0f;
-        }
-        if (i == 2) {
-            quad->vertices[i].tx = 1.0f;
-            quad->vertices[i].ty = 1.0f;
-        }
-        if (i == 3) {
-            quad->vertices[i].tx = 1.0f;
-            quad->vertices[i].ty = 1.0f;
-        }
-        if (i == 4) {
-            quad->vertices[i].tx = 1.0f;
-            quad->vertices[i].ty = 0.0f;
-        }
-        if (i == 5) {
-            quad->vertices[i].tx = 0.0f;
-            quad->vertices[i].ty = 0.0f;
-        }
-
-        // TODO should probably init the color to black
-    }
-}
-
-
-void resizeQuad(float x, float y, float w, float h, Quad *quad) {
-
-    float left = -1.0f + (2.0f/offblast->winWidth * x);
-    float bottom = -1.0f + (2.0f/offblast->winHeight * y);
-    float right = -1.0f + (2.0f/offblast->winWidth * (x+w));
-    float top = -1.0f + (2.0f/offblast->winHeight * (y+h));
-
-    quad->vertices[0].x = left;
-    quad->vertices[0].y = bottom;
-
-    quad->vertices[1].x = left;
-    quad->vertices[1].y = top;
-
-    quad->vertices[2].x = right;
-    quad->vertices[2].y = top;
-
-    quad->vertices[3].x = right;
-    quad->vertices[3].y = top;
-
-    quad->vertices[4].x = right;
-    quad->vertices[4].y = bottom;
-
-    quad->vertices[5].x = left;
-    quad->vertices[5].y = bottom;
-}
-
-
-void renderGradient(float x, float y, float w, float h, 
-        uint32_t horizontal, Color colorStart, Color colorEnd) 
-{
-
-    Quad quad = {};
-    initQuad(&quad);
-    resizeQuad(x, y, w, h, &quad);
-
-    if (horizontal) {
-        quad.vertices[0].color = colorStart;
-        quad.vertices[1].color = colorStart;
-        quad.vertices[2].color = colorEnd;
-        quad.vertices[3].color = colorEnd;
-        quad.vertices[4].color = colorEnd;
-        quad.vertices[5].color = colorStart;
-    }
-    else {
-        quad.vertices[0].color = colorStart;
-        quad.vertices[1].color = colorEnd;
-        quad.vertices[2].color = colorEnd;
-        quad.vertices[3].color = colorEnd;
-        quad.vertices[4].color = colorStart;
-        quad.vertices[5].color = colorStart;
-    }
-
-    // TODO if the h and w haven't changed we don't actually
-    // need to rebuffer the vertex data, we could just use a uniform
-    // for the vertex shader?
-
-    if (!offblast->gradientVbo) {
-        glGenBuffers(1, &offblast->gradientVbo);
-        glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(Quad), 
-                &quad, GL_STREAM_DRAW);
-    }
-    else {
-        glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(Quad), 
-                &quad);
-    }
-
-    glUniform4f(offblast->gradientColorStartUniform, 
-            colorStart.r, colorStart.g, colorStart.b, colorStart.a);
-    glUniform4f(offblast->gradientColorEndUniform, 
-            colorEnd.r, colorEnd.g, colorEnd.b, colorEnd.a);
-
-    glUseProgram(offblast->gradientProgram);
-    glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
-
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
-            sizeof(Vertex), 0);
-
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 
-            sizeof(Vertex), (void*)(6*sizeof(float)));
-
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-}
-
-float getWidthForScaledImage(float scaledHeight, Image *image) {
-    if (image->height == 0) {
-        return 0;
-    }
-    else {
-        float exponent = scaledHeight / image->height;
-        return image->width * exponent;
-    }
-}
-
-void renderImage(float x, float y, float w, float h, Image* image,
-        float desaturation, float alpha) 
-{
-
-    glUseProgram(offblast->imageProgram);
-    Quad quad = {};
-    initQuad(&quad);
-
-    w = getWidthForScaledImage(h, image);
-
-    resizeQuad(x, y, w, h, &quad);
-
-    if (!offblast->mainUi.imageVbo) {
-        glGenBuffers(1, &offblast->mainUi.imageVbo);
-        glBindBuffer(GL_ARRAY_BUFFER, offblast->mainUi.imageVbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(Quad), 
-                &quad, GL_STREAM_DRAW);
-    }
-    else {
-        glBindBuffer(GL_ARRAY_BUFFER, offblast->mainUi.imageVbo);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(Quad), 
-                &quad);
-    }
-
-    glUniform1f(offblast->imageDesaturateUni, desaturation);
-    glUniform1f(offblast->imageAlphaUni, alpha);
-
-
-    glBindTexture(GL_TEXTURE_2D, image->textureHandle);
-
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
-            sizeof(Vertex), 0);
-
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
-            sizeof(Vertex), (void*)(4*sizeof(float)));
-
-    // TODO remove this uniform
-    glUniform2f(offblast->imageTranslateUni, 0, 0);
-
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-}
-
-void loadTexture(UiTile *tile) {
-
-    // Generate the texture 
-    if (tile->image.textureHandle == 0 &&
-            tile->target->coverUrl != NULL) 
-    {
-        if (tile->image.loadState == LOAD_STATE_COLD) {
-
-            // Start a loading thread
-            pthread_t theThread;
-            pthread_create(
-                    &theThread, 
-                    NULL, 
-                    loadCover, 
-                    (void*)tile);
-        }
-
-        if (tile->image.loadState == LOAD_STATE_READY) {
-
-            glGenTextures(1, &tile->image.textureHandle);
-            imageToGlTexture(
-                    &tile->image.textureHandle,
-                    tile->image.atlas, 
-                    tile->image.width,
-                    tile->image.height);
-
-            glBindTexture(GL_TEXTURE_2D, 
-                    tile->image.textureHandle);
-
-            tile->image.loadState = LOAD_STATE_COMPLETE;
-            free(tile->image.atlas);
-        }
-    }
-}
 
 int main(int argc, char** argv) {
 
@@ -934,6 +498,7 @@ int main(int argc, char** argv) {
         thePlatform = json_object_get_string(workingPathPlatformNode);
 
         theLauncher = json_object_get_string(workingPathLauncherNode);
+
         memcpy(&offblast->launchers[i].path, thePath, strlen(thePath));
         memcpy(&offblast->launchers[i].launcher, theLauncher, strlen(theLauncher));
 
@@ -2981,4 +2546,452 @@ void updateDescriptionText() {
        offblast->mainUi.movingToTarget->descriptionOffset];
 
     offblast->mainUi.descriptionText = descriptionBlob->content;
+}
+
+
+size_t curlWrite(void *contents, size_t size, size_t nmemb, void *userP)
+{
+    size_t realSize = size * nmemb;
+    CurlFetch *fetch = (CurlFetch *)userP;
+
+    // TODO why add one byte?
+    fetch->data = realloc(fetch->data, fetch->size + realSize);
+
+    if (fetch->data == NULL) {
+        printf("Error: couldn't expand cover buffer\n");
+        free(fetch->data);
+        return -1;
+    }
+
+    memcpy(&(fetch->data[fetch->size]), contents, realSize);
+    fetch->size += realSize;
+    //fetch->data[fetch->size] = 0;
+
+    return realSize;
+}
+
+
+int playTimeSort(const void *a, const void *b) {
+
+    PlayTime *ra = (PlayTime*) a;
+    PlayTime *rb = (PlayTime*) b;
+
+    if (ra->msPlayed < rb->msPlayed)
+        return -1;
+    else if (ra->msPlayed > rb->msPlayed)
+        return +1;
+    else
+        return 0;
+}
+
+int lastPlayedSort(const void *a, const void *b) {
+
+    PlayTime *ra = (PlayTime*) a;
+    PlayTime *rb = (PlayTime*) b;
+
+    if (ra->lastPlayed < rb->lastPlayed)
+        return -1;
+    else if (ra->lastPlayed > rb->lastPlayed)
+        return +1;
+    else
+        return 0;
+}
+
+
+uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata) {
+
+    uint32_t width = 0;
+
+    for (uint32_t i = 0; i < strlen(string); ++i) {
+        int arrOffset = *(string + i) -32;
+        stbtt_bakedchar *b = 
+            (stbtt_bakedchar*) cdata + arrOffset;
+
+        width += b->xadvance;
+    }
+
+    return width;
+}
+
+
+void renderText(OffblastUi *offblast, float x, float y, 
+        uint32_t textMode, float alpha, uint32_t lineMaxW, char *string) 
+{
+
+    glUseProgram(offblast->textProgram);
+    glEnable(GL_TEXTURE_2D);
+
+    uint32_t currentLine = 0;
+    uint32_t currentWidth = 0;
+    uint32_t lineHeight = 0;
+    float originalX = x;
+
+    void *cdata = NULL;
+
+    switch (textMode) {
+        case OFFBLAST_TEXT_TITLE:
+            glBindTexture(GL_TEXTURE_2D, offblast->titleTextTexture);
+            cdata = offblast->titleCharData;
+            lineHeight = offblast->titlePointSize * 1.2;
+            break;
+
+        case OFFBLAST_TEXT_INFO:
+            glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
+            cdata = offblast->infoCharData;
+            lineHeight = offblast->infoPointSize * 1.2;
+            break;
+
+        case OFFBLAST_TEXT_DEBUG:
+            glBindTexture(GL_TEXTURE_2D, offblast->debugTextTexture);
+            cdata = offblast->debugCharData;
+            lineHeight = offblast->debugPointSize * 1.2;
+            break;
+
+        default:
+            return;
+    }
+
+    float winWidth = (float)offblast->winWidth;
+    float winHeight = (float)offblast->winHeight;
+    y = winHeight - y;
+
+    char *trailingString = NULL;
+
+    for (uint32_t i= 0; *string; ++i) {
+        if (*string >= 32 && *string < 128) {
+
+            stbtt_aligned_quad q;
+            stbtt_GetBakedQuad(cdata,
+                    offblast->textBitmapWidth, offblast->textBitmapHeight, 
+                    *string-32, &x, &y, &q, 1);
+
+            currentWidth += (q.x1 - q.x0);
+
+            if (lineMaxW > 0 && trailingString == NULL) {
+
+                float wordWidth = 0.0f;
+                if (*(string) == ' ') {
+
+                    uint32_t curCharOffset = 1;
+                    wordWidth = 0.0f;
+
+                    while (1) {
+                        if (*(string + curCharOffset) == ' ' ||
+                                *(string + curCharOffset) == 0) break;
+
+                        int arrOffset = *(string + curCharOffset) -32;
+                        stbtt_bakedchar *b = 
+                            (stbtt_bakedchar*) cdata + arrOffset;
+
+                        wordWidth += b->xadvance;
+                        curCharOffset++;
+                    }
+
+                }
+
+                if (currentWidth + (int)(wordWidth + 0.5f) > lineMaxW) {
+
+                    if (currentLine >= 6) {
+                        trailingString = "...";
+                        string = trailingString;
+                        continue;
+                    }
+
+                    ++currentLine;
+                    currentWidth = q.x1 - q.x0;
+
+                    x = originalX;
+                    y += lineHeight;
+                }
+            }
+
+
+            float left = -1 + (2/winWidth * q.x0);
+            float right = -1 + (2/winWidth * q.x1);
+            float top = -1 + (2/winHeight * (winHeight - q.y0));
+            float bottom = -1 + (2/winHeight * (winHeight -q.y1));
+            float texLeft = q.s0;
+            float texRight = q.s1;
+            float texTop = q.t0;
+            float texBottom = q.t1;
+
+            Quad quad = {};
+            initQuad(&quad);
+
+            quad.vertices[0].x = left;
+            quad.vertices[0].y = bottom;
+            quad.vertices[0].tx = texLeft;
+            quad.vertices[0].ty = texBottom;
+
+            quad.vertices[1].x = left;
+            quad.vertices[1].y = top;
+            quad.vertices[1].tx = texLeft;
+            quad.vertices[1].ty = texTop;
+
+            quad.vertices[2].x = right;
+            quad.vertices[2].y = top;
+            quad.vertices[2].tx = texRight;
+            quad.vertices[2].ty = texTop;
+
+            quad.vertices[3].x = right;
+            quad.vertices[3].y = top;
+            quad.vertices[3].tx = texRight;
+            quad.vertices[3].ty = texTop;
+
+            quad.vertices[4].x = right;
+            quad.vertices[4].y = bottom;
+            quad.vertices[4].tx = texRight;
+            quad.vertices[4].ty = texBottom;
+
+            quad.vertices[5].x = left;
+            quad.vertices[5].y = bottom;
+            quad.vertices[5].tx = texLeft;
+            quad.vertices[5].ty = texBottom;
+
+            if (offblast->textVbo == 0) {
+                glGenBuffers(1, &offblast->textVbo);
+                glBindBuffer(GL_ARRAY_BUFFER, offblast->textVbo);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(Quad), 
+                        &quad.vertices, GL_STREAM_DRAW);
+            }
+            else {
+                glBindBuffer(GL_ARRAY_BUFFER, offblast->textVbo);
+                glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(Quad), 
+                        &quad.vertices);
+            }
+
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), 0);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), 
+                    (void*)(4*sizeof(float)));
+
+            if (trailingString) {
+                alpha *= 0.85;
+            }
+
+            glUniform1f(offblast->textAlphaUni, alpha);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            glUniform1f(offblast->textAlphaUni, 1.0f);
+        }
+
+        ++string;
+    }
+
+    glDisableVertexAttribArray(0);
+    glDisableVertexAttribArray(1);
+    glUseProgram(0);
+
+}
+
+void initQuad(Quad* quad) {
+    for (uint32_t i = 0; i < 6; ++i) {
+        quad->vertices[i].x = 0.0f;
+        quad->vertices[i].y = 0.0f;
+        quad->vertices[i].z = 0.0f;
+        quad->vertices[i].s = 1.0f;
+
+        if (i == 0) {
+            quad->vertices[i].tx = 0.0f;
+            quad->vertices[i].ty = 0.0f;
+        }
+        if (i == 1) {
+            quad->vertices[i].tx = 0.0f;
+            quad->vertices[i].ty = 1.0f;
+        }
+        if (i == 2) {
+            quad->vertices[i].tx = 1.0f;
+            quad->vertices[i].ty = 1.0f;
+        }
+        if (i == 3) {
+            quad->vertices[i].tx = 1.0f;
+            quad->vertices[i].ty = 1.0f;
+        }
+        if (i == 4) {
+            quad->vertices[i].tx = 1.0f;
+            quad->vertices[i].ty = 0.0f;
+        }
+        if (i == 5) {
+            quad->vertices[i].tx = 0.0f;
+            quad->vertices[i].ty = 0.0f;
+        }
+
+        // TODO should probably init the color to black
+    }
+}
+
+void resizeQuad(float x, float y, float w, float h, Quad *quad) {
+
+    float left = -1.0f + (2.0f/offblast->winWidth * x);
+    float bottom = -1.0f + (2.0f/offblast->winHeight * y);
+    float right = -1.0f + (2.0f/offblast->winWidth * (x+w));
+    float top = -1.0f + (2.0f/offblast->winHeight * (y+h));
+
+    quad->vertices[0].x = left;
+    quad->vertices[0].y = bottom;
+
+    quad->vertices[1].x = left;
+    quad->vertices[1].y = top;
+
+    quad->vertices[2].x = right;
+    quad->vertices[2].y = top;
+
+    quad->vertices[3].x = right;
+    quad->vertices[3].y = top;
+
+    quad->vertices[4].x = right;
+    quad->vertices[4].y = bottom;
+
+    quad->vertices[5].x = left;
+    quad->vertices[5].y = bottom;
+}
+
+void renderGradient(float x, float y, float w, float h, 
+        uint32_t horizontal, Color colorStart, Color colorEnd) 
+{
+
+    Quad quad = {};
+    initQuad(&quad);
+    resizeQuad(x, y, w, h, &quad);
+
+    if (horizontal) {
+        quad.vertices[0].color = colorStart;
+        quad.vertices[1].color = colorStart;
+        quad.vertices[2].color = colorEnd;
+        quad.vertices[3].color = colorEnd;
+        quad.vertices[4].color = colorEnd;
+        quad.vertices[5].color = colorStart;
+    }
+    else {
+        quad.vertices[0].color = colorStart;
+        quad.vertices[1].color = colorEnd;
+        quad.vertices[2].color = colorEnd;
+        quad.vertices[3].color = colorEnd;
+        quad.vertices[4].color = colorStart;
+        quad.vertices[5].color = colorStart;
+    }
+
+    // TODO if the h and w haven't changed we don't actually
+    // need to rebuffer the vertex data, we could just use a uniform
+    // for the vertex shader?
+
+    if (!offblast->gradientVbo) {
+        glGenBuffers(1, &offblast->gradientVbo);
+        glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(Quad), 
+                &quad, GL_STREAM_DRAW);
+    }
+    else {
+        glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(Quad), 
+                &quad);
+    }
+
+    glUniform4f(offblast->gradientColorStartUniform, 
+            colorStart.r, colorStart.g, colorStart.b, colorStart.a);
+    glUniform4f(offblast->gradientColorEndUniform, 
+            colorEnd.r, colorEnd.g, colorEnd.b, colorEnd.a);
+
+    glUseProgram(offblast->gradientProgram);
+    glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
+            sizeof(Vertex), 0);
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 
+            sizeof(Vertex), (void*)(6*sizeof(float)));
+
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+
+float getWidthForScaledImage(float scaledHeight, Image *image) {
+    if (image->height == 0) {
+        return 0;
+    }
+    else {
+        float exponent = scaledHeight / image->height;
+        return image->width * exponent;
+    }
+}
+
+void renderImage(float x, float y, float w, float h, Image* image,
+        float desaturation, float alpha) 
+{
+
+    glUseProgram(offblast->imageProgram);
+    Quad quad = {};
+    initQuad(&quad);
+
+    w = getWidthForScaledImage(h, image);
+
+    resizeQuad(x, y, w, h, &quad);
+
+    if (!offblast->mainUi.imageVbo) {
+        glGenBuffers(1, &offblast->mainUi.imageVbo);
+        glBindBuffer(GL_ARRAY_BUFFER, offblast->mainUi.imageVbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(Quad), 
+                &quad, GL_STREAM_DRAW);
+    }
+    else {
+        glBindBuffer(GL_ARRAY_BUFFER, offblast->mainUi.imageVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(Quad), 
+                &quad);
+    }
+
+    glUniform1f(offblast->imageDesaturateUni, desaturation);
+    glUniform1f(offblast->imageAlphaUni, alpha);
+
+
+    glBindTexture(GL_TEXTURE_2D, image->textureHandle);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
+            sizeof(Vertex), 0);
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 
+            sizeof(Vertex), (void*)(4*sizeof(float)));
+
+    // TODO remove this uniform
+    glUniform2f(offblast->imageTranslateUni, 0, 0);
+
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+
+void loadTexture(UiTile *tile) {
+
+    // Generate the texture 
+    if (tile->image.textureHandle == 0 &&
+            tile->target->coverUrl != NULL) 
+    {
+        if (tile->image.loadState == LOAD_STATE_COLD) {
+
+            // Start a loading thread
+            pthread_t theThread;
+            pthread_create(
+                    &theThread, 
+                    NULL, 
+                    loadCover, 
+                    (void*)tile);
+        }
+
+        if (tile->image.loadState == LOAD_STATE_READY) {
+
+            glGenTextures(1, &tile->image.textureHandle);
+            imageToGlTexture(
+                    &tile->image.textureHandle,
+                    tile->image.atlas, 
+                    tile->image.width,
+                    tile->image.height);
+
+            glBindTexture(GL_TEXTURE_2D, 
+                    tile->image.textureHandle);
+
+            tile->image.loadState = LOAD_STATE_COMPLETE;
+            free(tile->image.atlas);
+        }
+    }
 }
