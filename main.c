@@ -32,8 +32,6 @@
 //      - R and L buttons jump to the beginning or end of a list
 //      - better aniations that support incremental jumps if you input a command
 //          during a running animation
-//      - no infinite ribbons, pressing left will eventually load the menu
-//
 //
 //
 // Alpha 0.4 
@@ -1207,8 +1205,8 @@ int main(int argc, char** argv) {
 
         if (tileCount > 0) {
 
-            tiles[tileCount-1].next = &tiles[0];
-            tiles[0].previous = &tiles[tileCount-1];
+            tiles[tileCount-1].next = NULL;
+            tiles[0].previous = NULL;
 
             mainUi->rows[mainUi->numRows].tiles = tiles; 
             mainUi->rows[mainUi->numRows].tileCursor = tiles;
@@ -1252,8 +1250,8 @@ int main(int argc, char** argv) {
 
         if (tileCount > 0) {
 
-            tiles[tileCount-1].next = &tiles[0];
-            tiles[0].previous = &tiles[tileCount-1];
+            tiles[tileCount-1].next = NULL;
+            tiles[0].previous = NULL;
 
             mainUi->rows[mainUi->numRows].tiles = tiles; 
             mainUi->rows[mainUi->numRows].tileCursor = tiles;
@@ -1298,8 +1296,8 @@ int main(int argc, char** argv) {
 
         if (tileCount > 0) {
 
-            tiles[tileCount-1].next = &tiles[0];
-            tiles[0].previous = &tiles[tileCount-1];
+            tiles[tileCount-1].next = NULL;
+            tiles[0].previous = NULL;
 
             mainUi->rows[mainUi->numRows].tiles = tiles; 
             mainUi->rows[mainUi->numRows].tileCursor = tiles;
@@ -1340,8 +1338,8 @@ int main(int argc, char** argv) {
         }
 
         if (numTiles > 0) {
-            tiles[numTiles-1].next = &tiles[0];
-            tiles[0].previous = &tiles[numTiles-1];
+            tiles[numTiles-1].next = NULL;
+            tiles[0].previous = NULL;
 
             mainUi->rows[mainUi->numRows].tiles = tiles;
             asprintf(&mainUi->rows[mainUi->numRows].name, "Essential %s", 
@@ -1527,8 +1525,13 @@ int main(int argc, char** argv) {
                 UiTile *startTile = rowToRender->tileCursor;
                 float startTileW = 
                     getWidthForScaledImage(mainUi->boxHeight, &startTile->image);
-                float prevTileW = getWidthForScaledImage(
-                        mainUi->boxHeight, &startTile->previous->image);
+
+                float prevTileW = 0.0f;
+
+                if (startTile->previous != NULL) {
+                    prevTileW = getWidthForScaledImage(
+                            mainUi->boxHeight, &startTile->previous->image);
+                }
 
                 UiTile *tileToRender = startTile;
                 int32_t xAdvance = offblast->winMargin;
@@ -1539,23 +1542,25 @@ int main(int argc, char** argv) {
                 // texture loaded on to the gpu multiple times
 
                 for (int32_t iTile = -2; 
-                        xAdvance < offblast->winWidth + nextTileWidth; 
+                        iTile < 27; 
                         iTile++) 
                 {
 
                     float tileW = 0;
 
-                    if (iTile < 0) {
-                        tileToRender = tileToRender->previous;
-                        loadTexture(tileToRender);
-                        tileW = getWidthForScaledImage(mainUi->boxHeight,
-                                &tileToRender->image);
+                    if (iTile < 0 ) {
+                        if (tileToRender->previous != NULL) {
+                            tileToRender = tileToRender->previous;
+                            loadTexture(tileToRender);
+                            tileW = getWidthForScaledImage(mainUi->boxHeight,
+                                    &tileToRender->image);
 
-                        if (tileToRender->image.width == 0) {
-                            xAdvance -= (mainUi->boxWidth + mainUi->boxPad);
-                        } else {
-                            xAdvance -= 
-                                (tileW + mainUi->boxPad);
+                            if (tileToRender->image.width == 0) {
+                                xAdvance -= (mainUi->boxWidth + mainUi->boxPad);
+                            } else {
+                                xAdvance -= 
+                                    (tileW + mainUi->boxPad);
+                            }
                         }
                     }
                     else if (iTile == 0) {
@@ -1564,17 +1569,19 @@ int main(int argc, char** argv) {
                         xAdvance = offblast->winMargin;
                     }
                     else {
-                        tileW = getWidthForScaledImage(mainUi->boxHeight,
-                                &tileToRender->image);
+                        if (tileToRender->next != NULL) {
+                            tileW = getWidthForScaledImage(mainUi->boxHeight,
+                                    &tileToRender->image);
 
-                        tileToRender = tileToRender->next;
-                        loadTexture(tileToRender);
+                            tileToRender = tileToRender->next;
+                            loadTexture(tileToRender);
 
-                        if (tileToRender->image.width == 0) {
-                            xAdvance += (mainUi->boxWidth + mainUi->boxPad);
-                        } else {
-                            xAdvance += 
-                                (tileW + mainUi->boxPad);
+                            if (tileToRender->image.width == 0) {
+                                xAdvance += (mainUi->boxWidth + mainUi->boxPad);
+                            } else {
+                                xAdvance += 
+                                    (tileW + mainUi->boxPad);
+                            }
                         }
                     }
 
@@ -1627,6 +1634,8 @@ int main(int argc, char** argv) {
                     }
 
                     // COVER
+                    // TODO don't render tiles that are off screen
+
                     float desaturate = 0.2;
                     float alpha = 1.0;
                     if (strlen(tileToRender->target->path) == 0 || 
@@ -1642,6 +1651,10 @@ int main(int argc, char** argv) {
                             &tileToRender->image, 
                             desaturate, 
                             alpha);
+
+                    if (tileToRender->next == NULL) {
+                        break;
+                    }
 
                 }
 
@@ -1910,6 +1923,28 @@ void changeColumn(uint32_t direction)
     if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
         if (animationRunning() == 0)
         {
+
+            if (direction == 0) {
+                if (ui->rowCursor->tileCursor->previous != NULL) {
+                    ui->movingToTarget = 
+                        ui->rowCursor->tileCursor->previous->target;
+                }
+                else {
+                    printf("Show menu\n");
+                    return;
+                }
+            }
+            else {
+                if (ui->rowCursor->tileCursor->next != NULL) {
+                    ui->movingToTarget 
+                        = ui->rowCursor->tileCursor->next->target;
+                }
+                else {
+                    printf("Show menu\n");
+                    return;
+                }
+            }
+
             ui->horizontalAnimation->startTick = SDL_GetTicks();
             ui->horizontalAnimation->direction = direction;
             ui->horizontalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
@@ -1922,14 +1957,6 @@ void changeColumn(uint32_t direction)
             ui->infoAnimation->animating = 1;
             ui->infoAnimation->callback = &infoFaded;
 
-            if (direction == 0) {
-                ui->movingToTarget = 
-                    ui->rowCursor->tileCursor->previous->target;
-            }
-            else {
-                ui->movingToTarget 
-                    = ui->rowCursor->tileCursor->next->target;
-            }
         }
     }
     else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
