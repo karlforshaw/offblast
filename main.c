@@ -1980,39 +1980,45 @@ void changeColumn(uint32_t direction)
         if (animationRunning() == 0)
         {
 
-            if (direction == 0) {
-                if (ui->rowCursor->tileCursor->previous != NULL) {
-                    ui->movingToTarget = 
-                        ui->rowCursor->tileCursor->previous->target;
-                }
-                else {
-                    ui->showMenu = 1;
-                    return;
+            if (ui->showMenu) {
+                if (direction == 1) {
+                    ui->showMenu = 0;
                 }
             }
             else {
-                if (ui->rowCursor->tileCursor->next != NULL) {
-                    ui->movingToTarget 
-                        = ui->rowCursor->tileCursor->next->target;
+                if (direction == 0) {
+                    if (ui->rowCursor->tileCursor->previous != NULL) {
+                        ui->movingToTarget = 
+                            ui->rowCursor->tileCursor->previous->target;
+                    }
+                    else {
+                        ui->showMenu = 1;
+                        return;
+                    }
                 }
                 else {
-                    ui->showMenu = 1;
-                    return;
+                    if (ui->rowCursor->tileCursor->next != NULL) {
+                        ui->movingToTarget 
+                            = ui->rowCursor->tileCursor->next->target;
+                    }
+                    else {
+                        ui->showMenu = 1;
+                        return;
+                    }
                 }
+
+                ui->horizontalAnimation->startTick = SDL_GetTicks();
+                ui->horizontalAnimation->direction = direction;
+                ui->horizontalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
+                ui->horizontalAnimation->animating = 1;
+                ui->horizontalAnimation->callback = &horizontalMoveDone;
+
+                ui->infoAnimation->startTick = SDL_GetTicks();
+                ui->infoAnimation->direction = 0;
+                ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
+                ui->infoAnimation->animating = 1;
+                ui->infoAnimation->callback = &infoFaded;
             }
-
-            ui->horizontalAnimation->startTick = SDL_GetTicks();
-            ui->horizontalAnimation->direction = direction;
-            ui->horizontalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
-            ui->horizontalAnimation->animating = 1;
-            ui->horizontalAnimation->callback = &horizontalMoveDone;
-
-            ui->infoAnimation->startTick = SDL_GetTicks();
-            ui->infoAnimation->direction = 0;
-            ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
-            ui->infoAnimation->animating = 1;
-            ui->infoAnimation->callback = &infoFaded;
-
         }
     }
     else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
@@ -2621,7 +2627,7 @@ void pressConfirm(int32_t joystickIndex) {
                 offblast->mainUi.menuItems[offblast->mainUi.menuCursor].callback;
 
             if (callback == NULL) 
-                printf("null backback!\n");
+                printf("menu null backback!\n");
             else
                 callback();
 
