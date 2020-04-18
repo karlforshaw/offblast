@@ -22,20 +22,20 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // Alpha 0.3
+//      * Menu
+//      - pull out side menu, with platform browsing, and exit / shutdown 
+//      - R and L buttons jump to the beginning or end of a list
+//
+//
+// Alpha 0.4 
 //      - a loading animation for covers
 //      -. watch out for vram! glDeleteTextures
 //          We could move to a tile store object which has a fixed array of
 //          tiles (enough to fill 1.5 screens on both sides) each tile has a 
 //          last on screen tick and when we need to load new textures we evict
 //          the oldest before loading the new texture
-//
-//      - R and L buttons jump to the beginning or end of a list
 //      - better aniations that support incremental jumps if you input a command
 //          during a running animation
-//
-//
-// Alpha 0.4 
-//      * pull out side menu, with platform browsing, and exit / shutdown 
 //      - Invalid date format is a thing
 //
 //
@@ -167,6 +167,11 @@ enum UiMode {
     OFFBLAST_UI_MODE_PLAYER_SELECT = 2,
 };
 
+typedef struct MenuItem {
+    char *label;
+    void (*callback)();
+} MenuItem;
+
 typedef struct PlayerSelectUi {
     Image *images;
     int32_t cursor;
@@ -178,6 +183,11 @@ typedef struct MainUi {
     int32_t boxWidth;
     int32_t boxHeight;
     int32_t boxPad;
+
+    int32_t showMenu;
+    MenuItem *menuItems;
+    uint32_t numMenuItems;
+    uint32_t menuCursor;
 
     Animation *horizontalAnimation;
     Animation *verticalAnimation;
@@ -207,6 +217,7 @@ typedef struct Launcher {
 
 typedef struct OffblastUi {
 
+    uint32_t running;
     enum UiMode mode;
 
     PlayerSelectUi playerSelectUi;
@@ -313,6 +324,13 @@ void loadTexture(UiTile *tile);
 
 
 OffblastUi *offblast;
+
+void setExit() {
+    offblast->running = 0;
+};
+void doSearch() {
+    printf("let's search then!");
+}
 
 
 
@@ -990,6 +1008,18 @@ int main(int argc, char** argv) {
     mainUi->verticalAnimation = calloc(1, sizeof(Animation));
     mainUi->infoAnimation = calloc(1, sizeof(Animation));
     mainUi->rowNameAnimation = calloc(1, sizeof(Animation));
+    mainUi->showMenu = 0;
+
+    // Init Menu
+    // Let's make enough room for say 20 menu items TODO
+    mainUi->menuItems = calloc(20, sizeof(MenuItem));
+    mainUi->menuItems[0].label = "Change User";
+    mainUi->menuItems[1].label = "Search";
+    mainUi->menuItems[1].callback = doSearch;
+    mainUi->menuItems[2].label = "Exit Offblast";
+    mainUi->menuItems[2].callback = setExit;
+    mainUi->menuCursor = 0;
+    mainUi->numMenuItems = 3;
 
     // § Bitmap font setup
     FILE *fd = fopen("./fonts/Roboto-Regular.ttf", "r");
@@ -1151,7 +1181,7 @@ int main(int argc, char** argv) {
     assert(offblast->gradientProgram);
 
 
-    int running = 1;
+    offblast->running = 1;
     uint32_t lastTick = SDL_GetTicks();
     uint32_t renderFrequency = 1000/60;
 
@@ -1383,7 +1413,7 @@ int main(int argc, char** argv) {
 
 
     // § Main loop
-    while (running) {
+    while (offblast->running) {
 
         if (needsReRender(window) == 1) {
             printf("Window size changed, sizes updated.\n");
@@ -1394,7 +1424,7 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 printf("shutting down\n");
-                running = 0;
+                offblast->running = 0;
                 break;
             }
             else if (event.type == SDL_CONTROLLERAXISMOTION) {
@@ -1455,7 +1485,7 @@ int main(int argc, char** argv) {
                 SDL_KeyboardEvent *keyEvent = (SDL_KeyboardEvent*) &event;
                 if (keyEvent->keysym.scancode == SDL_SCANCODE_ESCAPE) {
                     printf("escape pressed, shutting down.\n");
-                    running = 0;
+                    offblast->running = 0;
                     break;
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
@@ -1736,6 +1766,32 @@ int main(int argc, char** argv) {
             renderText(offblast, offblast->winMargin, pixelY, 
                 OFFBLAST_TEXT_INFO, rowNameAlpha, 0, mainUi->rowNameText); 
 
+            // § Render Menu
+            if (mainUi->showMenu) {
+                Color menuColor = {0.0, 0.0, 0.0, 0.85};
+                renderGradient(0, 0, 
+                        offblast->winWidth * 0.25, offblast->winHeight, 
+                        0,
+                        menuColor, menuColor);
+
+                float itemTransparency = 0.6f;
+                float yOffset = 0;
+
+                for (uint32_t mi = 0; mi < mainUi->numMenuItems; mi++) {
+                    if (mainUi->menuItems[mi].label != NULL) {
+
+                        if (mi == mainUi->menuCursor) itemTransparency = 1.0f;
+
+                        renderText(offblast, 33, 
+                                offblast->winHeight - 133 - yOffset, 
+                                OFFBLAST_TEXT_INFO, itemTransparency, 0, 
+                                mainUi->menuItems[mi].label);
+
+                        itemTransparency = 0.6f;
+                        yOffset += offblast->infoPointSize;
+                    }
+                }
+            }
 
         }
         else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
@@ -1930,7 +1986,7 @@ void changeColumn(uint32_t direction)
                         ui->rowCursor->tileCursor->previous->target;
                 }
                 else {
-                    printf("Show menu\n");
+                    ui->showMenu = 1;
                     return;
                 }
             }
@@ -1940,7 +1996,7 @@ void changeColumn(uint32_t direction)
                         = ui->rowCursor->tileCursor->next->target;
                 }
                 else {
-                    printf("Show menu\n");
+                    ui->showMenu = 1;
                     return;
                 }
             }
@@ -1986,33 +2042,45 @@ void changeRow(uint32_t direction)
 
     if (animationRunning() == 0)
     {
-        ui->verticalAnimation->startTick = SDL_GetTicks();
-        ui->verticalAnimation->direction = direction;
-        ui->verticalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
-        ui->verticalAnimation->animating = 1;
-        ui->verticalAnimation->callback = &verticalMoveDone;
+        if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
 
-        ui->infoAnimation->startTick = SDL_GetTicks();
-        ui->infoAnimation->direction = 0;
-        ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
-        ui->infoAnimation->animating = 1;
-        ui->infoAnimation->callback = &infoFaded;
+            if (ui->showMenu) {
 
-        ui->rowNameAnimation->startTick = SDL_GetTicks();
-        ui->rowNameAnimation->direction = 0;
-        ui->rowNameAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
-        ui->rowNameAnimation->animating = 1;
-        ui->rowNameAnimation->callback = &rowNameFaded;
+                if (direction == 0 && ui->menuCursor < ui->numMenuItems-1)
+                    ui->menuCursor++;
+                else if (direction == 1 && ui->menuCursor != 0)
+                    ui->menuCursor--;
+            }
+            else {
+                ui->verticalAnimation->startTick = SDL_GetTicks();
+                ui->verticalAnimation->direction = direction;
+                ui->verticalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
+                ui->verticalAnimation->animating = 1;
+                ui->verticalAnimation->callback = &verticalMoveDone;
 
-        if (direction == 0) {
-            ui->movingToRow = ui->rowCursor->nextRow;
-            ui->movingToTarget = 
-                ui->rowCursor->nextRow->tileCursor->target;
-        }
-        else {
-            ui->movingToRow = ui->rowCursor->previousRow;
-            ui->movingToTarget = 
-                ui->rowCursor->previousRow->tileCursor->target;
+                ui->infoAnimation->startTick = SDL_GetTicks();
+                ui->infoAnimation->direction = 0;
+                ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
+                ui->infoAnimation->animating = 1;
+                ui->infoAnimation->callback = &infoFaded;
+
+                ui->rowNameAnimation->startTick = SDL_GetTicks();
+                ui->rowNameAnimation->direction = 0;
+                ui->rowNameAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
+                ui->rowNameAnimation->animating = 1;
+                ui->rowNameAnimation->callback = &rowNameFaded;
+
+                if (direction == 0) {
+                    ui->movingToRow = ui->rowCursor->nextRow;
+                    ui->movingToTarget = 
+                        ui->rowCursor->nextRow->tileCursor->target;
+                }
+                else {
+                    ui->movingToRow = ui->rowCursor->previousRow;
+                    ui->movingToTarget = 
+                        ui->rowCursor->previousRow->tileCursor->target;
+                }
+            }
         }
     }
 }
@@ -2548,7 +2616,18 @@ void pressConfirm(int32_t joystickIndex) {
 
     }
     else if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
-        launch();
+        if (offblast->mainUi.showMenu) {
+            void (*callback)() = 
+                offblast->mainUi.menuItems[offblast->mainUi.menuCursor].callback;
+
+            if (callback == NULL) 
+                printf("null backback!\n");
+            else
+                callback();
+
+        }
+        else 
+            launch();
     }
 }
 
