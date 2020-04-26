@@ -351,6 +351,7 @@ float getWidthForScaledImage(float scaledHeight, Image *image);
 void renderImage(float x, float y, float w, float h, Image* image,
         float desaturation, float alpha);
 void loadTexture(UiTile *tile);
+void pressSearch();
 
 
 OffblastUi *offblast;
@@ -361,6 +362,9 @@ void setExit() {
 void doSearch() {
     offblast->mainUi.activeRowset = offblast->mainUi.searchRowset;
     offblast->mainUi.showSearch = 1;
+}
+void doHome() {
+    offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
 }
 
 
@@ -1047,13 +1051,15 @@ int main(int argc, char** argv) {
     // Init Menu
     // Let's make enough room for say 20 menu items TODO
     mainUi->menuItems = calloc(20, sizeof(MenuItem));
-    mainUi->menuItems[0].label = "Change User";
+    mainUi->menuItems[0].label = "Home";
+    mainUi->menuItems[0].callback = doHome;
     mainUi->menuItems[1].label = "Search";
     mainUi->menuItems[1].callback = doSearch;
-    mainUi->menuItems[2].label = "Exit Offblast";
-    mainUi->menuItems[2].callback = setExit;
+    mainUi->menuItems[2].label = "Change User";
+    mainUi->menuItems[3].label = "Exit Offblast";
+    mainUi->menuItems[3].callback = setExit;
     mainUi->menuCursor = 0;
-    mainUi->numMenuItems = 3;
+    mainUi->numMenuItems = 4;
 
     // Missing Cover texture init
     {
@@ -1555,6 +1561,10 @@ int main(int argc, char** argv) {
                         pressCancel();
                         SDL_RaiseWindow(window);
                         break;
+                    case SDL_CONTROLLER_BUTTON_Y:
+                        pressSearch();
+                        SDL_RaiseWindow(window);
+                        break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
                         jumpEnd(0);
                         SDL_RaiseWindow(window);
@@ -1876,7 +1886,7 @@ int main(int argc, char** argv) {
             if (mainUi->showMenu) {
                 Color menuColor = {0.0, 0.0, 0.0, 0.85};
                 renderGradient(0, 0, 
-                        offblast->winWidth * 0.25, offblast->winHeight, 
+                        offblast->winWidth * 0.16, offblast->winHeight, 
                         0,
                         menuColor, menuColor);
 
@@ -1888,13 +1898,13 @@ int main(int argc, char** argv) {
 
                         if (mi == mainUi->menuCursor) itemTransparency = 1.0f;
 
-                        renderText(offblast, 33, 
+                        renderText(offblast, offblast->winWidth * 0.016, 
                                 offblast->winHeight - 133 - yOffset, 
                                 OFFBLAST_TEXT_INFO, itemTransparency, 0, 
                                 mainUi->menuItems[mi].label);
 
                         itemTransparency = 0.6f;
-                        yOffset += offblast->infoPointSize;
+                        yOffset += offblast->infoPointSize *1.61;
                     }
                 }
             }
@@ -2809,6 +2819,19 @@ void launch() {
         pt->msPlayed += (afterTick - beforeTick);
         pt->lastPlayed = (uint32_t)time(NULL);
 
+    }
+}
+
+void pressSearch(int32_t joystickIndex) {
+
+    if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {}
+    else if (offblast->mainUi.showSearch) {
+        offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
+        offblast->mainUi.showSearch = 0;
+    }
+    else if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
+        offblast->mainUi.showMenu = 0;
+        doSearch();
     }
 }
 
