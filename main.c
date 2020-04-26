@@ -19,11 +19,14 @@
 #define OFFBLAST_TEXT_INFO 2
 #define OFFBLAST_TEXT_DEBUG 3
 
+#define OFFBLAST_MAX_SEARCH 64
+
 #define NAVIGATION_MOVE_DURATION 250 
 
 // Alpha 0.3
 //      * Menu
 //      - pull out side menu, with platform browsing, and exit / shutdown 
+//      - Search overlay
 //      - R and L buttons jump to the beginning or end of a list
 //
 //
@@ -177,7 +180,16 @@ typedef struct PlayerSelectUi {
     int32_t cursor;
 } PlayerSelectUi;
 
+typedef struct UiRowset {
+    UiRow *rows;
+    UiRow *rowCursor;
+    LaunchTarget *movingToTarget;
+    UiRow *movingToRow;
+    uint32_t numRows;
+} UiRowset;
+
 typedef struct MainUi {
+
     int32_t descriptionWidth;
     int32_t descriptionHeight;
     int32_t boxWidth;
@@ -189,18 +201,30 @@ typedef struct MainUi {
     uint32_t numMenuItems;
     uint32_t menuCursor;
 
+    int32_t showSearch;
+
     Animation *horizontalAnimation;
     Animation *verticalAnimation;
     Animation *infoAnimation;
     Animation *rowNameAnimation;
 
-    uint32_t numRows;
     GLuint imageVbo;
+
+    UiRowset *activeRowset;
+
+    UiRowset *homeRowset;
+    UiRowset *searchRowset;
+    UiRowset *filteredRowset;
 
     UiRow *rowCursor;
     UiRow *rows;
     LaunchTarget *movingToTarget;
     UiRow *movingToRow;
+    uint32_t numRows;
+
+    UiRow *resultRows;
+    UiRow *resultRowCursor;
+    uint32_t numResultRows;
 
     char *titleText;
     char *infoText;
@@ -222,6 +246,13 @@ typedef struct OffblastUi {
 
     PlayerSelectUi playerSelectUi;
     MainUi mainUi;
+
+    int32_t joyX;
+    int32_t joyY;
+
+    char searchTerm[OFFBLAST_MAX_SEARCH];
+    uint32_t searchCursor;
+    char searchCurChar; 
 
     int32_t winWidth;
     int32_t winHeight;
@@ -269,6 +300,7 @@ typedef struct OffblastUi {
     OffblastBlobFile *descriptionFile;
     OffblastDbFile playTimeDb;
     PlayTimeFile *playTimeFile;
+    LaunchTargetFile *launchTargetFile;
 
 } OffblastUi;
 
@@ -304,6 +336,8 @@ void imageToGlTexture(GLuint *textureHandle, unsigned char *pixelData,
 void changeRow(uint32_t direction);
 void changeColumn(uint32_t direction);
 void pressConfirm();
+void pressCancel();
+void updateResults();
 void updateInfoText();
 void updateDescriptionText();
 void initQuad(Quad* quad);
@@ -330,6 +364,7 @@ void setExit() {
 };
 void doSearch() {
     printf("let's search then!");
+    offblast->mainUi.showSearch = 1;
 }
 
 
@@ -433,6 +468,7 @@ int main(int argc, char** argv) {
     }
     LaunchTargetFile *launchTargetFile = 
         (LaunchTargetFile*) launchTargetDb.memory;
+    offblast->launchTargetFile = launchTargetFile;
     free(launchTargetDbPath);
 
     char *descriptionDbPath;
@@ -1008,7 +1044,9 @@ int main(int argc, char** argv) {
     mainUi->verticalAnimation = calloc(1, sizeof(Animation));
     mainUi->infoAnimation = calloc(1, sizeof(Animation));
     mainUi->rowNameAnimation = calloc(1, sizeof(Animation));
+
     mainUi->showMenu = 0;
+    mainUi->showSearch = 0;
 
     // Init Menu
     // Let's make enough room for say 20 menu items TODO
@@ -1186,6 +1224,10 @@ int main(int argc, char** argv) {
     uint32_t renderFrequency = 1000/60;
 
     // Init Ui
+    mainUi->resultRows = calloc(1, sizeof(UiRow));
+    mainUi->resultRows->tiles = calloc(1, sizeof(UiTile));
+    mainUi->resultRowCursor = mainUi->resultRows;
+    mainUi->numResultRows = 0;
 
     // rows for now:
     // 1. Your Library
@@ -1428,7 +1470,13 @@ int main(int argc, char** argv) {
                 break;
             }
             else if (event.type == SDL_CONTROLLERAXISMOTION) {
-                printf("axis motion\n");
+
+                // TODO only if it's the player ones controller?
+                if (event.jaxis.axis == SDL_CONTROLLER_AXIS_LEFTX)
+                    offblast->joyX = event.jaxis.value;
+                else if (event.jaxis.axis == SDL_CONTROLLER_AXIS_LEFTY)
+                    offblast->joyY = event.jaxis.value * -1;
+
             }
             else if (event.type == SDL_CONTROLLERBUTTONDOWN) {
                 SDL_ControllerButtonEvent *buttonEvent = 
@@ -1453,11 +1501,15 @@ int main(int argc, char** argv) {
                         pressConfirm(buttonEvent->which);
                         SDL_RaiseWindow(window);
                         break;
+                    case SDL_CONTROLLER_BUTTON_B:
+                        pressCancel();
+                        SDL_RaiseWindow(window);
+                        break;
                 }
 
             }
             else if (event.type == SDL_CONTROLLERBUTTONUP) {
-                printf("button up\n");
+                //printf("button up\n");
             }
             else if (event.type == SDL_CONTROLLERDEVICEADDED) {
 
@@ -1791,6 +1843,79 @@ int main(int argc, char** argv) {
                         yOffset += offblast->infoPointSize;
                     }
                 }
+            }
+
+            if (mainUi->showSearch) {
+                Color menuColor = {0.0, 0.0, 0.0, 0.8};
+                renderGradient(0, 0, 
+                        offblast->winWidth, offblast->winHeight, 
+                        0,
+                        menuColor, menuColor);
+
+                float xorigin, yorigin, radius;
+                xorigin = offblast->winWidth / 2;
+                yorigin = offblast->winHeight / 2;
+                radius = offblast->winWidth * 0.23;
+                char string[2] ;
+                string[1] = 0;
+
+                double joyY = fabs((double)offblast->joyY) / INT16_MAX;
+                double joyX = fabs((double)offblast->joyX) / INT16_MAX;
+
+                if (offblast->joyY < 0) {
+                    joyY = 0-joyY;
+                }
+
+                if (offblast->joyX < 0){
+                    joyX = 0-joyX;
+                }
+
+                double joyTangent = atan2(
+                        joyY,
+                        joyX);
+
+                int32_t onChar = round(28/(2*M_PI) * joyTangent);
+                if (joyTangent < 0)
+                    onChar = 27 -onChar * -1;
+
+                for (uint32_t ki = 0; ki < 28; ki++) {
+
+                    float x, y;
+                    x = xorigin + radius * cos((float)ki * 2*M_PI / 28);
+                    y = yorigin + radius * sin((float)ki * 2* M_PI / 28);
+
+                    if (ki == 26)
+                        string[0] = 60;
+                    else if (ki == 27)
+                        string[0] = 95;
+                    else
+                        string[0] = 97 + ki;
+
+                    float opacity = 0.70;
+
+                    if (onChar == ki) {
+                        offblast->searchCurChar = string[0];
+                        opacity = 1;
+                    }
+
+                    renderText(offblast, x, y, 
+                            OFFBLAST_TEXT_TITLE, opacity, 0, 
+                            (char *)&string);
+                }
+
+                char *placeholderText = "Search for games";
+                char *textToShow = placeholderText;
+                if (strlen(offblast->searchTerm)) 
+                    textToShow = (char *)offblast->searchTerm;
+
+                uint32_t lineWidth = getTextLineWidth(textToShow, 
+                        offblast->titleCharData);
+
+                renderText(offblast, offblast->winWidth/2 - lineWidth/2, 
+                        offblast->winHeight/2 - offblast->titlePointSize/2, 
+                        OFFBLAST_TEXT_TITLE, 0.65, 0, 
+                        textToShow);
+
             }
 
         }
@@ -2621,6 +2746,31 @@ void pressConfirm(int32_t joystickIndex) {
         }
 
     }
+    else if (offblast->mainUi.showSearch) {
+        // TODO not sure I like the way I'm using mode, I think maybe things
+        // shouldn't be so modal..
+        if (offblast->searchCursor < OFFBLAST_MAX_SEARCH) {
+
+            if (offblast->searchCurChar == '_') {
+                offblast->searchTerm[offblast->searchCursor] = ' ';
+                offblast->searchCursor++;
+            }
+            else if (offblast->searchCurChar == '<') {
+                if (offblast->searchCursor > 0){
+                    offblast->searchCursor--;
+                    offblast->searchTerm[offblast->searchCursor] = 0;
+                }
+            }
+            else {
+                offblast->searchTerm[offblast->searchCursor] = 
+                    offblast->searchCurChar;
+                offblast->searchCursor++;
+            }
+
+            updateResults();
+        }
+
+    }
     else if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
         if (offblast->mainUi.showMenu) {
             void (*callback)() = 
@@ -2628,12 +2778,20 @@ void pressConfirm(int32_t joystickIndex) {
 
             if (callback == NULL) 
                 printf("menu null backback!\n");
-            else
+            else {
+                offblast->mainUi.showMenu = 0;
                 callback();
+            }
 
         }
         else 
             launch();
+    }
+}
+
+void pressCancel() {
+    if (offblast->mainUi.showSearch) {
+        offblast->mainUi.showSearch = 0;
     }
 }
 
@@ -3106,4 +3264,63 @@ void loadTexture(UiTile *tile) {
             free(tile->image.atlas);
         }
     }
+}
+
+void updateResults() {
+
+    LaunchTargetFile* targetFile = offblast->launchTargetFile;
+
+    // TODO let's assume 25 results for now
+    UiTile *tiles = calloc(25, sizeof(UiTile));
+    assert(tiles);
+
+    uint32_t tileCount = 0;
+
+    for (int i = 0; i < targetFile->nEntries; ++i) {
+
+        if (strcasestr(targetFile->entries[i].name, offblast->searchTerm)) {
+
+            if (tileCount < 25) {
+                LaunchTarget *target = &targetFile->entries[i];
+                tiles[tileCount].target = target;
+                tiles[tileCount].next = &tiles[tileCount+1];
+                tiles[tileCount].previous = &tiles[tileCount-1];
+                tileCount++;
+            }
+            else {
+                printf("More than 25 results!\n");
+                printf("\n");
+                break;
+            }
+
+            /*
+            printf("%u/(%u) entries\n", 
+                i, targetFile->nEntries);
+
+            printf("found game\t%d\t%u\n", 
+                i, targetFile->entries[i].targetSignature); 
+
+            printf("%s\n", targetFile->entries[i].name);
+            printf("%s\n", targetFile->entries[i].fileName);
+            printf("%s\n", targetFile->entries[i].path);
+            printf("--\n\n");
+            */
+        }
+
+    }
+
+    if (tileCount > 0) {
+        tiles[tileCount-1].next = NULL;
+        tiles[0].previous = NULL;
+
+        MainUi *mainUi = &offblast->mainUi;
+        free(mainUi->resultRows[0].tiles);
+        mainUi->resultRows[0].tiles = tiles; 
+        mainUi->resultRows[0].tileCursor = tiles;
+        mainUi->resultRows[0].name = "Search Results";
+        mainUi->resultRows[0].length = tileCount; 
+        mainUi->numResultRows = 1;
+    }
+
+
 }
