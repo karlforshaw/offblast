@@ -3423,11 +3423,18 @@ void updateResults() {
         mainUi->searchRowset->rows[0].nextRow = &mainUi->searchRowset->rows[0];
         mainUi->searchRowset->rows[0].previousRow
             = &mainUi->searchRowset->rows[0];
+        mainUi->searchRowset->movingToTarget = tiles[0].target;
     }
     else {
         mainUi->searchRowset->numRows = 0;
         mainUi->activeRowset = mainUi->homeRowset;
     }
 
+    offblast->mainUi.titleText = 
+        offblast->mainUi.activeRowset->movingToTarget->name;
+    updateInfoText();
+    updateDescriptionText();
+    offblast->mainUi.rowNameText 
+        = offblast->mainUi.activeRowset->movingToRow->name;
 
 }
