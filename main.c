@@ -126,6 +126,7 @@ typedef struct UiTile{
     Image image;
     struct UiTile *next; 
     struct UiTile *previous; 
+    int32_t baseX;
 } UiTile;
 
 typedef struct UiRow {
@@ -135,7 +136,9 @@ typedef struct UiRow {
     struct UiTile *tiles;
     struct UiRow *nextRow;
     struct UiRow *previousRow;
+    struct UiTile *movingToTile;
 } UiRow;
+
 
 typedef struct Color {
     float r, g, b, a;
@@ -192,7 +195,7 @@ typedef struct MainUi {
 
     int32_t descriptionWidth;
     int32_t descriptionHeight;
-    int32_t boxWidth;
+    // int32_t boxWidth; TODO remove
     int32_t boxHeight;
     int32_t boxPad;
 
@@ -215,16 +218,6 @@ typedef struct MainUi {
     UiRowset *homeRowset;
     UiRowset *searchRowset;
     UiRowset *filteredRowset;
-
-    UiRow *rowCursor;
-    UiRow *rows;
-    LaunchTarget *movingToTarget;
-    UiRow *movingToRow;
-    uint32_t numRows;
-
-    UiRow *resultRows;
-    UiRow *resultRowCursor;
-    uint32_t numResultRows;
 
     char *titleText;
     char *infoText;
@@ -266,6 +259,8 @@ typedef struct OffblastUi {
     GLuint titleTextTexture;
     GLuint infoTextTexture;
     GLuint debugTextTexture;
+
+    Image missingCoverImage;
 
     GLuint textVbo;
 
@@ -336,6 +331,7 @@ void imageToGlTexture(GLuint *textureHandle, unsigned char *pixelData,
 void changeRow(uint32_t direction);
 void changeColumn(uint32_t direction);
 void pressConfirm();
+void jumpEnd(uint32_t direction);
 void pressCancel();
 void updateResults();
 void updateInfoText();
@@ -363,7 +359,7 @@ void setExit() {
     offblast->running = 0;
 };
 void doSearch() {
-    printf("let's search then!");
+    offblast->mainUi.activeRowset = offblast->mainUi.searchRowset;
     offblast->mainUi.showSearch = 1;
 }
 
@@ -1059,6 +1055,31 @@ int main(int argc, char** argv) {
     mainUi->menuCursor = 0;
     mainUi->numMenuItems = 3;
 
+    // Missing Cover texture init
+    {
+        // TODO assets dir
+        int n;
+        stbi_set_flip_vertically_on_load(1);
+        unsigned char *imageData = stbi_load(
+                "missingcover.png", 
+                (int *)&offblast->missingCoverImage.width, 
+                (int *)&offblast->missingCoverImage.height, &n, 4);
+
+        if(imageData != NULL) {
+            glGenTextures(1, &offblast->missingCoverImage.textureHandle);
+            imageToGlTexture(
+                    &offblast->missingCoverImage.textureHandle,
+                    imageData, 
+                    offblast->missingCoverImage.width, 
+                    offblast->missingCoverImage.height);
+            free(imageData);
+        }
+        else {
+            printf("couldn't load the missing image image!\n");
+            return 1;
+        }
+    }
+
     // § Bitmap font setup
     FILE *fd = fopen("./fonts/Roboto-Regular.ttf", "r");
 
@@ -1228,25 +1249,28 @@ int main(int argc, char** argv) {
     mainUi->searchRowset->rows = calloc(1, sizeof(UiRow));
     mainUi->searchRowset->rows[0].tiles = calloc(1, sizeof(UiTile));
     mainUi->searchRowset->rowCursor = mainUi->searchRowset->rows;
-    mainUi->searchRowset->numRows= 0;
+    mainUi->searchRowset->numRows = 0;
+    mainUi->searchRowset->movingToRow = &mainUi->searchRowset->rows[0];
 
 
     // Start building the home rowset
     // rows for now:
     // 1. Your Library
     // 2. Essential *platform" 
-    mainUi->rows = calloc(3 + nPlatforms, sizeof(UiRow));
-    mainUi->numRows = 0;
-    mainUi->rowCursor = mainUi->rows;
+    mainUi->homeRowset = calloc(1, sizeof(UiRowset));
+    mainUi->homeRowset->rows = calloc(3 + nPlatforms, sizeof(UiRow));
+    mainUi->homeRowset->numRows = 0;
+    mainUi->homeRowset->rowCursor = mainUi->homeRowset->rows;
+    mainUi->activeRowset = mainUi->homeRowset;
 
 
+    // __ROW__ "Jump back in" 
     size_t playTimeFileSize = sizeof(PlayTimeFile) + 
         offblast->playTimeFile->nEntries * sizeof(PlayTime);
     PlayTimeFile *tempFile = malloc(playTimeFileSize);
     assert(tempFile);
     memcpy(tempFile, offblast->playTimeFile, playTimeFileSize);
 
-    // __ROW__ "Jump back in" 
     if (offblast->playTimeFile->nEntries) {
 
         uint32_t tileLimit = 25;
@@ -1283,11 +1307,14 @@ int main(int argc, char** argv) {
             tiles[tileCount-1].next = NULL;
             tiles[0].previous = NULL;
 
-            mainUi->rows[mainUi->numRows].tiles = tiles; 
-            mainUi->rows[mainUi->numRows].tileCursor = tiles;
-            mainUi->rows[mainUi->numRows].name = "Jump back in";
-            mainUi->rows[mainUi->numRows].length = tileCount; 
-            mainUi->numRows++;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles = tiles; 
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
+                = tiles;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
+                = "Jump back in";
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
+                = tileCount; 
+            mainUi->homeRowset->numRows++;
         }
     }
 
@@ -1328,11 +1355,15 @@ int main(int argc, char** argv) {
             tiles[tileCount-1].next = NULL;
             tiles[0].previous = NULL;
 
-            mainUi->rows[mainUi->numRows].tiles = tiles; 
-            mainUi->rows[mainUi->numRows].tileCursor = tiles;
-            mainUi->rows[mainUi->numRows].name = "Most played";
-            mainUi->rows[mainUi->numRows].length = tileCount; 
-            mainUi->numRows++;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+                = tiles; 
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
+                = tiles;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
+                = "Most played";
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
+                = tileCount; 
+            mainUi->homeRowset->numRows++;
         }
     }
     free(tempFile);
@@ -1374,11 +1405,15 @@ int main(int argc, char** argv) {
             tiles[tileCount-1].next = NULL;
             tiles[0].previous = NULL;
 
-            mainUi->rows[mainUi->numRows].tiles = tiles; 
-            mainUi->rows[mainUi->numRows].tileCursor = tiles;
-            mainUi->rows[mainUi->numRows].name = "Recently Installed";
-            mainUi->rows[mainUi->numRows].length = tileCount; 
-            mainUi->numRows++;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+                = tiles; 
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
+                = tiles;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
+                = "Recently Installed";
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
+                = tileCount; 
+            mainUi->homeRowset->numRows++;
         }
     }
     else { 
@@ -1416,13 +1451,19 @@ int main(int argc, char** argv) {
             tiles[numTiles-1].next = NULL;
             tiles[0].previous = NULL;
 
-            mainUi->rows[mainUi->numRows].tiles = tiles;
-            asprintf(&mainUi->rows[mainUi->numRows].name, "Essential %s", 
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+                = tiles;
+
+            asprintf(
+                    &mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
+                    "Essential %s", 
                     platformString(platforms[iPlatform]));
 
-            mainUi->rows[mainUi->numRows].tileCursor = &mainUi->rows[mainUi->numRows].tiles[0];
-            mainUi->rows[mainUi->numRows].length = numTiles;
-            mainUi->numRows++;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
+                = tiles;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
+                = numTiles;
+            mainUi->homeRowset->numRows++;
         }
         else {
             printf("no games for platform!!!\n");
@@ -1431,30 +1472,36 @@ int main(int argc, char** argv) {
     }
 
 
-    for (uint32_t i = 0; i < mainUi->numRows; ++i) {
+    UiRowset *homeRowset = mainUi->homeRowset;
+    for (uint32_t i = 0; i < mainUi->homeRowset->numRows; ++i) {
         if (i == 0) {
-            mainUi->rows[i].previousRow = &mainUi->rows[mainUi->numRows-1];
+            homeRowset->rows[i].previousRow 
+                = &homeRowset->rows[homeRowset->numRows-1];
         }
         else {
-            mainUi->rows[i].previousRow = &mainUi->rows[i-1];
+            homeRowset->rows[i].previousRow 
+                = &homeRowset->rows[i-1];
         }
 
-        if (i == mainUi->numRows - 1) {
-            mainUi->rows[i].nextRow = &mainUi->rows[0];
+        if (i == homeRowset->numRows - 1) {
+            homeRowset->rows[i].nextRow = &homeRowset->rows[0];
         }
         else {
-            mainUi->rows[i].nextRow = &mainUi->rows[i+1];
+            homeRowset->rows[i].nextRow = &homeRowset->rows[i+1];
         }
     }
 
-    mainUi->movingToTarget = mainUi->rowCursor->tileCursor->target;
-    mainUi->movingToRow = mainUi->rowCursor;
+    mainUi->homeRowset->movingToTarget = 
+        mainUi->homeRowset->rowCursor->tileCursor->target;
+
+    mainUi->homeRowset->movingToRow = mainUi->homeRowset->rowCursor;
 
     // Initialize the text to render
-    offblast->mainUi.titleText = mainUi->movingToTarget->name;
+    offblast->mainUi.titleText = mainUi->homeRowset->movingToTarget->name;
     updateInfoText();
     updateDescriptionText();
-    offblast->mainUi.rowNameText = offblast->mainUi.movingToRow->name;
+    offblast->mainUi.rowNameText 
+        = mainUi->homeRowset->movingToRow->name;
 
 
     // § Main loop
@@ -1506,6 +1553,14 @@ int main(int argc, char** argv) {
                         break;
                     case SDL_CONTROLLER_BUTTON_B:
                         pressCancel();
+                        SDL_RaiseWindow(window);
+                        break;
+                    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+                        jumpEnd(0);
+                        SDL_RaiseWindow(window);
+                        break;
+                    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+                        jumpEnd(1);
                         SDL_RaiseWindow(window);
                         break;
                 }
@@ -1578,6 +1633,8 @@ int main(int argc, char** argv) {
                 else {
                     printf("key up %d\n", keyEvent->keysym.scancode);
                 }
+                // SDL_KEYMOD
+                // TODO how to use modifier keys? for jump left and jump right?
             }
 
         }
@@ -1600,112 +1657,90 @@ int main(int argc, char** argv) {
 
         if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
 
-            // Blocks
-            UiRow *rowToRender = mainUi->rowCursor->nextRow;
-            rowToRender = rowToRender->nextRow;
+            // § Blocks
+            if (mainUi->activeRowset->numRows == 0) {
+                printf("norows!\n");
+            }
+            else {
 
-            // § blocks
-            for (int32_t iRow = -2; iRow < ROWS_TOTAL-2; iRow++) {
+                // TODO what if theres only one row? maybe we should stop 
+                // starting this at -2?
+                UiRow *rowToRender = mainUi->activeRowset->rowCursor->nextRow;
+                rowToRender = rowToRender->nextRow;
 
-                UiTile *startTile = rowToRender->tileCursor;
-                float startTileW = 
-                    getWidthForScaledImage(mainUi->boxHeight, &startTile->image);
+                for (int32_t iRow = -2; iRow < ROWS_TOTAL-2; iRow++) {
 
-                float prevTileW = 0.0f;
+                    // TODO loadTexture - if we've got the 
+                    // same tile in two lists, it's going to have the same 
+                    // texture loaded on to the gpu multiple times
+                    // Need to have some kind of texture handle map for launch 
+                    // targets
 
-                if (startTile->previous != NULL) {
-                    prevTileW = getWidthForScaledImage(
-                            mainUi->boxHeight, &startTile->previous->image);
-                }
+                    int32_t advanceX = 0;
+                    int32_t shiftX = 0;
 
-                UiTile *tileToRender = startTile;
-                int32_t xAdvance = offblast->winMargin;
-                int32_t nextTileWidth = 0;
-
-                // TODO loadTexture - if we've got the 
-                // same tile in two lists, it's going to have the same 
-                // texture loaded on to the gpu multiple times
-
-                for (int32_t iTile = -2; 
-                        iTile < 27; 
-                        iTile++) 
-                {
-
-                    float tileW = 0;
-
-                    if (iTile < 0 ) {
-                        if (tileToRender->previous != NULL) {
-                            tileToRender = tileToRender->previous;
-                            loadTexture(tileToRender);
-                            tileW = getWidthForScaledImage(mainUi->boxHeight,
-                                    &tileToRender->image);
-
-                            if (tileToRender->image.width == 0) {
-                                xAdvance -= (mainUi->boxWidth + mainUi->boxPad);
-                            } else {
-                                xAdvance -= 
-                                    (tileW + mainUi->boxPad);
-                            }
-                        }
-                    }
-                    else if (iTile == 0) {
-                        tileToRender = startTile;
-                        loadTexture(tileToRender);
-                        xAdvance = offblast->winMargin;
-                    }
-                    else {
-                        if (tileToRender->next != NULL) {
-                            tileW = getWidthForScaledImage(mainUi->boxHeight,
-                                    &tileToRender->image);
-
-                            tileToRender = tileToRender->next;
-                            loadTexture(tileToRender);
-
-                            if (tileToRender->image.width == 0) {
-                                xAdvance += (mainUi->boxWidth + mainUi->boxPad);
-                            } else {
-                                xAdvance += 
-                                    (tileW + mainUi->boxPad);
-                            }
-                        }
-                    }
-
-                    float xOffset = 0;
-                    float yOffset = 0;
-
-                    if (mainUi->horizontalAnimation->animating != 0 && iRow == 0) 
+                    for (uint32_t iTile = 0; 
+                            iTile < rowToRender->length; 
+                            iTile++) 
                     {
+                        UiTile *theTile = &rowToRender->tiles[iTile];
+                        Image *imageToShow;
+                        loadTexture(theTile);
 
-                        double displace = 0;
-                        if (mainUi->horizontalAnimation->direction > 0) {
-                            displace = (double)(startTileW + mainUi->boxPad);
+                        if (theTile->image.textureHandle == 0) {
+                            imageToShow = &offblast->missingCoverImage;
                         }
                         else {
-                            displace = (double)(prevTileW + mainUi->boxPad);
+                            imageToShow = &theTile->image;
                         }
+
+                        if (theTile == rowToRender->tileCursor) 
+                        {
+                            shiftX = advanceX;
+                        }
+
+                        theTile->baseX = advanceX;
+
+                        advanceX += getWidthForScaledImage(
+                                    mainUi->boxHeight,
+                                    imageToShow);
+
+                        advanceX += mainUi->boxPad;
+                    }
+
+
+                    // TODO change this so it's animating the active row
+                    // using the row cursor
+                    // onRow == rowCursor
+                    int32_t xOffset = offblast->winMargin;
+                    if (mainUi->horizontalAnimation->animating != 0 
+                            && rowToRender == mainUi->activeRowset->rowCursor) 
+                    {
+                        double displace = 
+                            (double)(rowToRender->tileCursor->baseX 
+                                - rowToRender->movingToTile->baseX);
 
                         double change = easeInOutCirc(
                                 (double)SDL_GetTicks() 
-                                    - mainUi->horizontalAnimation->startTick,
+                                - mainUi->horizontalAnimation->startTick,
                                 0.0,
                                 displace,
                                 (double)mainUi->horizontalAnimation->durationMs);
 
-                        if (mainUi->horizontalAnimation->direction > 0) {
+                        if (mainUi->horizontalAnimation->direction < 0) {
                             change = -change;
                         }
 
                         xOffset += change;
                     }
 
-                    yOffset = (offblast->winFold - mainUi->boxHeight) + 
+                    int32_t yOffset = (offblast->winFold - mainUi->boxHeight) + 
                         (iRow * (mainUi->boxHeight + mainUi->boxPad));
-
                     if (mainUi->verticalAnimation->animating != 0) 
                     {
                         double change = easeInOutCirc(
                                 (double)SDL_GetTicks() 
-                                    - mainUi->verticalAnimation->startTick,
+                                - mainUi->verticalAnimation->startTick,
                                 0.0,
                                 (double)mainUi->boxHeight+ mainUi->boxPad,
                                 (double)mainUi->verticalAnimation->durationMs);
@@ -1718,108 +1753,124 @@ int main(int argc, char** argv) {
 
                     }
 
-                    // COVER
-                    // TODO don't render tiles that are off screen
 
-                    float desaturate = 0.2;
-                    float alpha = 1.0;
-                    if (strlen(tileToRender->target->path) == 0 || 
-                            strlen(tileToRender->target->fileName) == 0) 
+                    for (uint32_t iTile = 0; 
+                            iTile < rowToRender->length; 
+                            iTile++) 
                     {
-                        desaturate = 0.3;
-                        alpha = 0.7;
+                        UiTile *theTile = &rowToRender->tiles[iTile];
+                        Image *imageToShow;
+
+                        if (theTile->image.textureHandle == 0) {
+                            imageToShow = &offblast->missingCoverImage;
+                        }
+                        else {
+                            imageToShow = &theTile->image;
+                        }
+
+                        // TODO don't render tiles that are off screen
+                        float desaturate = 0.2;
+                        float alpha = 1.0;
+                        if (strlen(theTile->target->path) == 0 || 
+                                strlen(theTile->target->fileName) == 0) 
+                        {
+                            desaturate = 0.3;
+                            alpha = 0.7;
+                        }
+
+
+                        renderImage(
+                                xOffset + theTile->baseX - shiftX, 
+                                yOffset,
+                                0, 
+                                mainUi->boxHeight, 
+                                imageToShow, 
+                                desaturate, 
+                                alpha);
+
                     }
 
-                    renderImage(xAdvance + xOffset, yOffset,
-                            0, 
-                            mainUi->boxHeight, 
-                            &tileToRender->image, 
-                            desaturate, 
-                            alpha);
 
-                    if (tileToRender->next == NULL) {
-                        break;
-                    }
 
+                    // TODO if there's only one row don't infinite?
+                    rowToRender = rowToRender->previousRow;
                 }
 
-                rowToRender = rowToRender->previousRow;
-            }
+                glUniform1f(offblast->imageDesaturateUni, 0.0f);
+                glUniform2f(offblast->imageTranslateUni, 0.0f, 0.0f);
+                glUniform1f(offblast->imageAlphaUni, 1.0);
 
-            glUniform1f(offblast->imageDesaturateUni, 0.0f);
-            glUniform2f(offblast->imageTranslateUni, 0.0f, 0.0f);
-            glUniform1f(offblast->imageAlphaUni, 1.0);
+                Color bwStartColor = {0.0, 0.0, 0.0, 1.0};
+                Color foldGrEndColor = {0.0, 0.0, 0.0, 0.7};
+                renderGradient(0, offblast->winFold, 
+                        offblast->winWidth, 
+                        offblast->winHeight - offblast->winFold, 
+                        1,
+                        bwStartColor, foldGrEndColor);
 
-            Color bwStartColor = {0.0, 0.0, 0.0, 1.0};
-            Color foldGrEndColor = {0.0, 0.0, 0.0, 0.7};
-            renderGradient(0, offblast->winFold, 
-                    offblast->winWidth, 
-                    offblast->winHeight - offblast->winFold, 
-                    1,
-                    bwStartColor, foldGrEndColor);
+                Color bwEndColor = {0.0, 0.0, 0.0, 0.0};
+                renderGradient(0, 0, 
+                        offblast->winWidth, offblast->titlePointSize*2, 
+                        0,
+                        bwStartColor, bwEndColor);
 
-            Color bwEndColor = {0.0, 0.0, 0.0, 0.0};
-            renderGradient(0, 0, 
-                    offblast->winWidth, offblast->titlePointSize*2, 
-                    0,
-                    bwStartColor, bwEndColor);
-
-            // § INFO AREA
-            float alpha = 1.0;
-            if (mainUi->infoAnimation->animating == 1) {
-                double change = easeInOutCirc(
-                        (double)SDL_GetTicks() - 
+                // § INFO AREA
+                float alpha = 1.0;
+                if (mainUi->infoAnimation->animating == 1) {
+                    double change = easeInOutCirc(
+                            (double)SDL_GetTicks() - 
                             mainUi->infoAnimation->startTick,
-                        0.0,
-                        1.0,
-                        (double)mainUi->infoAnimation->durationMs);
+                            0.0,
+                            1.0,
+                            (double)mainUi->infoAnimation->durationMs);
 
-                if (mainUi->infoAnimation->direction == 0) {
-                    change = 1.0 - change;
+                    if (mainUi->infoAnimation->direction == 0) {
+                        change = 1.0 - change;
+                    }
+
+                    alpha = change;
                 }
 
-                alpha = change;
-            }
-
-            float rowNameAlpha = 1;
-            if (mainUi->rowNameAnimation->animating == 1) {
-                double change = easeInOutCirc(
-                        (double)SDL_GetTicks() - 
+                float rowNameAlpha = 1;
+                if (mainUi->rowNameAnimation->animating == 1) {
+                    double change = easeInOutCirc(
+                            (double)SDL_GetTicks() - 
                             mainUi->rowNameAnimation->startTick,
-                        0.0,
-                        1.0,
-                        (double)mainUi->rowNameAnimation->durationMs);
+                            0.0,
+                            1.0,
+                            (double)mainUi->rowNameAnimation->durationMs);
 
-                if (mainUi->rowNameAnimation->direction == 0) {
-                    change = 1.0 - change;
+                    if (mainUi->rowNameAnimation->direction == 0) {
+                        change = 1.0 - change;
+                    }
+
+                    rowNameAlpha = change;
                 }
 
-                rowNameAlpha = change;
-            }
-
-            // TODO calculate elsewhere
-            float pixelY = 
-                offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
+                // TODO calculate elsewhere
+                float pixelY = 
+                    offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
                     - offblast->titlePointSize;
 
-            renderText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_TITLE, alpha, 0, mainUi->titleText);
+                renderText(offblast, offblast->winMargin, pixelY, 
+                        OFFBLAST_TEXT_TITLE, alpha, 0, mainUi->titleText);
 
 
-            pixelY -= offblast->infoPointSize * 1.4;
-            renderText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_INFO, alpha, 0, mainUi->infoText);
+                pixelY -= offblast->infoPointSize * 1.4;
+                renderText(offblast, offblast->winMargin, pixelY, 
+                        OFFBLAST_TEXT_INFO, alpha, 0, mainUi->infoText);
 
 
-            pixelY -= offblast->infoPointSize + mainUi->boxPad;
-            renderText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_INFO, alpha, mainUi->descriptionWidth, 
-                mainUi->descriptionText); 
+                pixelY -= offblast->infoPointSize + mainUi->boxPad;
+                renderText(offblast, offblast->winMargin, pixelY, 
+                        OFFBLAST_TEXT_INFO, alpha, mainUi->descriptionWidth, 
+                        mainUi->descriptionText); 
 
 
-            pixelY = offblast->winFold + mainUi->boxPad;
-            renderText(offblast, offblast->winMargin, pixelY, 
-                OFFBLAST_TEXT_INFO, rowNameAlpha, 0, mainUi->rowNameText); 
+                pixelY = offblast->winFold + mainUi->boxPad;
+                renderText(offblast, offblast->winMargin, pixelY, 
+                        OFFBLAST_TEXT_INFO, rowNameAlpha, 0, mainUi->rowNameText); 
+            }
 
             // § Render Menu
             if (mainUi->showMenu) {
@@ -2080,7 +2131,7 @@ uint32_t needsReRender(SDL_Window *window)
 
         // 7:5 TODO I don't think this is actually 7:5
         mainUi->boxHeight = goldenRatioLarge(offblast->winWidth, 4);
-        mainUi->boxWidth = mainUi->boxHeight/5 * 7;
+        //TODO REMOVE mainUi->boxWidth = mainUi->boxHeight/5 * 7;
         mainUi->boxPad = goldenRatioLarge((double) offblast->winWidth, 9);
 
         mainUi->descriptionWidth = 
@@ -2115,19 +2166,28 @@ void changeColumn(uint32_t direction)
             }
             else {
                 if (direction == 0) {
-                    if (ui->rowCursor->tileCursor->previous != NULL) {
-                        ui->movingToTarget = 
-                            ui->rowCursor->tileCursor->previous->target;
+
+                    if (ui->activeRowset->rowCursor->tileCursor->previous 
+                            != NULL) 
+                    {
+                        ui->activeRowset->movingToTarget = 
+                            ui->activeRowset->rowCursor->tileCursor->previous->target;
+                        ui->activeRowset->rowCursor->movingToTile
+                            = ui->activeRowset->rowCursor->tileCursor->previous;
                     }
                     else {
                         ui->showMenu = 1;
                         return;
                     }
+
                 }
                 else {
-                    if (ui->rowCursor->tileCursor->next != NULL) {
-                        ui->movingToTarget 
-                            = ui->rowCursor->tileCursor->next->target;
+                    if (ui->activeRowset->rowCursor->tileCursor->next != NULL) 
+                    {
+                        ui->activeRowset->movingToTarget 
+                            = ui->activeRowset->rowCursor->tileCursor->next->target;
+                        ui->activeRowset->rowCursor->movingToTile
+                            = ui->activeRowset->rowCursor->tileCursor->next;
                     }
                     else {
                         ui->showMenu = 1;
@@ -2205,18 +2265,61 @@ void changeRow(uint32_t direction)
                 ui->rowNameAnimation->callback = &rowNameFaded;
 
                 if (direction == 0) {
-                    ui->movingToRow = ui->rowCursor->nextRow;
-                    ui->movingToTarget = 
-                        ui->rowCursor->nextRow->tileCursor->target;
+                    ui->activeRowset->movingToRow 
+                        = ui->activeRowset->rowCursor->nextRow;
+                    ui->activeRowset->movingToTarget = 
+                        ui->activeRowset->rowCursor->nextRow->tileCursor->target;
                 }
                 else {
-                    ui->movingToRow = ui->rowCursor->previousRow;
-                    ui->movingToTarget = 
-                        ui->rowCursor->previousRow->tileCursor->target;
+                    ui->activeRowset->movingToRow 
+                        = ui->activeRowset->rowCursor->previousRow;
+                    ui->activeRowset->movingToTarget = 
+                        ui->activeRowset->rowCursor->previousRow->tileCursor->target;
                 }
             }
         }
     }
+}
+
+void jumpEnd(uint32_t direction) 
+{
+    MainUi *ui = &offblast->mainUi;
+
+    if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
+        if (animationRunning() == 0)
+        {
+
+            if (!ui->showMenu) {
+                if (direction == 0) {
+                        ui->activeRowset->movingToTarget = 
+                            ui->activeRowset->rowCursor->tiles[0].target;
+                        ui->activeRowset->rowCursor->movingToTile = 
+                            &ui->activeRowset->rowCursor->tiles[0];
+
+                }
+                else {
+                    UiTile *endTile = &ui->activeRowset->rowCursor->tiles[
+                        ui->activeRowset->rowCursor->length-1];
+
+                        ui->activeRowset->movingToTarget = endTile->target;
+                        ui->activeRowset->rowCursor->movingToTile = endTile;
+                }
+
+                ui->horizontalAnimation->startTick = SDL_GetTicks();
+                ui->horizontalAnimation->direction = direction;
+                ui->horizontalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
+                ui->horizontalAnimation->animating = 1;
+                ui->horizontalAnimation->callback = &horizontalMoveDone;
+
+                ui->infoAnimation->startTick = SDL_GetTicks();
+                ui->infoAnimation->direction = 0;
+                ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
+                ui->infoAnimation->animating = 1;
+                ui->infoAnimation->callback = &infoFaded;
+            }
+        }
+    }
+    else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) { }
 }
 
 void startVerticalAnimation(
@@ -2247,19 +2350,13 @@ float goldenRatioLargef(float in, uint32_t exponent) {
 
 void horizontalMoveDone() {
     MainUi *ui = &offblast->mainUi;
-    if (ui->horizontalAnimation->direction == 1) {
-        ui->rowCursor->tileCursor = 
-            ui->rowCursor->tileCursor->next;
-    }
-    else {
-        ui->rowCursor->tileCursor = 
-            ui->rowCursor->tileCursor->previous;
-    }
+        ui->activeRowset->rowCursor->tileCursor = 
+            ui->activeRowset->rowCursor->movingToTile;
 }
 
 void verticalMoveDone() {
     MainUi *ui = &offblast->mainUi;
-        ui->rowCursor = ui->movingToRow;
+        ui->activeRowset->rowCursor = ui->activeRowset->movingToRow;
 }
 
 void infoFaded() {
@@ -2268,10 +2365,11 @@ void infoFaded() {
     if (ui->infoAnimation->direction == 0) {
 
         offblast->mainUi.titleText = 
-            offblast->mainUi.movingToTarget->name;
+            offblast->mainUi.activeRowset->movingToTarget->name;
         updateInfoText();
         updateDescriptionText();
-        offblast->mainUi.rowNameText = offblast->mainUi.movingToRow->name;
+        offblast->mainUi.rowNameText 
+            = offblast->mainUi.activeRowset->movingToRow->name;
 
         ui->infoAnimation->startTick = SDL_GetTicks();
         ui->infoAnimation->direction = 1;
@@ -2616,7 +2714,8 @@ GLuint createShaderProgram(GLint vertShader, GLint fragShader) {
 
 void launch() {
     
-    LaunchTarget *target = offblast->mainUi.rowCursor->tileCursor->target;
+    LaunchTarget *target = 
+        offblast->mainUi.activeRowset->rowCursor->tileCursor->target;
 
     if (strlen(target->path) == 0 || 
             strlen(target->fileName) == 0) 
@@ -2805,10 +2904,12 @@ void updateInfoText() {
     }
 
     char *infoString;
+    LaunchTarget *target = offblast->mainUi.activeRowset->movingToTarget;
+
     asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
-            offblast->mainUi.movingToTarget->date, 
-            platformString(offblast->mainUi.movingToTarget->platform),
-            offblast->mainUi.movingToTarget->ranking);
+            target->date, 
+            platformString(target->platform),
+            target->ranking);
 
     offblast->mainUi.infoText = infoString;
 }
@@ -2816,7 +2917,7 @@ void updateInfoText() {
 void updateDescriptionText() {
     OffblastBlob *descriptionBlob = 
     (OffblastBlob*) &offblast->descriptionFile->memory[
-       offblast->mainUi.movingToTarget->descriptionOffset];
+       offblast->mainUi.activeRowset->movingToTarget->descriptionOffset];
 
     offblast->mainUi.descriptionText = descriptionBlob->content;
 }
@@ -3217,7 +3318,6 @@ void renderImage(float x, float y, float w, float h, Image* image,
     glUniform1f(offblast->imageDesaturateUni, desaturation);
     glUniform1f(offblast->imageAlphaUni, alpha);
 
-
     glBindTexture(GL_TEXTURE_2D, image->textureHandle);
 
     glEnableVertexAttribArray(0);
@@ -3271,6 +3371,15 @@ void loadTexture(UiTile *tile) {
 
 void updateResults() {
 
+    MainUi *mainUi = &offblast->mainUi;
+    if (!strlen(offblast->searchTerm)) {
+        mainUi->searchRowset->numRows = 0;
+        mainUi->activeRowset = mainUi->homeRowset;
+    }
+    else {
+        mainUi->activeRowset = mainUi->searchRowset;
+    }
+
     LaunchTargetFile* targetFile = offblast->launchTargetFile;
 
     // TODO let's assume 25 results for now
@@ -3295,19 +3404,6 @@ void updateResults() {
                 printf("\n");
                 break;
             }
-
-            /*
-            printf("%u/(%u) entries\n", 
-                i, targetFile->nEntries);
-
-            printf("found game\t%d\t%u\n", 
-                i, targetFile->entries[i].targetSignature); 
-
-            printf("%s\n", targetFile->entries[i].name);
-            printf("%s\n", targetFile->entries[i].fileName);
-            printf("%s\n", targetFile->entries[i].path);
-            printf("--\n\n");
-            */
         }
 
     }
@@ -3316,7 +3412,6 @@ void updateResults() {
         tiles[tileCount-1].next = NULL;
         tiles[0].previous = NULL;
 
-        MainUi *mainUi = &offblast->mainUi;
         free(mainUi->searchRowset->rows[0].tiles);
 
         mainUi->searchRowset->rows[0].tiles = tiles; 
@@ -3324,6 +3419,14 @@ void updateResults() {
         mainUi->searchRowset->rows[0].name = "Search Results";
         mainUi->searchRowset->rows[0].length = tileCount; 
         mainUi->searchRowset->numRows = 1;
+
+        mainUi->searchRowset->rows[0].nextRow = &mainUi->searchRowset->rows[0];
+        mainUi->searchRowset->rows[0].previousRow
+            = &mainUi->searchRowset->rows[0];
+    }
+    else {
+        mainUi->searchRowset->numRows = 0;
+        mainUi->activeRowset = mainUi->homeRowset;
     }
 
 
