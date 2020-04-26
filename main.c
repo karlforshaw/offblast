@@ -1223,12 +1223,15 @@ int main(int argc, char** argv) {
     uint32_t lastTick = SDL_GetTicks();
     uint32_t renderFrequency = 1000/60;
 
-    // Init Ui
-    mainUi->resultRows = calloc(1, sizeof(UiRow));
-    mainUi->resultRows->tiles = calloc(1, sizeof(UiTile));
-    mainUi->resultRowCursor = mainUi->resultRows;
-    mainUi->numResultRows = 0;
+    // § Init Ui
+    mainUi->searchRowset = calloc(1, sizeof(UiRowset));
+    mainUi->searchRowset->rows = calloc(1, sizeof(UiRow));
+    mainUi->searchRowset->rows[0].tiles = calloc(1, sizeof(UiTile));
+    mainUi->searchRowset->rowCursor = mainUi->searchRowset->rows;
+    mainUi->searchRowset->numRows= 0;
 
+
+    // Start building the home rowset
     // rows for now:
     // 1. Your Library
     // 2. Essential *platform" 
@@ -3314,12 +3317,13 @@ void updateResults() {
         tiles[0].previous = NULL;
 
         MainUi *mainUi = &offblast->mainUi;
-        free(mainUi->resultRows[0].tiles);
-        mainUi->resultRows[0].tiles = tiles; 
-        mainUi->resultRows[0].tileCursor = tiles;
-        mainUi->resultRows[0].name = "Search Results";
-        mainUi->resultRows[0].length = tileCount; 
-        mainUi->numResultRows = 1;
+        free(mainUi->searchRowset->rows[0].tiles);
+
+        mainUi->searchRowset->rows[0].tiles = tiles; 
+        mainUi->searchRowset->rows[0].tileCursor = tiles;
+        mainUi->searchRowset->rows[0].name = "Search Results";
+        mainUi->searchRowset->rows[0].length = tileCount; 
+        mainUi->searchRowset->numRows = 1;
     }
 
 
