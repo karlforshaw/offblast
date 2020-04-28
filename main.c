@@ -108,6 +108,7 @@ typedef struct Player {
     SDL_GameController *usingController; 
     char *name; 
     uint8_t emailHash;
+    User *user;
 } Player;
 
 typedef struct Image {
@@ -233,6 +234,7 @@ typedef struct OffblastUi {
 
     uint32_t running;
     enum UiMode mode;
+    char *configPath;
 
     PlayerSelectUi playerSelectUi;
     MainUi mainUi;
@@ -289,6 +291,9 @@ typedef struct OffblastUi {
     size_t nPaths;
     Launcher *launchers;
 
+    char (*platforms)[256];
+    uint32_t nPlatforms;
+
     OffblastBlobFile *descriptionFile;
     OffblastDbFile playTimeDb;
     PlayTimeFile *playTimeFile;
@@ -331,6 +336,7 @@ void pressConfirm();
 void jumpEnd(uint32_t direction);
 void pressCancel();
 void updateResults();
+void updateHomeLists();
 void updateInfoText();
 void updateDescriptionText();
 void updateGameInfo();
@@ -350,6 +356,7 @@ void renderImage(float x, float y, float w, float h, Image* image,
         float desaturation, float alpha);
 void loadTexture(UiTile *tile);
 void pressSearch();
+void loadPlayerOnePlaytimeFile();
 
 
 OffblastUi *offblast;
@@ -380,6 +387,7 @@ int main(int argc, char** argv) {
 
     char *configPath;
     asprintf(&configPath, "%s/.offblast", homePath);
+    offblast->configPath = configPath;
 
     char *coverPath;
     asprintf(&coverPath, "%s/covers/", configPath);
@@ -483,19 +491,6 @@ int main(int argc, char** argv) {
         (OffblastBlobFile*) descriptionDb.memory;
     free(descriptionDbPath);
 
-    char *playTimeDbPath;
-    asprintf(&playTimeDbPath, "%s/playtime.bin", configPath);
-    OffblastDbFile playTimeDb = {0};
-    if (!InitDbFile(playTimeDbPath, &playTimeDb, 
-                1))
-    {
-        printf("couldn't initialize the playTime file, exiting\n");
-        return 1;
-    }
-    offblast->playTimeFile = 
-        (PlayTimeFile*) playTimeDb.memory;
-    offblast->playTimeDb = playTimeDb;
-    free(playTimeDbPath);
 
 
 #if 0
@@ -514,9 +509,7 @@ int main(int argc, char** argv) {
     } // XXX DEBUG ONLY CODE
 #endif 
 
-    char (*platforms)[256] = calloc(MAX_PLATFORMS, 256 * sizeof(char));
-    uint32_t nPlatforms = 0;
-
+    offblast->platforms = calloc(MAX_PLATFORMS, 256 * sizeof(char));
     offblast->nPaths = json_object_array_length(paths);
     offblast->launchers = calloc(offblast->nPaths, sizeof(Launcher));
 
@@ -556,17 +549,17 @@ int main(int argc, char** argv) {
         printf("Running Path for %s: %s\n", theExtension, thePath);
 
         if (i == 0) {
-            memcpy(platforms[nPlatforms], thePlatform, strlen(thePlatform));
-            nPlatforms++;
+            memcpy(offblast->platforms[offblast->nPlatforms], thePlatform, strlen(thePlatform));
+            offblast->nPlatforms++;
         }
         else {
             uint8_t gotPlatform = 0;
-            for (uint32_t i = 0; i < nPlatforms; ++i) {
-                if (strcmp(platforms[i], thePlatform) == 0) gotPlatform = 1;
+            for (uint32_t i = 0; i < offblast->nPlatforms; ++i) {
+                if (strcmp(offblast->platforms[i], thePlatform) == 0) gotPlatform = 1;
             }
             if (!gotPlatform) {
-                memcpy(platforms[nPlatforms], thePlatform, strlen(thePlatform));
-                nPlatforms++;
+                memcpy(offblast->platforms[offblast->nPlatforms], thePlatform, strlen(thePlatform));
+                offblast->nPlatforms++;
             }
         }
 
@@ -934,7 +927,7 @@ int main(int argc, char** argv) {
         closedir(dir);
     }
 
-    printf("DEBUG - got %u platforms\n", nPlatforms);
+    printf("DEBUG - got %u platforms\n", offblast->nPlatforms);
 
     close(pathDb.fd);
     close(launchTargetDb.fd);
@@ -988,8 +981,7 @@ int main(int argc, char** argv) {
     memcpy(&pUser->name, "Guest", strlen("Guest"));
     memcpy(&pUser->avatarPath, "guest-512.jpg", strlen("guest-512.jpg"));
     offblast->nUsers++;
-
-
+    loadPlayerOnePlaytimeFile();
 
     // XXX START SDL HERE
 
@@ -1263,250 +1255,12 @@ int main(int argc, char** argv) {
     // 1. Your Library
     // 2. Essential *platform" 
     mainUi->homeRowset = calloc(1, sizeof(UiRowset));
-    mainUi->homeRowset->rows = calloc(3 + nPlatforms, sizeof(UiRow));
+    mainUi->homeRowset->rows = calloc(3 + offblast->nPlatforms, sizeof(UiRow));
     mainUi->homeRowset->numRows = 0;
     mainUi->homeRowset->rowCursor = mainUi->homeRowset->rows;
     mainUi->activeRowset = mainUi->homeRowset;
 
-
-    // __ROW__ "Jump back in" 
-    size_t playTimeFileSize = sizeof(PlayTimeFile) + 
-        offblast->playTimeFile->nEntries * sizeof(PlayTime);
-    PlayTimeFile *tempFile = malloc(playTimeFileSize);
-    assert(tempFile);
-    memcpy(tempFile, offblast->playTimeFile, playTimeFileSize);
-
-    if (offblast->playTimeFile->nEntries) {
-
-        uint32_t tileLimit = 25;
-        UiTile *tiles = calloc(tileLimit, sizeof(UiTile));
-        assert(tiles);
-
-        uint32_t tileCount = 0;
-
-        // TODO regen these lists after we exit a play session
-        qsort(tempFile->entries, tempFile->nEntries, 
-               sizeof(PlayTime),
-               lastPlayedSort);
-
-        // Sort
-        for (int32_t i = tempFile->nEntries-1; i >= 0; --i) {
-
-            PlayTime* pt = (PlayTime*) &tempFile->entries[i];
-            int32_t targetIndex = launchTargetIndexByTargetSignature(
-                    launchTargetFile,
-                    pt->targetSignature);
-
-            LaunchTarget *target = &launchTargetFile->entries[targetIndex];
-            tiles[tileCount].target = target;
-            tiles[tileCount].next = &tiles[tileCount+1];
-            if (tileCount != 0) 
-                tiles[tileCount].previous = &tiles[tileCount-1];
-
-            tileCount++;
-            if (tileCount >= tileLimit) break;
-        }
-
-        if (tileCount > 0) {
-
-            tiles[tileCount-1].next = NULL;
-            tiles[0].previous = NULL;
-
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles = tiles; 
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
-                = tiles;
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
-                = "Jump back in";
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
-                = tileCount; 
-            mainUi->homeRowset->numRows++;
-        }
-    }
-
-    // __ROW__ "Most played" 
-    if (offblast->playTimeFile->nEntries) {
-
-        uint32_t tileLimit = 25;
-        UiTile *tiles = calloc(tileLimit, sizeof(UiTile));
-        assert(tiles);
-
-        uint32_t tileCount = 0;
-
-        qsort(tempFile->entries, tempFile->nEntries, 
-               sizeof(PlayTime),
-               playTimeSort);
-
-        // Sort
-        for (int32_t i = tempFile->nEntries-1; i >= 0; --i) {
-
-            PlayTime* pt = (PlayTime*) &tempFile->entries[i];
-            int32_t targetIndex = launchTargetIndexByTargetSignature(
-                    launchTargetFile,
-                    pt->targetSignature);
-
-            LaunchTarget *target = &launchTargetFile->entries[targetIndex];
-            tiles[tileCount].target = target;
-            tiles[tileCount].next = &tiles[tileCount+1];
-            if (tileCount != 0) 
-                tiles[tileCount].previous = &tiles[tileCount-1];
-
-            tileCount++;
-            if (tileCount >= tileLimit) break;
-        }
-
-
-        if (tileCount > 0) {
-
-            tiles[tileCount-1].next = NULL;
-            tiles[0].previous = NULL;
-
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
-                = tiles; 
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
-                = tiles;
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
-                = "Most played";
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
-                = tileCount; 
-            mainUi->homeRowset->numRows++;
-        }
-    }
-    free(tempFile);
-
-    // __ROW__ "Your Library"
-    uint32_t libraryLength = 0;
-    for (uint32_t i = 0; i < launchTargetFile->nEntries; ++i) {
-        LaunchTarget *target = &launchTargetFile->entries[i];
-        if (strlen(target->fileName) != 0) 
-            libraryLength++;
-    }
-
-    if (libraryLength > 0) {
-
-        uint32_t tileLimit = 25;
-        UiTile *tiles = calloc(tileLimit, sizeof(UiTile));
-        assert(tiles);
-
-        uint32_t tileCount = 0;
-
-        for (uint32_t i = launchTargetFile->nEntries; i > 0; i--) {
-
-            LaunchTarget *target = &launchTargetFile->entries[i];
-
-            if (strlen(target->fileName) != 0) {
-
-                tiles[tileCount].target = target;
-                tiles[tileCount].next = &tiles[tileCount+1];
-                if (tileCount != 0) 
-                    tiles[tileCount].previous = &tiles[tileCount-1];
-
-                tileCount++;
-                if (tileCount >= tileLimit) break;
-            }
-        }
-
-        if (tileCount > 0) {
-
-            tiles[tileCount-1].next = NULL;
-            tiles[0].previous = NULL;
-
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
-                = tiles; 
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
-                = tiles;
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
-                = "Recently Installed";
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
-                = tileCount; 
-            mainUi->homeRowset->numRows++;
-        }
-    }
-    else { 
-        printf("woah now looks like we have an empty library\n");
-    }
-
-
-    // __ROWS__ Essentials per platform 
-    for (uint32_t iPlatform = 0; iPlatform < nPlatforms; iPlatform++) {
-
-        uint32_t topRatedMax = 25;
-        UiTile *tiles = calloc(topRatedMax, sizeof(UiTile));
-        assert(tiles);
-
-        uint32_t numTiles = 0;
-        for (uint32_t i = 0; i < launchTargetFile->nEntries; ++i) {
-
-            LaunchTarget *target = &launchTargetFile->entries[i];
-
-            if (strcmp(target->platform, platforms[iPlatform]) == 0) {
-
-                tiles[numTiles].target = target; 
-                tiles[numTiles].next = &tiles[numTiles+1]; 
-
-                if (numTiles != 0) 
-                    tiles[numTiles].previous = &tiles[numTiles-1];
-
-                numTiles++;
-            }
-
-            if (numTiles >= topRatedMax) break;
-        }
-
-        if (numTiles > 0) {
-            tiles[numTiles-1].next = NULL;
-            tiles[0].previous = NULL;
-
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
-                = tiles;
-
-            asprintf(
-                    &mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
-                    "Essential %s", 
-                    platformString(platforms[iPlatform]));
-
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
-                = tiles;
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
-                = numTiles;
-            mainUi->homeRowset->numRows++;
-        }
-        else {
-            printf("no games for platform!!!\n");
-            free(tiles);
-        }
-    }
-
-
-    UiRowset *homeRowset = mainUi->homeRowset;
-    for (uint32_t i = 0; i < mainUi->homeRowset->numRows; ++i) {
-        if (i == 0) {
-            homeRowset->rows[i].previousRow 
-                = &homeRowset->rows[homeRowset->numRows-1];
-        }
-        else {
-            homeRowset->rows[i].previousRow 
-                = &homeRowset->rows[i-1];
-        }
-
-        if (i == homeRowset->numRows - 1) {
-            homeRowset->rows[i].nextRow = &homeRowset->rows[0];
-        }
-        else {
-            homeRowset->rows[i].nextRow = &homeRowset->rows[i+1];
-        }
-    }
-
-    mainUi->homeRowset->movingToTarget = 
-        mainUi->homeRowset->rowCursor->tileCursor->target;
-
-    mainUi->homeRowset->movingToRow = mainUi->homeRowset->rowCursor;
-
-    // Initialize the text to render
-    offblast->mainUi.titleText = mainUi->homeRowset->movingToTarget->name;
-    updateInfoText();
-    updateDescriptionText();
-    offblast->mainUi.rowNameText 
-        = mainUi->homeRowset->movingToRow->name;
+    updateHomeLists();
 
 
     // § Main loop
@@ -1784,7 +1538,9 @@ int main(int argc, char** argv) {
                         }
 
                         double actualX = xOffset + theTile->baseX - shiftX;
-                        if (actualX < offblast->winWidth) {
+                        uint32_t isInYBounds = (yOffset < offblast->winHeight
+                                && yOffset > 0 - mainUi->boxHeight);
+                        if (actualX < offblast->winWidth && isInYBounds) {
                             renderImage(
                                     actualX, 
                                     yOffset,
@@ -2819,6 +2575,7 @@ void launch() {
         pt->msPlayed += (afterTick - beforeTick);
         pt->lastPlayed = (uint32_t)time(NULL);
 
+        updateHomeLists();
     }
 }
 
@@ -2856,18 +2613,25 @@ void pressConfirm(int32_t joystickIndex) {
 
         printf("joystick %d\n", joystickIndex);
 
+
         for (uint32_t k = 0; k < OFFBLAST_MAX_PLAYERS; k++) {
 
             if (offblast->players[k].emailHash == 0) {
-                offblast->players[k].emailHash = emailSignature;
-            }
 
-            if (joystickIndex > -1) {
-                offblast->players[k].jsIndex = joystickIndex;
-                printf("Controller: %s\nAdded to Player %d\n",
-                        SDL_GameControllerNameForIndex(joystickIndex), k);
+                offblast->players[k].user = theUser;
+                offblast->players[k].emailHash = emailSignature;
+                loadPlayerOnePlaytimeFile();
+                updateHomeLists();
+
+                if (joystickIndex > -1) {
+                    offblast->players[k].jsIndex = joystickIndex;
+                    printf("Controller: %s\nAdded to Player %d\n",
+                            SDL_GameControllerNameForIndex(joystickIndex), k);
+                }
+
                 break;
             }
+
         }
 
     }
@@ -3352,7 +3116,7 @@ void renderImage(float x, float y, float w, float h, Image* image,
             sizeof(Vertex), (void*)(4*sizeof(float)));
 
     // TODO remove this uniform
-    glUniform2f(offblast->imageTranslateUni, 0, 0);
+    //glUniform2f(offblast->imageTranslateUni, 0, 0);
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
@@ -3390,6 +3154,273 @@ void loadTexture(UiTile *tile) {
             free(tile->image.atlas);
         }
     }
+}
+
+void updateHomeLists(){
+
+    LaunchTargetFile *launchTargetFile = offblast->launchTargetFile;
+    MainUi *mainUi = &offblast->mainUi;
+
+    mainUi->homeRowset->numRows = 0;
+    // TODO do I need to free each row's tileset?
+
+    // __ROW__ "Jump back in" 
+    size_t playTimeFileSize = sizeof(PlayTimeFile) + 
+        offblast->playTimeFile->nEntries * sizeof(PlayTime);
+    PlayTimeFile *tempFile = malloc(playTimeFileSize);
+    assert(tempFile);
+    memcpy(tempFile, offblast->playTimeFile, playTimeFileSize);
+    if (offblast->playTimeFile->nEntries) {
+
+        uint32_t tileLimit = 25;
+        UiTile *tiles = calloc(tileLimit, sizeof(UiTile));
+        assert(tiles);
+
+        uint32_t tileCount = 0;
+
+        // TODO regen these lists after we exit a play session
+        qsort(tempFile->entries, tempFile->nEntries, 
+               sizeof(PlayTime),
+               lastPlayedSort);
+
+        // Sort
+        for (int32_t i = tempFile->nEntries-1; i >= 0; --i) {
+
+            PlayTime* pt = (PlayTime*) &tempFile->entries[i];
+            int32_t targetIndex = launchTargetIndexByTargetSignature(
+                    launchTargetFile,
+                    pt->targetSignature);
+
+            LaunchTarget *target = &launchTargetFile->entries[targetIndex];
+            tiles[tileCount].target = target;
+            tiles[tileCount].next = &tiles[tileCount+1];
+            if (tileCount != 0) 
+                tiles[tileCount].previous = &tiles[tileCount-1];
+
+            tileCount++;
+            if (tileCount >= tileLimit) break;
+        }
+
+        if (tileCount > 0) {
+
+            tiles[tileCount-1].next = NULL;
+            tiles[0].previous = NULL;
+
+            if (mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+                    != NULL) {
+                free(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles);
+            }
+
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles = tiles; 
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
+                = tiles;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
+                = "Jump back in";
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
+                = tileCount; 
+            mainUi->homeRowset->numRows++;
+        }
+    }
+
+    // __ROW__ "Most played" 
+    if (offblast->playTimeFile->nEntries) {
+
+        uint32_t tileLimit = 25;
+        UiTile *tiles = calloc(tileLimit, sizeof(UiTile));
+        assert(tiles);
+
+        uint32_t tileCount = 0;
+
+        qsort(tempFile->entries, tempFile->nEntries, 
+               sizeof(PlayTime),
+               playTimeSort);
+
+        // Sort
+        for (int32_t i = tempFile->nEntries-1; i >= 0; --i) {
+
+            PlayTime* pt = (PlayTime*) &tempFile->entries[i];
+            int32_t targetIndex = launchTargetIndexByTargetSignature(
+                    launchTargetFile,
+                    pt->targetSignature);
+
+            LaunchTarget *target = &launchTargetFile->entries[targetIndex];
+            tiles[tileCount].target = target;
+            tiles[tileCount].next = &tiles[tileCount+1];
+            if (tileCount != 0) 
+                tiles[tileCount].previous = &tiles[tileCount-1];
+
+            tileCount++;
+            if (tileCount >= tileLimit) break;
+        }
+
+
+        if (tileCount > 0) {
+
+            tiles[tileCount-1].next = NULL;
+            tiles[0].previous = NULL;
+
+            if (mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+                    != NULL) {
+                free(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles);
+            }
+
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+                = tiles; 
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
+                = tiles;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
+                = "Most played";
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
+                = tileCount; 
+            mainUi->homeRowset->numRows++;
+        }
+    }
+    free(tempFile);
+
+    // __ROW__ "Your Library"
+    uint32_t libraryLength = 0;
+    for (uint32_t i = 0; i < launchTargetFile->nEntries; ++i) {
+        LaunchTarget *target = &launchTargetFile->entries[i];
+        if (strlen(target->fileName) != 0) 
+            libraryLength++;
+    }
+
+    if (libraryLength > 0) {
+
+        uint32_t tileLimit = 25;
+        UiTile *tiles = calloc(tileLimit, sizeof(UiTile));
+        assert(tiles);
+
+        uint32_t tileCount = 0;
+
+        for (uint32_t i = launchTargetFile->nEntries; i > 0; i--) {
+
+            LaunchTarget *target = &launchTargetFile->entries[i];
+
+            if (strlen(target->fileName) != 0) {
+
+                tiles[tileCount].target = target;
+                tiles[tileCount].next = &tiles[tileCount+1];
+                if (tileCount != 0) 
+                    tiles[tileCount].previous = &tiles[tileCount-1];
+
+                tileCount++;
+                if (tileCount >= tileLimit) break;
+            }
+        }
+
+        if (tileCount > 0) {
+
+            tiles[tileCount-1].next = NULL;
+            tiles[0].previous = NULL;
+
+            if (mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+                    != NULL) {
+                free(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles);
+            }
+
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+                = tiles; 
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
+                = tiles;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
+                = "Recently Installed";
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
+                = tileCount; 
+            mainUi->homeRowset->numRows++;
+        }
+    }
+    else { 
+        printf("woah now looks like we have an empty library\n");
+    }
+
+
+    // __ROWS__ Essentials per platform 
+    for (uint32_t iPlatform = 0; iPlatform < offblast->nPlatforms; iPlatform++) {
+
+        uint32_t topRatedMax = 25;
+        UiTile *tiles = calloc(topRatedMax, sizeof(UiTile));
+        assert(tiles);
+
+        uint32_t numTiles = 0;
+        for (uint32_t i = 0; i < launchTargetFile->nEntries; ++i) {
+
+            LaunchTarget *target = &launchTargetFile->entries[i];
+
+            if (strcmp(target->platform, offblast->platforms[iPlatform]) == 0) {
+
+                tiles[numTiles].target = target; 
+                tiles[numTiles].next = &tiles[numTiles+1]; 
+
+                if (numTiles != 0) 
+                    tiles[numTiles].previous = &tiles[numTiles-1];
+
+                numTiles++;
+            }
+
+            if (numTiles >= topRatedMax) break;
+        }
+
+        if (numTiles > 0) {
+            tiles[numTiles-1].next = NULL;
+            tiles[0].previous = NULL;
+
+            if (mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+                    != NULL) {
+                free(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles);
+            }
+
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+                = tiles;
+
+            asprintf(
+                    &mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
+                    "Essential %s", 
+                    platformString(offblast->platforms[iPlatform]));
+
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
+                = tiles;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
+                = numTiles;
+            mainUi->homeRowset->numRows++;
+        }
+        else {
+            printf("no games for platform!!!\n");
+            free(tiles);
+        }
+    }
+
+
+    UiRowset *homeRowset = mainUi->homeRowset;
+    for (uint32_t i = 0; i < mainUi->homeRowset->numRows; ++i) {
+        if (i == 0) {
+            homeRowset->rows[i].previousRow 
+                = &homeRowset->rows[homeRowset->numRows-1];
+        }
+        else {
+            homeRowset->rows[i].previousRow 
+                = &homeRowset->rows[i-1];
+        }
+
+        if (i == homeRowset->numRows - 1) {
+            homeRowset->rows[i].nextRow = &homeRowset->rows[0];
+        }
+        else {
+            homeRowset->rows[i].nextRow = &homeRowset->rows[i+1];
+        }
+    }
+
+    mainUi->homeRowset->movingToTarget = 
+        mainUi->homeRowset->rowCursor->tileCursor->target;
+
+    mainUi->homeRowset->movingToRow = mainUi->homeRowset->rowCursor;
+
+    // Initialize the text to render
+    offblast->mainUi.titleText = mainUi->homeRowset->movingToTarget->name;
+    updateInfoText();
+    updateDescriptionText();
+    offblast->mainUi.rowNameText 
+        = mainUi->homeRowset->movingToRow->name;
 }
 
 void updateResults() {
@@ -3455,4 +3486,36 @@ void updateResults() {
 
     updateGameInfo();
 
+}
+
+
+
+void loadPlayerOnePlaytimeFile() {
+
+    char *email;
+    Player *thePlayer = &offblast->players[0];
+    if (thePlayer->emailHash == 0) {
+        email = offblast->users[0].email;
+    }
+    else {
+        email = thePlayer->user->email;
+    }
+
+    assert(email);
+
+    char *playTimeDbPath;
+    asprintf(&playTimeDbPath, "%s/%s_playtime.bin", 
+            offblast->configPath, email);
+
+    OffblastDbFile playTimeDb = {0};
+    if (!InitDbFile(playTimeDbPath, &playTimeDb, 
+                1))
+    {
+        printf("couldn't initialize the playTime file, exiting\n");
+        exit(1);
+    }
+    offblast->playTimeFile = 
+        (PlayTimeFile*) playTimeDb.memory;
+    offblast->playTimeDb = playTimeDb;
+    free(playTimeDbPath);
 }
