@@ -25,13 +25,10 @@
 
 // Alpha 0.3
 //      * Menu
-//      - pull out side menu, with platform browsing, and exit / shutdown 
-//      - Search overlay
-//      - R and L buttons jump to the beginning or end of a list
+//      TODO do the game lists still need to be linked lists?
 //
 //
 // Alpha 0.4 
-//      - a loading animation for covers
 //      -. watch out for vram! glDeleteTextures
 //          We could move to a tile store object which has a fixed array of
 //          tiles (enough to fill 1.5 screens on both sides) each tile has a 
@@ -336,6 +333,7 @@ void pressCancel();
 void updateResults();
 void updateInfoText();
 void updateDescriptionText();
+void updateGameInfo();
 void initQuad(Quad* quad);
 size_t curlWrite(void *contents, size_t size, size_t nmemb, void *userP);
 int playTimeSort(const void *a, const void *b);
@@ -365,6 +363,7 @@ void doSearch() {
 }
 void doHome() {
     offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
+    updateGameInfo();
 }
 
 
@@ -1719,9 +1718,6 @@ int main(int argc, char** argv) {
                     }
 
 
-                    // TODO change this so it's animating the active row
-                    // using the row cursor
-                    // onRow == rowCursor
                     int32_t xOffset = offblast->winMargin;
                     if (mainUi->horizontalAnimation->animating != 0 
                             && rowToRender == mainUi->activeRowset->rowCursor) 
@@ -1778,7 +1774,6 @@ int main(int argc, char** argv) {
                             imageToShow = &theTile->image;
                         }
 
-                        // TODO don't render tiles that are off screen
                         float desaturate = 0.2;
                         float alpha = 1.0;
                         if (strlen(theTile->target->path) == 0 || 
@@ -1788,15 +1783,17 @@ int main(int argc, char** argv) {
                             alpha = 0.7;
                         }
 
-
-                        renderImage(
-                                xOffset + theTile->baseX - shiftX, 
-                                yOffset,
-                                0, 
-                                mainUi->boxHeight, 
-                                imageToShow, 
-                                desaturate, 
-                                alpha);
+                        double actualX = xOffset + theTile->baseX - shiftX;
+                        if (actualX < offblast->winWidth) {
+                            renderImage(
+                                    actualX, 
+                                    yOffset,
+                                    0, 
+                                    mainUi->boxHeight, 
+                                    imageToShow, 
+                                    desaturate, 
+                                    alpha);
+                        }
 
                     }
 
@@ -2369,17 +2366,20 @@ void verticalMoveDone() {
         ui->activeRowset->rowCursor = ui->activeRowset->movingToRow;
 }
 
-void infoFaded() {
-
-    MainUi *ui = &offblast->mainUi;
-    if (ui->infoAnimation->direction == 0) {
-
+void updateGameInfo() {
         offblast->mainUi.titleText = 
             offblast->mainUi.activeRowset->movingToTarget->name;
         updateInfoText();
         updateDescriptionText();
         offblast->mainUi.rowNameText 
             = offblast->mainUi.activeRowset->movingToRow->name;
+}
+
+void infoFaded() {
+
+    MainUi *ui = &offblast->mainUi;
+    if (ui->infoAnimation->direction == 0) {
+        updateGameInfo();
 
         ui->infoAnimation->startTick = SDL_GetTicks();
         ui->infoAnimation->direction = 1;
@@ -3453,11 +3453,6 @@ void updateResults() {
         mainUi->activeRowset = mainUi->homeRowset;
     }
 
-    offblast->mainUi.titleText = 
-        offblast->mainUi.activeRowset->movingToTarget->name;
-    updateInfoText();
-    updateDescriptionText();
-    offblast->mainUi.rowNameText 
-        = offblast->mainUi.activeRowset->movingToRow->name;
+    updateGameInfo();
 
 }
