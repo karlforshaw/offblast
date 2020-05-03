@@ -1,0 +1,3 @@
+
+/home/karl/.local/share/lutris/runners/wine/lutris-vkchildwindow-4.12.1-x86_64/bin/wine /home/karl/Apps/Cemu/cemu1.18.2_91e03eb03f55066\(1\)/Cemu.exe -f -g "Z:\home\karl\SeraphStore\Games\Games\WiiU\The Legend Of Zelda Breath of the Wild\vol\code\U-King.rpx"
+

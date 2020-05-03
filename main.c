@@ -23,12 +23,9 @@
 
 #define NAVIGATION_MOVE_DURATION 250 
 
-// Alpha 0.3
-//      * Menu
-//      TODO do the game lists still need to be linked lists?
-//
-//
 // Alpha 0.4 
+//      - Save directory per user.
+//      - OpenGameDb, auto download/update? Evict Assets and update.
 //      -. watch out for vram! glDeleteTextures
 //          We could move to a tile store object which has a fixed array of
 //          tiles (enough to fill 1.5 screens on both sides) each tile has a 
@@ -37,6 +34,8 @@
 //      - better aniations that support incremental jumps if you input a command
 //          during a running animation
 //      - Invalid date format is a thing
+//      - Deadzone checks
+//         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
 //
 //
 // TODO multidisk PS games.
@@ -75,6 +74,10 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <json-c/json.h>
+#include <libxml/parser.h>
+#include <libxml/tree.h>
+#include <libxml/xpath.h>
+#include <libxml/xpathInternals.h>
 #include <murmurhash.h>
 #include <curl/curl.h>
 #include <math.h>
@@ -225,9 +228,15 @@ typedef struct MainUi {
 
 } MainUi ;
 
+#define LAUNCHER_RETROARCH 1;
+#define LAUNCHER_CUSTOM 99;
 typedef struct Launcher {
+    char type;
     char path[PATH_MAX];
     char launcher[MAX_LAUNCH_COMMAND_LENGTH];
+
+    // TODO should we just leave this here or create some kind of union struct?
+    char cemuPath[PATH_MAX];
 } Launcher;
 
 typedef struct OffblastUi {
@@ -516,37 +525,65 @@ int main(int argc, char** argv) {
     for (int i=0; i < offblast->nPaths; ++i) {
 
         json_object *workingPathNode = NULL;
+        json_object *workingTypeStringNode = NULL;
         json_object *workingPathStringNode = NULL;
         json_object *workingPathExtensionNode = NULL;
         json_object *workingPathPlatformNode = NULL;
         json_object *workingPathLauncherNode = NULL;
 
+        const char *theType = NULL;
         const char *thePath = NULL;
         const char *theExtension = NULL;
         const char *thePlatform = NULL;
         const char *theLauncher = NULL;
 
+        // Emulator Specific Entries
+        json_object *workingPathCemuPathStringNode = NULL;
+        const char *theCemuPath = NULL;
+
         workingPathNode = json_object_array_get_idx(paths, i);
-        json_object_object_get_ex(workingPathNode, "path",
-                &workingPathStringNode);
-        json_object_object_get_ex(workingPathNode, "extension",
-                &workingPathExtensionNode);
+
+        json_object_object_get_ex(workingPathNode, "type",
+                &workingTypeStringNode);
+
+        theType = json_object_get_string(workingTypeStringNode);
+
+        if (strcmp("cemu", theType) == 0) {
+
+            json_object_object_get_ex(workingPathNode, "cemu_path",
+                    &workingPathCemuPathStringNode);
+            theCemuPath = json_object_get_string(workingPathCemuPathStringNode);
+            memcpy(&offblast->launchers[i].cemuPath, 
+                    theCemuPath, 
+                    strlen(theCemuPath));
+
+            // TODO remove this later
+            printf("CEMU Path is now %s\n", offblast->launchers[i].cemuPath);
+        }
+        else {
+            json_object_object_get_ex(workingPathNode, "path",
+                    &workingPathStringNode);
+            json_object_object_get_ex(workingPathNode, "extension",
+                    &workingPathExtensionNode);
+
+            thePath = json_object_get_string(workingPathStringNode);
+            theExtension = json_object_get_string(workingPathExtensionNode);
+
+            memcpy(&offblast->launchers[i].path, thePath, strlen(thePath));
+        }
+
         json_object_object_get_ex(workingPathNode, "platform",
                 &workingPathPlatformNode);
 
         json_object_object_get_ex(workingPathNode, "launcher",
                 &workingPathLauncherNode);
 
-        thePath = json_object_get_string(workingPathStringNode);
-        theExtension = json_object_get_string(workingPathExtensionNode);
         thePlatform = json_object_get_string(workingPathPlatformNode);
-
         theLauncher = json_object_get_string(workingPathLauncherNode);
 
-        memcpy(&offblast->launchers[i].path, thePath, strlen(thePath));
         memcpy(&offblast->launchers[i].launcher, theLauncher, strlen(theLauncher));
 
-        printf("Running Path for %s: %s\n", theExtension, thePath);
+        printf("Setting up platform: %s\n", thePlatform);
 
         if (i == 0) {
             memcpy(offblast->platforms[offblast->nPlatforms], thePlatform, strlen(thePlatform));
@@ -752,58 +789,130 @@ int main(int argc, char** argv) {
             fclose(openGameDbFile);
         }
 
-
-        DIR *dir = opendir(thePath);
-        // TODO NFS shares when unavailable just lock this up!
-        if (dir == NULL) {
-            printf("Path %s failed to open\n", thePath);
-            break;
-        }
-
         unsigned int nEntriesToAlloc = 10;
         unsigned int nAllocated = nEntriesToAlloc;
-
         void *fileNameBlock = calloc(nEntriesToAlloc, 256);
         char (*matchingFileNames)[256] = fileNameBlock;
-
         int numItems = 0;
-        struct dirent *currentEntry;
 
-        while ((currentEntry = readdir(dir)) != NULL) {
+        // Get a games list from Cemu
+        if (strcmp(theType, "cemu") == 0) {
 
-            char *ext = strrchr(currentEntry->d_name, '.');
+            char *cemuSettingsFilePath;
+            asprintf(&cemuSettingsFilePath, "%ssettings.xml", theCemuPath);
+            printf("reading from settings file %s\n", cemuSettingsFilePath);
 
-            if (ext && strcmp(ext, theExtension) == 0){
+            xmlDoc *settingsDoc = NULL;
 
-                memcpy(matchingFileNames + numItems, 
-                        currentEntry->d_name, 
-                        strlen(currentEntry->d_name));
+            xmlXPathContextPtr xpathCtx; 
+            xmlXPathObjectPtr xpathObj; 
 
-                numItems++;
-                if (numItems == nAllocated) {
+            settingsDoc = xmlParseFile(cemuSettingsFilePath);
+            assert(settingsDoc);
+            xpathCtx = xmlXPathNewContext(settingsDoc);
 
-                    unsigned int bytesToAllocate = nEntriesToAlloc * 256;
-                    nAllocated += nEntriesToAlloc;
+            xpathObj = xmlXPathEvalExpression(
+                    (xmlChar *)"//GameCache/Entry", 
+                    xpathCtx);
 
-                    void *newBlock = realloc(fileNameBlock, 
-                            nAllocated * 256);
+            if(xpathObj == NULL) {
+                fprintf(stderr,"Error: unable to evaluate xpath expression\n");
+                xmlXPathFreeContext(xpathCtx); 
+                xmlFreeDoc(settingsDoc); 
+                exit(1);
+            }
+            else {
+                // this is a set of entries
+                xmlNodeSet *entries = xpathObj->nodesetval;
+                int size = (entries) ? entries->nodeNr : 0;
+                int nodei;
 
-                    if (newBlock == NULL) {
-                        printf("failed to reallocate enough ram\n");
-                        return 0;
+                for(nodei = size - 1; nodei >= 0; nodei--) {
+
+                    assert(entries->nodeTab[nodei]);
+
+                    xmlNode *properties 
+                        = entries->nodeTab[nodei]->children;
+
+                    for(xmlNode *child = properties; child; child = child->next) 
+                    {
+
+                        if (strcmp((char *)child->name, "name") == 0) {
+                            printf("name: %s\n", 
+                                    child->children->content);
+                        }
+                        else if (strcmp((char *)child->name, "path") == 0) {
+                            printf("path: %s\n", 
+                                    child->children->content);
+
+                        }
                     }
 
-                    fileNameBlock = newBlock;
-                    matchingFileNames = fileNameBlock;
-
-                    memset(
-                            matchingFileNames+numItems, 
-                            0x0,
-                            bytesToAllocate);
+                    printf("---\n");
 
                 }
+
             }
+
+
+            exit(1);
         }
+        else if (strcmp(theType, "custom") == 0) { // Scan the directory
+            DIR *dir = opendir(thePath);
+            // TODO NFS shares when unavailable just lock this up!
+            if (dir == NULL) {
+                printf("Path %s failed to open\n", thePath);
+                break;
+            }
+
+            struct dirent *currentEntry;
+
+            while ((currentEntry = readdir(dir)) != NULL) {
+
+                char *ext = strrchr(currentEntry->d_name, '.');
+
+                if (ext && strcmp(ext, theExtension) == 0){
+
+                    memcpy(matchingFileNames + numItems, 
+                            currentEntry->d_name, 
+                            strlen(currentEntry->d_name));
+
+                    numItems++;
+                    if (numItems == nAllocated) {
+
+                        unsigned int bytesToAllocate = nEntriesToAlloc * 256;
+                        nAllocated += nEntriesToAlloc;
+
+                        void *newBlock = realloc(fileNameBlock, 
+                                nAllocated * 256);
+
+                        if (newBlock == NULL) {
+                            printf("failed to reallocate enough ram\n");
+                            return 0;
+                        }
+
+                        fileNameBlock = newBlock;
+                        matchingFileNames = fileNameBlock;
+
+                        memset(
+                                matchingFileNames+numItems, 
+                                0x0,
+                                bytesToAllocate);
+
+                    }
+                }
+            }
+
+            closedir(dir);
+        }
+
+        if (numItems == 0) { 
+            printf("no items found\n");
+            matchingFileNames = NULL;
+            free(fileNameBlock);
+            continue;
+        }
+
 
         uint32_t contentSignature = 0;
         uint32_t pathSignature = 0;
@@ -924,7 +1033,6 @@ int main(int argc, char** argv) {
 
         matchingFileNames = NULL;
         free(fileNameBlock);
-        closedir(dir);
     }
 
     printf("DEBUG - got %u platforms\n", offblast->nPlatforms);
@@ -1250,10 +1358,7 @@ int main(int argc, char** argv) {
     mainUi->searchRowset->movingToRow = &mainUi->searchRowset->rows[0];
 
 
-    // Start building the home rowset
-    // rows for now:
-    // 1. Your Library
-    // 2. Essential *platform" 
+    // allocate home rowset
     mainUi->homeRowset = calloc(1, sizeof(UiRowset));
     mainUi->homeRowset->rows = calloc(3 + offblast->nPlatforms, sizeof(UiRow));
     mainUi->homeRowset->numRows = 0;
@@ -1324,6 +1429,10 @@ int main(int argc, char** argv) {
                         break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
                         jumpEnd(1);
+                        SDL_RaiseWindow(window);
+                        break;
+                    case SDL_CONTROLLER_BUTTON_GUIDE:
+                        printf("guide pressed\n");
                         SDL_RaiseWindow(window);
                         break;
                 }
@@ -2494,6 +2603,17 @@ void launch() {
         asprintf(&romSlug, "%s/%s", (char*) &target->path, 
                 (char*)&target->fileName);
 
+        // TODO looks like retroarch has changed and won't allow us to 
+        // specify directories on the cmd now, so we'll have to A: create
+        // the save path if it doesn't exist,
+        // b: write a retroarch config appendage file and use the
+        // --append-config command line argument to pass it in.
+        // (if retroarch)
+        char *savepathSlug;
+        // TODO if they specified a savepath, use that
+        asprintf(&savepathSlug, "%s/saves/%s/", offblast->configPath, 
+                offblast->players[0].user->email);
+
         char *launchString = calloc(PATH_MAX, sizeof(char));
 
         int32_t foundIndex = -1;
@@ -2530,6 +2650,27 @@ void launch() {
             replaceIter++;
             if (replaceIter >= replaceLimit) {
                 printf("rom replace iterations exceeded, breaking\n");
+                break;
+            }
+        }
+
+        // TODO only works if the directory is there, if it's not we'll need 
+        // to create it
+        replaceIter = 0; replaceLimit = 8;
+        while ((p = strstr(launchString, "%SAVEPATH%"))) {
+
+            memmove(
+                    p + strlen(savepathSlug) + 2, 
+                    p + strlen("%SAVEPATH%"),
+                    strlen(p));
+
+            *p = '"';
+            memcpy(p+1, savepathSlug, strlen(savepathSlug));
+            *(p + 1 + strlen(savepathSlug)) = '"';
+
+            replaceIter++;
+            if (replaceIter >= replaceLimit) {
+                printf("savepath iterations exceeded, breaking\n");
                 break;
             }
         }

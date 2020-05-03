@@ -2,7 +2,7 @@
     "paths": [{
         "path": "/home/user/Games/sony_playstation/",
         "extension": ".7z",
-        "launcher": "cat %ROM%",
+        "launcher": "cat %ROM% --save=%SAVEPATH% --savestate=%SAVEPATH%",
         "platform": "sony_playstation"
     },{
         "path": "/home/user/roms/psx",
@@ -17,5 +17,6 @@
             "avatar": "/home/user/Pictures/me.jpg"
         }
     ],
-    "opengamedb": "/home/user/opengamedb"
+    "opengamedb": "/home/user/opengamedb",
+    "savedir": "/home/user/gamesaves"
 }

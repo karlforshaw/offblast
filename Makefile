@@ -1,10 +1,13 @@
 CFLAGS = -Wall
 CFLAGS += $(shell sdl2-config --cflags) 
 CFLAGS += $(shell pkg-config --cflags json-c libcurl gl glew)
+CFLAGS += $(shell xml2-config --cflags)
+
 CFLAGS += -pthread
 
 LIBS += $(shell sdl2-config --libs) 
 LIBS += $(shell pkg-config --libs json-c gl glew libmurmurhash libcurl) -pthread
+LIBS += $(shell xml2-config --libs)
 
 PROG = offblast
 OBJS = main.o offblastDbFile.o
