@@ -107,15 +107,15 @@ void* growDbFileIfNecessary(OffblastDbFile* dbFileStruct, size_t itemSize, enum 
         }
         else {
 
-    struct stat sb;
+            struct stat sb;
 
-    if (fstat(dbFileStruct->fd, &sb) == -1) {
-        perror("could not open db file\n");
-        return NULL;
-    }
+            if (fstat(dbFileStruct->fd, &sb) == -1) {
+                perror("could not open db file\n");
+                return NULL;
+            }
 
-        printf("truncated block size %lu!\n", sb.st_size);
-        printf("newSize we were using %lu!\n", newSize);
+            printf("truncated block size %lu!\n", sb.st_size);
+            printf("newSize we were using %lu!\n", newSize);
 
             void *memory = mremap(
                     dbFileStruct->memory,
@@ -140,7 +140,7 @@ void* growDbFileIfNecessary(OffblastDbFile* dbFileStruct, size_t itemSize, enum 
 int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file, 
         uint32_t targetSignature) 
 {
-    uint32_t foundIndex = -1;
+    int32_t foundIndex = -1;
     for (uint32_t i = 0; i < file->nEntries; i++) {
         if (file->entries[i].targetSignature == 
                 targetSignature) {
@@ -153,7 +153,7 @@ int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file,
 int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file, 
         uint32_t romSignature) 
 {
-    uint32_t foundIndex = -1;
+    int32_t foundIndex = -1;
     for (uint32_t i = 0; i < file->nEntries; i++) {
         if (file->entries[i].romSignature == 
                 romSignature) {
@@ -164,25 +164,18 @@ int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file,
 }
 
 
-int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, char *fileName) {
+int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, char *searchString) {
 
     int32_t bestIndex = -1;
     float bestScore = 0;
 
-    // Prepare the file name for searching 
-    char *fileNameStripped = calloc(1, strlen(fileName) + 1);
-    mempcpy(fileNameStripped, fileName, strlen(fileName));
-    char *ext = strchr(fileNameStripped, '(');
-    if (ext == NULL) ext = strrchr(fileNameStripped, '.');
-    if (ext != NULL) *ext = '\0';
-    if (*(ext-1) == ' ') *(ext-1) = '\0';
 
-    printf("\nLooking for: %s\n--------------\n", fileName);
+    printf("\nLooking for: %s\n--------------\n", searchString);
 
     for (uint32_t i = 0; i < file->nEntries; i++) {
 
         // File name needle match
-        char *workingCopy = strdup(fileNameStripped);
+        char *workingCopy = strdup(searchString);
         uint32_t tokensMatched = 0;
         uint32_t numTokens = 0;
         float score;
@@ -203,7 +196,7 @@ int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, char *fileName) {
         token = token = strtok(workingCopy, " ");
         while(token != NULL) {
             numTokens++;
-            if ((strstr(fileNameStripped, token) != NULL)) {
+            if ((strstr(searchString, token) != NULL)) {
                 //printf("Pass2: Token Match: %s\n", token);
                 tokensMatched++;
             }
@@ -213,7 +206,7 @@ int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, char *fileName) {
 
         if (tokensMatched >= 1) {
             score = (float)tokensMatched/numTokens;
-            printf("%s\t%s\n", fileName, file->entries[i].name);
+            printf("%s\t%s\n", searchString, file->entries[i].name);
             printf("Matched %u/%u for a score of %f\n", 
                     tokensMatched, numTokens, score);
 

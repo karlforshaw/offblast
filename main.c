@@ -228,17 +228,6 @@ typedef struct MainUi {
 
 } MainUi ;
 
-#define LAUNCHER_RETROARCH 1;
-#define LAUNCHER_CUSTOM 99;
-typedef struct Launcher {
-    char type;
-    char path[PATH_MAX];
-    char launcher[MAX_LAUNCH_COMMAND_LENGTH];
-
-    // TODO should we just leave this here or create some kind of union struct?
-    char cemuPath[PATH_MAX];
-} Launcher;
-
 typedef struct OffblastUi {
 
     uint32_t running;
@@ -297,9 +286,6 @@ typedef struct OffblastUi {
     size_t nUsers;
     User *users;
 
-    size_t nPaths;
-    Launcher *launchers;
-
     char (*platforms)[256];
     uint32_t nPlatforms;
 
@@ -307,6 +293,7 @@ typedef struct OffblastUi {
     OffblastDbFile playTimeDb;
     PlayTimeFile *playTimeFile;
     LaunchTargetFile *launchTargetFile;
+    LauncherFile *launcherFile;
 
 } OffblastUi;
 
@@ -447,10 +434,9 @@ int main(int argc, char** argv) {
 
     assert(configObj);
 
-    json_object *paths = NULL;
-    json_object_object_get_ex(configObj, "paths", &paths);
-
-    assert(paths);
+    json_object *configLaunchers = NULL;
+    json_object_object_get_ex(configObj, "launchers", &configLaunchers);
+    assert(configLaunchers);
 
     json_object *configForOpenGameDb;
     json_object_object_get_ex(configObj, "opengamedb", 
@@ -463,15 +449,15 @@ int main(int argc, char** argv) {
     printf("Found OpenGameDb at %s\n", openGameDbPath);
 
 
-    char *pathInfoDbPath;
-    asprintf(&pathInfoDbPath, "%s/pathinfo.bin", configPath);
-    struct OffblastDbFile pathDb = {0};
-    if (!InitDbFile(pathInfoDbPath, &pathDb, sizeof(PathInfo))) {
-        printf("couldn't initialize path db, exiting\n");
+    char *launcherDbPath;
+    asprintf(&launcherDbPath, "%s/launchers.bin", configPath);
+    struct OffblastDbFile launcherDb = {0};
+    if (!InitDbFile(launcherDbPath, &launcherDb, sizeof(Launcher))) {
+        printf("couldn't initialize launcher db, exiting\n");
         return 1;
     }
-    PathInfoFile *pathInfoFile = (PathInfoFile*) pathDb.memory;
-    free(pathInfoDbPath);
+    LauncherFile *launcherFile = (LauncherFile*) launcherDb.memory;
+    free(launcherDbPath);
 
     char *launchTargetDbPath;
     asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
@@ -519,83 +505,140 @@ int main(int argc, char** argv) {
 #endif 
 
     offblast->platforms = calloc(MAX_PLATFORMS, 256 * sizeof(char));
-    offblast->nPaths = json_object_array_length(paths);
-    offblast->launchers = calloc(offblast->nPaths, sizeof(Launcher));
 
-    for (int i=0; i < offblast->nPaths; ++i) {
+    uint32_t nConfigLaunchers = json_object_array_length(configLaunchers);
+    uint32_t configLauncherSignatures[nConfigLaunchers];
 
-        json_object *workingPathNode = NULL;
-        json_object *workingTypeStringNode = NULL;
-        json_object *workingPathStringNode = NULL;
-        json_object *workingPathExtensionNode = NULL;
-        json_object *workingPathPlatformNode = NULL;
-        json_object *workingPathLauncherNode = NULL;
+    printf("Setting up launchers.\n");
+    for (int i=0; i < nConfigLaunchers; ++i) {
 
-        const char *theType = NULL;
-        const char *thePath = NULL;
-        const char *theExtension = NULL;
-        const char *thePlatform = NULL;
-        const char *theLauncher = NULL;
+        json_object *launcherNode= NULL;
+        launcherNode = json_object_array_get_idx(configLaunchers, i);
+        const char *rawJson = json_object_to_json_string(launcherNode);
+        uint32_t configLauncherSignature = 0;
+        lmmh_x86_32(rawJson, strlen(rawJson), 33, &configLauncherSignature);
+        configLauncherSignatures[i] = configLauncherSignature;
 
-        // Emulator Specific Entries
-        json_object *workingPathCemuPathStringNode = NULL;
-        const char *theCemuPath = NULL;
+        // Check if we have it
+        uint32_t launcherIsKnown = 0;
+        Launcher *theLauncher;
 
-        workingPathNode = json_object_array_get_idx(paths, i);
-
-        json_object_object_get_ex(workingPathNode, "type",
-                &workingTypeStringNode);
-
-        theType = json_object_get_string(workingTypeStringNode);
-
-        if (strcmp("cemu", theType) == 0) {
-
-            json_object_object_get_ex(workingPathNode, "cemu_path",
-                    &workingPathCemuPathStringNode);
-            theCemuPath = json_object_get_string(workingPathCemuPathStringNode);
-            memcpy(&offblast->launchers[i].cemuPath, 
-                    theCemuPath, 
-                    strlen(theCemuPath));
-
-            // TODO remove this later
-            printf("CEMU Path is now %s\n", offblast->launchers[i].cemuPath);
-        }
-        else {
-            json_object_object_get_ex(workingPathNode, "path",
-                    &workingPathStringNode);
-            json_object_object_get_ex(workingPathNode, "extension",
-                    &workingPathExtensionNode);
-
-            thePath = json_object_get_string(workingPathStringNode);
-            theExtension = json_object_get_string(workingPathExtensionNode);
-
-            memcpy(&offblast->launchers[i].path, thePath, strlen(thePath));
+        for(int j=0; j < launcherFile->nEntries; ++j) {
+            if (launcherFile->entries[j].signature == configLauncherSignature) {
+                launcherIsKnown = 1;
+                theLauncher = &launcherFile->entries[j];
+                break;
+            }
         }
 
-        json_object_object_get_ex(workingPathNode, "platform",
-                &workingPathPlatformNode);
+        if (!launcherIsKnown) {
 
-        json_object_object_get_ex(workingPathNode, "launcher",
-                &workingPathLauncherNode);
+            printf("New launcher found.\n");
 
-        thePlatform = json_object_get_string(workingPathPlatformNode);
-        theLauncher = json_object_get_string(workingPathLauncherNode);
+            void *pLauncherFileMemory = growDbFileIfNecessary(
+                    &launcherDb, 
+                    sizeof(Launcher), 
+                    OFFBLAST_DB_TYPE_FIXED);
 
-        memcpy(&offblast->launchers[i].launcher, theLauncher, strlen(theLauncher));
+            if(pLauncherFileMemory == NULL) {
+                printf("Couldn't expand the db file to accomodate"
+                        " all the launchers\n");
+                return 1;
+            }
+            else {
+                launcherFile = (LauncherFile*) pLauncherFileMemory; 
+            }
 
-        printf("Setting up platform: %s\n", thePlatform);
+            theLauncher = &launcherFile->entries[launcherFile->nEntries++];
+            theLauncher->signature = configLauncherSignature;
 
+            // Generic Properties
+            json_object *typeStringNode = NULL;
+            const char *theType = NULL;
+            json_object *platformStringNode = NULL;
+            const char *thePlatform = NULL;
+            json_object *cmdStringNode = NULL;
+            const char *theCommand = NULL;
+
+            // Emulator Specific Properties 
+            json_object *extensionStringNode = NULL;
+            const char *theExtension = NULL;
+            json_object *romPathStringNode = NULL;
+            const char *theRomPath = NULL;
+
+            json_object *cemuPathStringNode = NULL;
+            const char *theCemuPath = NULL;
+
+            json_object_object_get_ex(launcherNode, "type",
+                    &typeStringNode);
+            theType = json_object_get_string(typeStringNode);
+            assert(strlen(theType) < 256);
+            memcpy(&theLauncher->type, theType, strlen(theType));
+
+            if (strcmp("cemu", theLauncher->type) == 0) {
+
+                json_object_object_get_ex(
+                        launcherNode, 
+                        "cemu_path",
+                        &cemuPathStringNode);
+
+                theCemuPath = json_object_get_string(cemuPathStringNode);
+                memcpy(&theLauncher->cemuPath, 
+                        theCemuPath, 
+                        strlen(theCemuPath));
+
+                // TODO remove
+                printf("CEMU Path is now %s\n", theLauncher->cemuPath);
+            }
+            else {
+
+                json_object_object_get_ex(launcherNode, "rom_path",
+                        &romPathStringNode);
+                theRomPath = json_object_get_string(romPathStringNode);
+                memcpy(&theLauncher->romPath, theRomPath, strlen(theRomPath));
+
+                json_object_object_get_ex(launcherNode, "extension",
+                        &extensionStringNode);
+                theExtension = json_object_get_string(extensionStringNode);
+                assert(strlen(theExtension) < 32);
+                memcpy(&theLauncher->extension, 
+                        theExtension, strlen(theExtension));
+
+            }
+
+            json_object_object_get_ex(launcherNode, "platform",
+                    &platformStringNode);
+            thePlatform = json_object_get_string(platformStringNode);
+            assert(strlen(thePlatform) < 256);
+            memcpy(&theLauncher->platform, 
+                    thePlatform, strlen(thePlatform));
+
+            json_object_object_get_ex(launcherNode, "cmd",
+                    &cmdStringNode);
+            theCommand = json_object_get_string(cmdStringNode);
+            assert(strlen(theCommand) < 512);
+            memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
+
+        }
+
+
+        printf("Setting up platform: %s\n", (char*)&theLauncher->platform);
         if (i == 0) {
-            memcpy(offblast->platforms[offblast->nPlatforms], thePlatform, strlen(thePlatform));
+            memcpy(offblast->platforms[offblast->nPlatforms], 
+                    theLauncher->platform, 
+                    strlen(theLauncher->platform));
+
             offblast->nPlatforms++;
         }
         else {
             uint8_t gotPlatform = 0;
             for (uint32_t i = 0; i < offblast->nPlatforms; ++i) {
-                if (strcmp(offblast->platforms[i], thePlatform) == 0) gotPlatform = 1;
+                if (strcmp(offblast->platforms[i], theLauncher->platform) == 0) 
+                    gotPlatform = 1;
             }
             if (!gotPlatform) {
-                memcpy(offblast->platforms[offblast->nPlatforms], thePlatform, strlen(thePlatform));
+                memcpy(offblast->platforms[offblast->nPlatforms], 
+                        theLauncher->platform, strlen(theLauncher->platform));
                 offblast->nPlatforms++;
             }
         }
@@ -603,19 +646,27 @@ int main(int argc, char** argv) {
         uint32_t platformScraped = 0;
         for (uint32_t i=0; i < launchTargetFile->nEntries; ++i) {
             if (strcmp(launchTargetFile->entries[i].platform, 
-                        thePlatform) == 0) 
+                        theLauncher->platform) == 0) 
             {
-                printf("%s already scraped.\n", thePlatform);
+                printf("%s already scraped.\n", theLauncher->platform);
                 platformScraped = 1;
                 break;
             }
         }
 
+        struct romFound {
+            char path[256];
+            char name[256];
+        };
+        struct romFound *fileFoundBlock;
+        int numItems = 0;
+
         if (!platformScraped) {
 
+            printf("Pulling data in from the opengamedb.\n");
             char *openGameDbPlatformPath;
             asprintf(&openGameDbPlatformPath, "%s/%s.csv", openGameDbPath, 
-                    thePlatform);
+                    theLauncher->platform);
             printf("Looking for file %s\n", openGameDbPlatformPath);
 
             FILE *openGameDbFile = fopen(openGameDbPlatformPath, "r");
@@ -640,7 +691,8 @@ int main(int argc, char** argv) {
                     char *gameName = getCsvField(csvLine, 1);
                     char *gameSeed;
 
-                    asprintf(&gameSeed, "%s_%s", thePlatform, gameName);
+                    asprintf(&gameSeed, "%s_%s", 
+                            theLauncher->platform, gameName);
 
                     uint32_t targetSignature = 0;
 
@@ -665,6 +717,7 @@ int main(int argc, char** argv) {
                         else {
                             launchTargetFile = 
                                 (LaunchTargetFile*) pLaunchTargetMemory; 
+                            offblast->launchTargetFile = launchTargetFile;
                         }
 
                         char *gameDate = getCsvField(csvLine, 2);
@@ -673,7 +726,7 @@ int main(int argc, char** argv) {
                         char *description = getCsvField(csvLine, 6);
                         char *coverArtUrl = getCsvField(csvLine, 7);
 
-                        printf("\n%s\n%u\n%s\n%s\ng: %s\n\nm: %s\n", 
+                        printf("\n--\nAdding: \n%s\n%u\n%s\n%s\ng: %s\n\nm: %s\n", 
                                 gameSeed, 
                                 targetSignature, 
                                 gameName, 
@@ -691,8 +744,8 @@ int main(int argc, char** argv) {
                                 strlen(gameName));
 
                         memcpy(&newEntry->platform, 
-                                thePlatform,
-                                strlen(thePlatform));
+                                theLauncher->platform,
+                                strlen(theLauncher->platform));
 
                         memcpy(&newEntry->coverUrl, 
                                 coverArtUrl,
@@ -759,9 +812,7 @@ int main(int argc, char** argv) {
                         printf("description file cursor is now %lu\n", 
                                 offblast->descriptionFile->cursor);
 
-
-                        // TODO round properly
-                        newEntry->ranking = (uint32_t) score;
+                        newEntry->ranking = (uint32_t)round(score);
 
                         launchTargetFile->nEntries++;
 
@@ -789,17 +840,18 @@ int main(int argc, char** argv) {
             fclose(openGameDbFile);
         }
 
-        unsigned int nEntriesToAlloc = 10;
+        unsigned int nEntriesToAlloc = 1000; // TODO come back to this
         unsigned int nAllocated = nEntriesToAlloc;
-        void *fileNameBlock = calloc(nEntriesToAlloc, 256);
-        char (*matchingFileNames)[256] = fileNameBlock;
-        int numItems = 0;
+
+        fileFoundBlock = 
+            calloc(nEntriesToAlloc, sizeof(struct romFound));
 
         // Get a games list from Cemu
-        if (strcmp(theType, "cemu") == 0) {
+        if (strcmp(theLauncher->type, "cemu") == 0) {
 
             char *cemuSettingsFilePath;
-            asprintf(&cemuSettingsFilePath, "%ssettings.xml", theCemuPath);
+            asprintf(&cemuSettingsFilePath, "%ssettings.xml", 
+                    theLauncher->cemuPath);
             printf("reading from settings file %s\n", cemuSettingsFilePath);
 
             xmlDoc *settingsDoc = NULL;
@@ -822,7 +874,6 @@ int main(int argc, char** argv) {
                 exit(1);
             }
             else {
-                // this is a set of entries
                 xmlNodeSet *entries = xpathObj->nodesetval;
                 int size = (entries) ? entries->nodeNr : 0;
                 int nodei;
@@ -838,30 +889,54 @@ int main(int argc, char** argv) {
                     {
 
                         if (strcmp((char *)child->name, "name") == 0) {
+
                             printf("name: %s\n", 
                                     child->children->content);
+
+                            if (strlen((char *)child->children->content) > 255) {
+                                printf("Warning: name is longer than 255: %s", 
+                                        child->children->content);
+                                continue;
+                            }
+
+                            memcpy(
+                                    fileFoundBlock[numItems].name, 
+                                    child->children->content, 
+                                    strlen((char *)child->children->content));
+
                         }
                         else if (strcmp((char *)child->name, "path") == 0) {
+
                             printf("path: %s\n", 
                                     child->children->content);
 
+                            if (strlen((char *)child->children->content) > 255) {
+                                printf("Warning: name is longer than 255: %s", 
+                                        child->children->content);
+                                continue;
+                            }
+
+                            memcpy(
+                                    fileFoundBlock[numItems].path, 
+                                    child->children->content, 
+                                    strlen((char *)child->children->content));
+
                         }
+
+
+                        // §55 TODO KARL                     
                     }
 
+                    numItems++;
                     printf("---\n");
-
                 }
-
             }
-
-
-            exit(1);
         }
-        else if (strcmp(theType, "custom") == 0) { // Scan the directory
-            DIR *dir = opendir(thePath);
+        else if (strcmp(theLauncher->type, "custom") == 0) { // Scan the directory
+            DIR *dir = opendir(theLauncher->romPath);
             // TODO NFS shares when unavailable just lock this up!
             if (dir == NULL) {
-                printf("Path %s failed to open\n", thePath);
+                printf("Path %s failed to open\n", theLauncher->romPath);
                 break;
             }
 
@@ -871,15 +946,26 @@ int main(int argc, char** argv) {
 
                 char *ext = strrchr(currentEntry->d_name, '.');
 
-                if (ext && strcmp(ext, theExtension) == 0){
+                if (ext && strcmp(ext, theLauncher->extension) == 0){
 
-                    memcpy(matchingFileNames + numItems, 
-                            currentEntry->d_name, 
-                            strlen(currentEntry->d_name));
+                    char *fullPath = NULL;
+                    asprintf(&fullPath, "%s/%s", 
+                            theLauncher->romPath, currentEntry->d_name);
+
+                    memcpy(&fileFoundBlock[numItems].path, 
+                            fullPath, 
+                            strlen(fullPath));
+
+                    free(fullPath);
 
                     numItems++;
+
+                    // §55 TODO KARL this has to be a function and has to be
+                    // called for each emulator, also why are you not freeing
+                    // the old block of memory?
                     if (numItems == nAllocated) {
 
+                        /*
                         unsigned int bytesToAllocate = nEntriesToAlloc * 256;
                         nAllocated += nEntriesToAlloc;
 
@@ -899,6 +985,10 @@ int main(int argc, char** argv) {
                                 0x0,
                                 bytesToAllocate);
 
+                        */
+                        printf("ran out of entries in the array\n");
+                        exit(1);
+
                     }
                 }
             }
@@ -908,66 +998,58 @@ int main(int argc, char** argv) {
 
         if (numItems == 0) { 
             printf("no items found\n");
-            matchingFileNames = NULL;
-            free(fileNameBlock);
+            free(fileFoundBlock);
             continue;
         }
 
 
         uint32_t contentSignature = 0;
-        uint32_t pathSignature = 0;
-        lmmh_x86_32(thePath, strlen(thePath), 33, &pathSignature);
-        lmmh_x86_32(matchingFileNames, numItems*256, 33, &contentSignature);
+        lmmh_x86_32(fileFoundBlock, numItems*sizeof(struct romFound), 
+                33, &contentSignature);
 
-        printf("got sig: signature:%u contentsHash:%u\n", pathSignature, 
-                contentSignature);
+        printf("contentsHash:%u\n", contentSignature);
+        uint32_t rescrapeRequired = 0;
 
-        uint32_t rescrapeRequired = (pathInfoFile->nEntries == 0);
 
-        // This goes through everything we have in the file now
-        // We need something to detect whether it's in the file
-        uint32_t isInFile = 0;
-        for (uint32_t i=0; i < pathInfoFile->nEntries; ++i) {
-            if (pathInfoFile->entries[i].signature == pathSignature
-                    && pathInfoFile->entries[i].contentsHash 
-                    != contentSignature) 
-            {
-                printf("Contents of directory %s have changed!\n", thePath);
-                isInFile =1;
-                rescrapeRequired = 1;
-                break;
-            }
-            else if (pathInfoFile->entries[i].signature == pathSignature)
-            {
-                printf("Contents unchanged for: %s\n", thePath);
-                isInFile = 1;
-                break;
-            }
-        }
+        if (theLauncher->contentsHash != contentSignature) {
+            printf("Launcher targets for %u have changed!\n", 
+                    theLauncher->signature);
 
-        if (!isInFile) {
-            printf("%s isn't in the db, adding..\n", thePath);
-
-            // TODO do we have the allocation to add it?
-            //
-            pathInfoFile->entries[pathInfoFile->nEntries].signature = 
-                pathSignature;
-            pathInfoFile->entries[pathInfoFile->nEntries].contentsHash = 
-                contentSignature;
-            pathInfoFile->nEntries++;
-
+            theLauncher->contentsHash = contentSignature;
             rescrapeRequired = 1;
         }
+        else {
+            printf("Contents unchanged for: %u\n", theLauncher->signature);
+        }
+
 
         if (rescrapeRequired) {
             void *romData = calloc(1, ROM_PEEK_SIZE);
 
             for (uint32_t j=0;j<numItems; j++) {
 
-                char *romPathTrimmed; 
+                char romPathCopy[PATH_MAX];
+                char *romPathTrimmed = (char*)&romPathCopy; 
+
+                if (strcmp(theLauncher->type, "cemu") == 0) {
+                    memcpy(romPathTrimmed, 
+                            fileFoundBlock[j].path+2, 
+                            strlen(fileFoundBlock[j].path+1)); 
+
+                    char *slash;
+                    while ((slash = strchr(romPathCopy, '\\')) != NULL) {
+                        *slash = '/';
+                    }
+                }
+                else {
+                    romPathTrimmed = (char*) &fileFoundBlock[j].path;
+                }
+
+                /*
                 asprintf(&romPathTrimmed, "%s/%s", 
                         thePath,
                         matchingFileNames[j]);
+                */
 
                 // TODO check it's not disc 2 or 3 etc
 
@@ -975,6 +1057,7 @@ int main(int argc, char** argv) {
                 FILE *romFd = fopen(romPathTrimmed, "rb");
                 if (! romFd) {
                     printf("cannot open from rom\n");
+                    continue;
                 }
 
                 for (uint32_t i = 0; i < ROM_PEEK_SIZE; ++i) {
@@ -1002,8 +1085,39 @@ int main(int argc, char** argv) {
                 }
                 else {
 
+                    char *searchString = NULL;
+
+                    if (strlen((char*)&fileFoundBlock[j].name) == 0) {
+                        searchString = calloc(1, 
+                                strlen((char*)&fileFoundBlock[j].path) + 1);
+
+                        char *startOfFileName = 
+                            strrchr((char*)&fileFoundBlock[j].path, '/');
+                        startOfFileName++;
+                        mempcpy(searchString, 
+                                startOfFileName,
+                                strlen(startOfFileName));
+
+                        char *ext = strchr(searchString, '(');
+                        if (ext == NULL) ext = strrchr(searchString, '.');
+                        if (ext != NULL) *ext = '\0';
+                        if (*(ext-1) == ' ') *(ext-1) = '\0';
+                    }
+                    else {
+                        searchString = calloc(1, 
+                                strlen((char*)&fileFoundBlock[j].name) + 1);
+
+                        mempcpy(searchString, 
+                                (char*)&fileFoundBlock[j].name, 
+                                strlen((char*)&fileFoundBlock[j].name));
+                    }
+
+                    // TODO DEL
+                    printf("Search string: %s\n", searchString);
                     indexOfEntry = launchTargetIndexByNameMatch(
-                            launchTargetFile, matchingFileNames[j]);
+                            launchTargetFile, searchString);
+
+                    free(searchString);
 
                     printf("found by name at index %d\n", indexOfEntry);
 
@@ -1013,31 +1127,27 @@ int main(int argc, char** argv) {
                             &launchTargetFile->entries[indexOfEntry];
 
                         theTarget->romSignature = romSignature;
-
-                        memcpy(&theTarget->fileName, 
-                                &matchingFileNames[j], 
-                                strlen(matchingFileNames[j]));
-
+                        theTarget->launcherSignature = theLauncher->signature;
                         memcpy(&theTarget->path, 
-                                thePath,
-                                strlen(thePath));
+                                (char *) &fileFoundBlock[j].path,
+                                strlen((char *) &fileFoundBlock[j].path));
                     
                     }
                 }
-
-                free(romPathTrimmed);
             }; 
 
             free(romData);
         }
 
-        matchingFileNames = NULL;
-        free(fileNameBlock);
+        free(fileFoundBlock);
     }
+
+    // TODO remove launch targets for any missing launchers now that we
+    // have an array of knownlauncher signatures
 
     printf("DEBUG - got %u platforms\n", offblast->nPlatforms);
 
-    close(pathDb.fd);
+    close(launcherDb.fd);
     close(launchTargetDb.fd);
 
 
@@ -1640,7 +1750,7 @@ int main(int argc, char** argv) {
                         float desaturate = 0.2;
                         float alpha = 1.0;
                         if (strlen(theTile->target->path) == 0 || 
-                                strlen(theTile->target->fileName) == 0) 
+                                strlen(theTile->target->path) == 0) 
                         {
                             desaturate = 0.3;
                             alpha = 0.7;
@@ -2593,7 +2703,7 @@ void launch() {
         offblast->mainUi.activeRowset->rowCursor->tileCursor->target;
 
     if (strlen(target->path) == 0 || 
-            strlen(target->fileName) == 0) 
+            strlen(target->path) == 0) 
     {
         printf("%s has no launch candidate\n", target->name);
     }
@@ -2617,8 +2727,9 @@ void launch() {
         char *launchString = calloc(PATH_MAX, sizeof(char));
 
         int32_t foundIndex = -1;
+        /* TODO REWORK
         for (uint32_t i = 0; i < offblast->nPaths; ++i) {
-            if (strcmp(target->path, offblast->launchers[i].path) == 0) {
+            if (strcmp(target->path, offblast->launcherFile.entries[i].path) == 0) {
                 foundIndex = i;
             }
         }
@@ -2717,6 +2828,7 @@ void launch() {
         pt->lastPlayed = (uint32_t)time(NULL);
 
         updateHomeLists();
+        */
     }
 }
 
@@ -3422,7 +3534,7 @@ void updateHomeLists(){
     uint32_t libraryLength = 0;
     for (uint32_t i = 0; i < launchTargetFile->nEntries; ++i) {
         LaunchTarget *target = &launchTargetFile->entries[i];
-        if (strlen(target->fileName) != 0) 
+        if (strlen(target->path) != 0) 
             libraryLength++;
     }
 
@@ -3438,7 +3550,7 @@ void updateHomeLists(){
 
             LaunchTarget *target = &launchTargetFile->entries[i];
 
-            if (strlen(target->fileName) != 0) {
+            if (strlen(target->path) != 0) {
 
                 tiles[tileCount].target = target;
                 tiles[tileCount].next = &tiles[tileCount+1];

@@ -17,15 +17,27 @@ typedef struct OffblastDbFile {
     OffblastDbFileFormat *memory;
 } OffblastDbFile;
 
-typedef struct PathInfo {
-    uint32_t signature;
-    uint32_t contentsHash;
-} PathInfo;
+#define LAUNCHER_RETROARCH 1;
+#define LAUNCHER_CUSTOM 99;
+#define MAX_LAUNCH_COMMAND_LENGTH 512
+typedef struct Launcher {
 
-typedef struct PathInfoFile {
+    uint32_t signature;
+    uint32_t contentsHash; // NOT DONE
+
+    char type[256];
+    char platform[256];
+    char extension[32];
+    char cmd[MAX_LAUNCH_COMMAND_LENGTH];
+
+    char cemuPath[PATH_MAX];
+    char romPath[PATH_MAX];
+} Launcher;
+
+typedef struct LauncherFile {
     uint32_t nEntries;
-    PathInfo entries[];
-} PathInfoFile;
+    Launcher entries[];
+} LauncherFile;
 
 #define OFFBLAST_NAME_MAX 256
 typedef struct LaunchTarget {
@@ -39,6 +51,7 @@ typedef struct LaunchTarget {
     char fileName[256];
     char path[PATH_MAX];
     char platform[256];
+    uint32_t launcherSignature;
 
     char coverUrl[PATH_MAX];
     off_t descriptionOffset;
