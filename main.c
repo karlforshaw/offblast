@@ -24,6 +24,7 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // Alpha 0.4 
+//      - THERE ARE A LOT OF TODO's and sloppy handling of things!
 //      - Save directory per user.
 //      - OpenGameDb, auto download/update? Evict Assets and update.
 //      -. watch out for vram! glDeleteTextures
@@ -104,6 +105,7 @@ typedef struct User {
     char name[256];
     char email[512];
     char avatarPath[PATH_MAX];
+    char cemuAccount[32];
 } User;
 
 typedef struct Player {
@@ -457,6 +459,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     LauncherFile *launcherFile = (LauncherFile*) launcherDb.memory;
+    offblast->launcherFile = launcherFile;
     free(launcherDbPath);
 
     char *launchTargetDbPath;
@@ -531,6 +534,10 @@ int main(int argc, char** argv) {
             }
         }
 
+        /*TODO if you change the cmd of a launcher, you still have a bunch
+         * of launch targets tied to the signature of the old one. you have to
+         * do a cleanup.
+         */
         if (!launcherIsKnown) {
 
             printf("New launcher found.\n");
@@ -547,6 +554,7 @@ int main(int argc, char** argv) {
             }
             else {
                 launcherFile = (LauncherFile*) pLauncherFileMemory; 
+                offblast->launcherFile = pLauncherFileMemory;
             }
 
             theLauncher = &launcherFile->entries[launcherFile->nEntries++];
@@ -1164,10 +1172,12 @@ int main(int argc, char** argv) {
         json_object *workingNameNode = NULL;
         json_object *workingEmailNode = NULL;
         json_object *workingAvatarPathNode = NULL;
+        json_object *workingCemuAccountNode = NULL;
 
         const char *theName= NULL;
         const char *theEmail = NULL;
         const char *theAvatarPath= NULL;
+        const char *theCemuAccount = NULL;
 
         workingUserNode = json_object_array_get_idx(usersObject, iUser);
         json_object_object_get_ex(workingUserNode, "name",
@@ -1176,6 +1186,8 @@ int main(int argc, char** argv) {
                 &workingEmailNode);
         json_object_object_get_ex(workingUserNode, "avatar",
                 &workingAvatarPathNode);
+        json_object_object_get_ex(workingUserNode, "cemu_account",
+                &workingCemuAccountNode);
 
 
         theName = json_object_get_string(workingNameNode);
@@ -1192,6 +1204,13 @@ int main(int argc, char** argv) {
         memcpy(&pUser->name, theName, nameLen);
         memcpy(&pUser->email, theEmail, emailLen);
         memcpy(&pUser->avatarPath, theAvatarPath, avatarLen);
+
+        if (workingCemuAccountNode) {
+            theCemuAccount = json_object_get_string(workingCemuAccountNode);
+            if (strlen(theCemuAccount) < 32) 
+                memcpy(&pUser->cemuAccount, 
+                        theCemuAccount, strlen(theCemuAccount));
+        }
 
     }
 
@@ -2709,9 +2728,8 @@ void launch() {
     }
     else {
 
-        char *romSlug;
-        asprintf(&romSlug, "%s/%s", (char*) &target->path, 
-                (char*)&target->fileName);
+
+        User *theUser = offblast->players[0].user;
 
         // TODO looks like retroarch has changed and won't allow us to 
         // specify directories on the cmd now, so we'll have to A: create
@@ -2722,14 +2740,17 @@ void launch() {
         char *savepathSlug;
         // TODO if they specified a savepath, use that
         asprintf(&savepathSlug, "%s/saves/%s/", offblast->configPath, 
-                offblast->players[0].user->email);
+                theUser->email);
+
 
         char *launchString = calloc(PATH_MAX, sizeof(char));
 
         int32_t foundIndex = -1;
-        /* TODO REWORK
-        for (uint32_t i = 0; i < offblast->nPaths; ++i) {
-            if (strcmp(target->path, offblast->launcherFile.entries[i].path) == 0) {
+
+        for (uint32_t i = 0; i < offblast->launcherFile->nEntries; ++i) {
+            if (target->launcherSignature == 
+                    offblast->launcherFile->entries[i].signature) 
+            {
                 foundIndex = i;
             }
         }
@@ -2739,9 +2760,11 @@ void launch() {
             return;
         }
 
+        Launcher *theLauncher = &offblast->launcherFile->entries[foundIndex];
+
         memcpy(launchString, 
-                offblast->launchers[foundIndex].launcher, 
-                strlen(offblast->launchers[foundIndex].launcher));
+                theLauncher->cmd, 
+                strlen(theLauncher->cmd));
 
         assert(strlen(launchString));
 
@@ -2750,19 +2773,77 @@ void launch() {
         while ((p = strstr(launchString, "%ROM%"))) {
 
             memmove(
-                    p + strlen(romSlug) + 2, 
+                    p + strlen(target->path) + 2, 
                     p + 5,
                     strlen(p));
 
             *p = '"';
-            memcpy(p+1, romSlug, strlen(romSlug));
-            *(p + 1 + strlen(romSlug)) = '"';
+            memcpy(p+1, target->path, strlen(target->path));
+            *(p + 1 + strlen(target->path)) = '"';
 
             replaceIter++;
             if (replaceIter >= replaceLimit) {
                 printf("rom replace iterations exceeded, breaking\n");
                 break;
             }
+        }
+
+        if (strcmp(theLauncher->type, "cemu") == 0) {
+
+            assert(strlen(theLauncher->cemuPath));
+            char *cemuBinSlug;
+
+            asprintf(&cemuBinSlug, "%s/Cemu.exe", theLauncher->cemuPath);
+
+            replaceIter = 0; replaceLimit = 8;
+            while ((p = strstr(launchString, "%CEMU_BIN%"))) {
+
+                memmove(
+                        p + strlen(cemuBinSlug) + 2, 
+                        p + strlen("%CEMU_BIN%"),
+                        strlen(p));
+
+                *p = '"';
+                memcpy(p+1, cemuBinSlug, strlen(cemuBinSlug));
+                *(p + 1 + strlen(cemuBinSlug)) = '"';
+
+                replaceIter++;
+                if (replaceIter >= replaceLimit) {
+                    printf("cemu path replace iterations exceeded, breaking\n");
+                    break;
+                }
+            }
+            free(cemuBinSlug);
+
+            char *cemuAccountSlug;
+            if (theUser->cemuAccount != NULL) {
+                cemuAccountSlug = (char*)theUser->cemuAccount;
+            }
+            else {
+                cemuAccountSlug = "80000001";
+            }
+
+            // TODO write a function for this
+            while ((p = strstr(launchString, "%CEMU_ACCOUNT%"))) {
+
+                memmove(
+                        p + strlen(cemuAccountSlug) + 2, 
+                        p + strlen("%CEMU_ACCOUNT%"),
+                        strlen(p));
+
+                *p = '"';
+                memcpy(p+1, cemuAccountSlug, 
+                        strlen(cemuAccountSlug));
+
+                *(p + 1 + strlen(cemuAccountSlug)) = '"';
+
+                replaceIter++;
+                if (replaceIter >= replaceLimit) {
+                    printf("cemu account replace iterations exceeded, breaking\n");
+                    break;
+                }
+            }
+
         }
 
         // TODO only works if the directory is there, if it's not we'll need 
@@ -2791,7 +2872,6 @@ void launch() {
         system(launchString);
         uint32_t afterTick = SDL_GetTicks();
 
-        free(romSlug);
         free(launchString);
 
         PlayTime *pt = NULL;
@@ -2828,7 +2908,7 @@ void launch() {
         pt->lastPlayed = (uint32_t)time(NULL);
 
         updateHomeLists();
-        */
+
     }
 }
 
