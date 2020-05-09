@@ -64,6 +64,7 @@
 //
 
 #include <stdio.h>
+#include <signal.h>
 #include <stdint.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -174,6 +175,7 @@ typedef struct Animation {
 enum UiMode {
     OFFBLAST_UI_MODE_MAIN = 1,
     OFFBLAST_UI_MODE_PLAYER_SELECT = 2,
+    OFFBLAST_UI_MODE_BACKGROUND = 3
 };
 
 typedef struct MenuItem {
@@ -296,6 +298,12 @@ typedef struct OffblastUi {
     PlayTimeFile *playTimeFile;
     LaunchTargetFile *launchTargetFile;
     LauncherFile *launcherFile;
+    SDL_Window *window;
+
+
+    pid_t runningPid;
+    LaunchTarget *playingTarget;
+    uint32_t startPlayTick;
 
 } OffblastUi;
 
@@ -333,6 +341,7 @@ void changeColumn(uint32_t direction);
 void pressConfirm();
 void jumpEnd(uint32_t direction);
 void pressCancel();
+void pressGuide();
 void updateResults();
 void updateHomeLists();
 void updateInfoText();
@@ -1234,6 +1243,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+
     // Let's create the window
     //SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, 
             //SDL_GL_CONTEXT_PROFILE_CORE);
@@ -1253,6 +1263,9 @@ int main(int argc, char** argv) {
         printf("SDL window creation failed, exiting..\n");
         return 1;
     }
+    offblast->window = window;
+
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 
     SDL_GLContext glContext = SDL_GL_CreateContext(window);
     glewInit();
@@ -1525,8 +1538,6 @@ int main(int argc, char** argv) {
                 SDL_ControllerButtonEvent *buttonEvent = 
                     (SDL_ControllerButtonEvent *) &event;
 
-                // TODO should all players be able to control?
-
                 switch(buttonEvent->button) {
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:
                         changeRow(1);
@@ -1561,8 +1572,7 @@ int main(int argc, char** argv) {
                         SDL_RaiseWindow(window);
                         break;
                     case SDL_CONTROLLER_BUTTON_GUIDE:
-                        printf("guide pressed\n");
-                        SDL_RaiseWindow(window);
+                        pressGuide();
                         break;
                 }
 
@@ -1648,7 +1658,8 @@ int main(int argc, char** argv) {
             // or fire their callbacks immediately
         }
         else {
-            offblast->mode = OFFBLAST_UI_MODE_MAIN;
+            // TODO does this break anything?
+            //offblast->mode = OFFBLAST_UI_MODE_MAIN;
         }
 
         // RENDER
@@ -2869,45 +2880,31 @@ void launch() {
 
         uint32_t beforeTick = SDL_GetTicks();
         printf("OFFBLAST! %s\n", launchString);
-        system(launchString);
-        uint32_t afterTick = SDL_GetTicks();
+
+
+        
+        pid_t launcherPid = fork();
+            
+        if (launcherPid == -1)
+        {
+            printf("Couldn't fork the process\n");
+        }
+        else if (launcherPid > 0) {
+
+            offblast->mode = OFFBLAST_UI_MODE_BACKGROUND;
+            offblast->startPlayTick = SDL_GetTicks();
+            offblast->runningPid = launcherPid;
+            offblast->playingTarget = target;
+
+            printf("**** PID of child, %d\n", launcherPid);
+        }
+        else {
+            setsid();
+            system(launchString);
+            exit(1);
+        }
 
         free(launchString);
-
-        PlayTime *pt = NULL;
-        for (uint32_t i = 0; i < offblast->playTimeFile->nEntries; ++i) {
-            if (offblast->playTimeFile->entries[i].targetSignature 
-                    == target->targetSignature) 
-            {
-                pt = &offblast->playTimeFile->entries[i];
-            }
-        }
-
-        if (pt == NULL) {
-            void *growState = growDbFileIfNecessary(
-                    &offblast->playTimeDb, 
-                    sizeof(PlayTime),
-                    OFFBLAST_DB_TYPE_FIXED); 
-
-            if(growState == NULL) {
-                printf("Couldn't expand the playtime file to "
-                        "accomodate all the playtimes\n");
-                return;
-            }
-            else { 
-                offblast->playTimeFile = (PlayTimeFile*) growState;
-            }
-
-            pt = &offblast->playTimeFile->entries[
-                offblast->playTimeFile->nEntries++];
-
-            pt->targetSignature = target->targetSignature;
-        }
-
-        pt->msPlayed += (afterTick - beforeTick);
-        pt->lastPlayed = (uint32_t)time(NULL);
-
-        updateHomeLists();
 
     }
 }
@@ -2966,6 +2963,8 @@ void pressConfirm(int32_t joystickIndex) {
             }
 
         }
+
+        offblast->mode = OFFBLAST_UI_MODE_MAIN;
 
     }
     else if (offblast->mainUi.showSearch) {
@@ -3851,4 +3850,62 @@ void loadPlayerOnePlaytimeFile() {
         (PlayTimeFile*) playTimeDb.memory;
     offblast->playTimeDb = playTimeDb;
     free(playTimeDbPath);
+}
+
+void pressGuide() {
+    printf("guide pressed!! %d, %d\n", offblast->mode, offblast->runningPid);
+    if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND 
+            && offblast->runningPid > 0) 
+    {
+        printf("killing!\n");
+        killpg(offblast->runningPid, SIGKILL);
+        offblast->mode = OFFBLAST_UI_MODE_MAIN;
+        offblast->runningPid = 0;
+        SDL_RaiseWindow(offblast->window);
+        SDL_SetWindowFullscreen(offblast->window, 
+                SDL_WINDOW_FULLSCREEN_DESKTOP);
+
+        LaunchTarget *target = offblast->playingTarget;
+        assert(target);
+
+        uint32_t afterTick = SDL_GetTicks();
+
+        PlayTime *pt = NULL;
+        for (uint32_t i = 0; i < offblast->playTimeFile->nEntries; ++i) {
+            if (offblast->playTimeFile->entries[i].targetSignature 
+                    == target->targetSignature) 
+            {
+                pt = &offblast->playTimeFile->entries[i];
+            }
+        }
+
+        if (pt == NULL) {
+            void *growState = growDbFileIfNecessary(
+                    &offblast->playTimeDb, 
+                    sizeof(PlayTime),
+                    OFFBLAST_DB_TYPE_FIXED); 
+
+            if(growState == NULL) {
+                printf("Couldn't expand the playtime file to "
+                        "accomodate all the playtimes\n");
+                return;
+            }
+            else { 
+                offblast->playTimeFile = (PlayTimeFile*) growState;
+            }
+
+            pt = &offblast->playTimeFile->entries[
+                offblast->playTimeFile->nEntries++];
+
+            pt->targetSignature = target->targetSignature;
+        }
+
+        pt->msPlayed += (afterTick - offblast->startPlayTick);
+        pt->lastPlayed = (uint32_t)time(NULL);
+
+        offblast->playingTarget = NULL;
+        offblast->startPlayTick = 0;
+
+        updateHomeLists();
+    }
 }
