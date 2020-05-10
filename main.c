@@ -186,6 +186,11 @@ typedef struct MenuItem {
 typedef struct PlayerSelectUi {
     Image *images;
     int32_t cursor;
+
+    uint32_t totalWidth;
+    float *widthForAvatar;
+    float *xOffsetForAvatar;
+
 } PlayerSelectUi;
 
 typedef struct UiRowset {
@@ -604,8 +609,6 @@ int main(int argc, char** argv) {
                         theCemuPath, 
                         strlen(theCemuPath));
 
-                // TODO remove
-                printf("CEMU Path is now %s\n", theLauncher->cemuPath);
             }
             else {
 
@@ -1129,8 +1132,6 @@ int main(int argc, char** argv) {
                                 strlen((char*)&fileFoundBlock[j].name));
                     }
 
-                    // TODO DEL
-                    printf("Search string: %s\n", searchString);
                     indexOfEntry = launchTargetIndexByNameMatch(
                             launchTargetFile, searchString);
 
@@ -1412,6 +1413,12 @@ int main(int argc, char** argv) {
     }
 
     playerSelectUi->images = calloc(offblast->nUsers, sizeof(Image));
+    playerSelectUi->widthForAvatar = 
+        calloc(offblast->nUsers+1, sizeof(float));
+    assert(playerSelectUi->widthForAvatar);
+    playerSelectUi->xOffsetForAvatar = 
+        calloc(offblast->nUsers+1, sizeof(float));
+    assert(playerSelectUi->xOffsetForAvatar);
 
     for (uint32_t i = 0; i < offblast->nUsers; ++i) {
 
@@ -1429,10 +1436,19 @@ int main(int argc, char** argv) {
             playerSelectUi->images[i].loadState = 1;
             playerSelectUi->images[i].width = w;
             playerSelectUi->images[i].height = h;
+            
+            float w = getWidthForScaledImage(
+                offblast->mainUi.boxHeight, &playerSelectUi->images[i]);
+
+            playerSelectUi->widthForAvatar[i] = w;
+            playerSelectUi->xOffsetForAvatar[i] = playerSelectUi->totalWidth;
+            playerSelectUi->totalWidth += w;
+
         }
         else {
             printf("couldn't load texture for avatar %s\n", 
                     offblast->users[i].avatarPath);
+            // TODO use mystery man image
         }
         free(imageData);
 
@@ -1553,23 +1569,18 @@ int main(int argc, char** argv) {
                         break;
                     case SDL_CONTROLLER_BUTTON_A:
                         pressConfirm(buttonEvent->which);
-                        SDL_RaiseWindow(window);
                         break;
                     case SDL_CONTROLLER_BUTTON_B:
                         pressCancel();
-                        SDL_RaiseWindow(window);
                         break;
                     case SDL_CONTROLLER_BUTTON_Y:
                         pressSearch();
-                        SDL_RaiseWindow(window);
                         break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
                         jumpEnd(0);
-                        SDL_RaiseWindow(window);
                         break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
                         jumpEnd(1);
-                        SDL_RaiseWindow(window);
                         break;
                     case SDL_CONTROLLER_BUTTON_GUIDE:
                         pressGuide();
@@ -1656,10 +1667,6 @@ int main(int argc, char** argv) {
             offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
             // TODO this should probably kill all the active animations?
             // or fire their callbacks immediately
-        }
-        else {
-            // TODO does this break anything?
-            //offblast->mode = OFFBLAST_UI_MODE_MAIN;
         }
 
         // RENDER
@@ -2001,18 +2008,18 @@ int main(int argc, char** argv) {
                     OFFBLAST_TEXT_TITLE, 1.0, 0,
                     titleText);
 
-            uint32_t xAdvance = offblast->winMargin;
+            uint32_t xStart= offblast->winWidth / 2 
+                - playerSelectUi->totalWidth / 2;
 
+            // XXX
             for (uint32_t i = 0; i < offblast->nUsers; ++i) {
 
                 Image *image = &playerSelectUi->images[i];
                 float alpha = (i == playerSelectUi->cursor) ? 1.0 : 0.7;
-                float w = getWidthForScaledImage(
-                        offblast->mainUi.boxHeight, image);
 
                 renderImage(
-                        xAdvance,  
-                        offblast->winFold - offblast->mainUi.boxHeight, 
+                        xStart + playerSelectUi->xOffsetForAvatar[i],  
+                        offblast->winHeight /2 -0.5* offblast->mainUi.boxHeight, 
                         0, offblast->mainUi.boxHeight, 
                         image, 0.0f, alpha);
 
@@ -2021,13 +2028,12 @@ int main(int argc, char** argv) {
                         offblast->infoCharData);
 
                 renderText(offblast, 
-                        xAdvance +  w / 2 - nameWidth / 2,
-                        offblast->winFold - offblast->mainUi.boxHeight - 
+                        xStart + playerSelectUi->xOffsetForAvatar[i] 
+                        + playerSelectUi->widthForAvatar[i] / 2 - nameWidth / 2,
+                        offblast->winHeight/2 - 0.5*offblast->mainUi.boxHeight - 
                             offblast->mainUi.boxPad - offblast->infoPointSize, 
                         OFFBLAST_TEXT_INFO, alpha, 0,
                         offblast->users[i].name);
-
-                xAdvance += w;
             }
     
         }
@@ -2878,10 +2884,7 @@ void launch() {
             }
         }
 
-        uint32_t beforeTick = SDL_GetTicks();
         printf("OFFBLAST! %s\n", launchString);
-
-
         
         pid_t launcherPid = fork();
             
@@ -3510,7 +3513,6 @@ void updateHomeLists(){
 
         uint32_t tileCount = 0;
 
-        // TODO regen these lists after we exit a play session
         qsort(tempFile->entries, tempFile->nEntries, 
                sizeof(PlayTime),
                lastPlayedSort);
@@ -3853,11 +3855,9 @@ void loadPlayerOnePlaytimeFile() {
 }
 
 void pressGuide() {
-    printf("guide pressed!! %d, %d\n", offblast->mode, offblast->runningPid);
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND 
             && offblast->runningPid > 0) 
     {
-        printf("killing!\n");
         killpg(offblast->runningPid, SIGKILL);
         offblast->mode = OFFBLAST_UI_MODE_MAIN;
         offblast->runningPid = 0;
