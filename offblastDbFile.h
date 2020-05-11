@@ -48,7 +48,7 @@ typedef struct LaunchTarget {
     char date[10];
     uint32_t ranking;
 
-    char fileName[256];
+    //char fileName[256];
     char path[PATH_MAX];
     char platform[256];
     uint32_t launcherSignature;

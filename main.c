@@ -26,9 +26,6 @@
 // Alpha 0.4 
 //      - THERE ARE A LOT OF TODO's and sloppy handling of things!
 //
-//      - Evict the launcher signature from launch targets when their 
-//          launcher is removed from the config (or replaced).
-//
 //      - Save directory per user.
 //          This is now working in Cemu, but work needs to be done to
 //          make this work nicely with retroarch
@@ -314,9 +311,11 @@ typedef struct OffblastUi {
     OffblastDbFile playTimeDb;
     PlayTimeFile *playTimeFile;
     LaunchTargetFile *launchTargetFile;
-    LauncherFile *launcherFile;
-    SDL_Window *window;
 
+    uint32_t nLaunchers;
+    Launcher *launchers;
+
+    SDL_Window *window;
 
     pid_t runningPid;
     LaunchTarget *playingTarget;
@@ -476,18 +475,6 @@ int main(int argc, char** argv) {
 
     printf("Found OpenGameDb at %s\n", openGameDbPath);
 
-
-    char *launcherDbPath;
-    asprintf(&launcherDbPath, "%s/launchers.bin", configPath);
-    struct OffblastDbFile launcherDb = {0};
-    if (!InitDbFile(launcherDbPath, &launcherDb, sizeof(Launcher))) {
-        printf("couldn't initialize launcher db, exiting\n");
-        return 1;
-    }
-    LauncherFile *launcherFile = (LauncherFile*) launcherDb.memory;
-    offblast->launcherFile = launcherFile;
-    free(launcherDbPath);
-
     char *launchTargetDbPath;
     asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
     OffblastDbFile launchTargetDb = {0};
@@ -539,6 +526,8 @@ int main(int argc, char** argv) {
     uint32_t configLauncherSignatures[nConfigLaunchers];
 
     printf("Setting up launchers.\n");
+    offblast->launchers = calloc(nConfigLaunchers, sizeof(Launcher));
+
     for (int i=0; i < nConfigLaunchers; ++i) {
 
         json_object *launcherNode= NULL;
@@ -548,117 +537,92 @@ int main(int argc, char** argv) {
         lmmh_x86_32(rawJson, strlen(rawJson), 33, &configLauncherSignature);
         configLauncherSignatures[i] = configLauncherSignature;
 
-        // Check if we have it
-        uint32_t launcherIsKnown = 0;
-        Launcher *theLauncher;
+        Launcher *theLauncher = &offblast->launchers[offblast->nLaunchers++];
+        theLauncher->signature = configLauncherSignature;
 
-        for(int j=0; j < launcherFile->nEntries; ++j) {
-            if (launcherFile->entries[j].signature == configLauncherSignature) {
-                launcherIsKnown = 1;
-                theLauncher = &launcherFile->entries[j];
-                break;
-            }
+        // Generic Properties
+        json_object *typeStringNode = NULL;
+        const char *theType = NULL;
+        json_object *platformStringNode = NULL;
+        const char *thePlatform = NULL;
+        json_object *cmdStringNode = NULL;
+        const char *theCommand = NULL;
+
+        // Emulator Specific Properties 
+        json_object *extensionStringNode = NULL;
+        const char *theExtension = NULL;
+        json_object *romPathStringNode = NULL;
+        const char *theRomPath = NULL;
+
+        json_object *cemuPathStringNode = NULL;
+        const char *theCemuPath = NULL;
+
+        json_object_object_get_ex(launcherNode, "type",
+                &typeStringNode);
+        theType = json_object_get_string(typeStringNode);
+        assert(strlen(theType) < 256);
+        memcpy(&theLauncher->type, theType, strlen(theType));
+
+        if (strcmp("cemu", theLauncher->type) == 0) {
+
+            json_object_object_get_ex(
+                    launcherNode, 
+                    "cemu_path",
+                    &cemuPathStringNode);
+
+            theCemuPath = json_object_get_string(cemuPathStringNode);
+            memcpy(&theLauncher->cemuPath, 
+                    theCemuPath, 
+                    strlen(theCemuPath));
+
         }
+        else {
 
-        /*TODO if you change the cmd of a launcher, you still have a bunch
-         * of launch targets tied to the signature of the old one. you have to
-         * do a cleanup.
-         */
-        if (!launcherIsKnown) {
+            json_object_object_get_ex(launcherNode, "rom_path",
+                    &romPathStringNode);
+            theRomPath = json_object_get_string(romPathStringNode);
+            memcpy(&theLauncher->romPath, theRomPath, strlen(theRomPath));
 
-            printf("New launcher found.\n");
-
-            void *pLauncherFileMemory = growDbFileIfNecessary(
-                    &launcherDb, 
-                    sizeof(Launcher), 
-                    OFFBLAST_DB_TYPE_FIXED);
-
-            if(pLauncherFileMemory == NULL) {
-                printf("Couldn't expand the db file to accomodate"
-                        " all the launchers\n");
-                return 1;
-            }
-            else {
-                launcherFile = (LauncherFile*) pLauncherFileMemory; 
-                offblast->launcherFile = pLauncherFileMemory;
-            }
-
-            theLauncher = &launcherFile->entries[launcherFile->nEntries++];
-            theLauncher->signature = configLauncherSignature;
-
-            // Generic Properties
-            json_object *typeStringNode = NULL;
-            const char *theType = NULL;
-            json_object *platformStringNode = NULL;
-            const char *thePlatform = NULL;
-            json_object *cmdStringNode = NULL;
-            const char *theCommand = NULL;
-
-            // Emulator Specific Properties 
-            json_object *extensionStringNode = NULL;
-            const char *theExtension = NULL;
-            json_object *romPathStringNode = NULL;
-            const char *theRomPath = NULL;
-
-            json_object *cemuPathStringNode = NULL;
-            const char *theCemuPath = NULL;
-
-            json_object_object_get_ex(launcherNode, "type",
-                    &typeStringNode);
-            theType = json_object_get_string(typeStringNode);
-            assert(strlen(theType) < 256);
-            memcpy(&theLauncher->type, theType, strlen(theType));
-
-            if (strcmp("cemu", theLauncher->type) == 0) {
-
-                json_object_object_get_ex(
-                        launcherNode, 
-                        "cemu_path",
-                        &cemuPathStringNode);
-
-                theCemuPath = json_object_get_string(cemuPathStringNode);
-                memcpy(&theLauncher->cemuPath, 
-                        theCemuPath, 
-                        strlen(theCemuPath));
-
-            }
-            else {
-
-                json_object_object_get_ex(launcherNode, "rom_path",
-                        &romPathStringNode);
-                theRomPath = json_object_get_string(romPathStringNode);
-                memcpy(&theLauncher->romPath, theRomPath, strlen(theRomPath));
-
-                json_object_object_get_ex(launcherNode, "extension",
-                        &extensionStringNode);
-                theExtension = json_object_get_string(extensionStringNode);
-                assert(strlen(theExtension) < 32);
-                memcpy(&theLauncher->extension, 
-                        theExtension, strlen(theExtension));
-
-            }
-
-            json_object_object_get_ex(launcherNode, "platform",
-                    &platformStringNode);
-            thePlatform = json_object_get_string(platformStringNode);
-            assert(strlen(thePlatform) < 256);
-            memcpy(&theLauncher->platform, 
-                    thePlatform, strlen(thePlatform));
-
-            json_object_object_get_ex(launcherNode, "cmd",
-                    &cmdStringNode);
-            theCommand = json_object_get_string(cmdStringNode);
-            assert(strlen(theCommand) < 512);
-            memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
+            json_object_object_get_ex(launcherNode, "extension",
+                    &extensionStringNode);
+            theExtension = json_object_get_string(extensionStringNode);
+            assert(strlen(theExtension) < 32);
+            memcpy(&theLauncher->extension, 
+                    theExtension, strlen(theExtension));
 
         }
 
-        // XXX why don't we just discard the entire launcher file on startup
-        // and recreate it from the config? Is there any need to persist it
-        // at all? maybe we're just making things difficult for the sake of 
-        // it.
+        json_object_object_get_ex(launcherNode, "platform",
+                &platformStringNode);
+        thePlatform = json_object_get_string(platformStringNode);
+        assert(strlen(thePlatform) < 256);
+        memcpy(&theLauncher->platform, 
+                thePlatform, strlen(thePlatform));
 
+        json_object_object_get_ex(launcherNode, "cmd",
+                &cmdStringNode);
+        theCommand = json_object_get_string(cmdStringNode);
+        assert(strlen(theCommand) < 512);
+        memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
 
+        for (int i = 0; i < launchTargetFile->nEntries; ++i) {
+            int isOrphan = 1;
+            for (int j=0; j < nConfigLaunchers; j++) {
+                if (launchTargetFile->entries[i].launcherSignature 
+                        == configLauncherSignatures[j]) 
+                {
+                    isOrphan = 0;
+                }
+            }
+
+            if (isOrphan) {
+                printf("ORPHANED GAME: \n%s\n", 
+                        launchTargetFile->entries[i].name);
+                launchTargetFile->entries[i].launcherSignature = 0;
+            }
+        }
+
+        // TODO maybe we should also do a platform cleanup too?
         printf("Setting up platform: %s\n", (char*)&theLauncher->platform);
         if (i == 0) {
             memcpy(offblast->platforms[offblast->nPlatforms], 
@@ -1119,6 +1083,9 @@ int main(int argc, char** argv) {
 
                 if (indexOfEntry > -1) {
                     printf("target is already in the db\n");
+                    LaunchTarget *theTarget = 
+                        &launchTargetFile->entries[indexOfEntry];
+                    theTarget->launcherSignature = theLauncher->signature;
                 }
                 else {
 
@@ -1177,12 +1144,8 @@ int main(int argc, char** argv) {
         free(fileFoundBlock);
     }
 
-    // TODO remove launch targets for any missing launchers now that we
-    // have an array of knownlauncher signatures
-
     printf("DEBUG - got %u platforms\n", offblast->nPlatforms);
 
-    close(launcherDb.fd);
     close(launchTargetDb.fd);
 
 
@@ -2756,7 +2719,7 @@ void launch() {
         offblast->mainUi.activeRowset->rowCursor->tileCursor->target;
 
     if (strlen(target->path) == 0 || 
-            strlen(target->path) == 0) 
+            target->launcherSignature == 0) 
     {
         printf("%s has no launch candidate\n", target->name);
     }
@@ -2781,9 +2744,9 @@ void launch() {
 
         int32_t foundIndex = -1;
 
-        for (uint32_t i = 0; i < offblast->launcherFile->nEntries; ++i) {
+        for (uint32_t i = 0; i < offblast->nLaunchers; ++i) {
             if (target->launcherSignature == 
-                    offblast->launcherFile->entries[i].signature) 
+                    offblast->launchers[i].signature) 
             {
                 foundIndex = i;
             }
@@ -2794,7 +2757,7 @@ void launch() {
             return;
         }
 
-        Launcher *theLauncher = &offblast->launcherFile->entries[foundIndex];
+        Launcher *theLauncher = &offblast->launchers[foundIndex];
 
         memcpy(launchString, 
                 theLauncher->cmd, 
