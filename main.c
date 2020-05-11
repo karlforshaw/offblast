@@ -24,7 +24,6 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 // Alpha 0.4 
-//      - THERE ARE A LOT OF TODO's and sloppy handling of things!
 //
 //      - Save directory per user.
 //          This is now working in Cemu, but work needs to be done to
@@ -2735,7 +2734,6 @@ void launch() {
         // --append-config command line argument to pass it in.
         // (if retroarch)
         char *savepathSlug;
-        // TODO if they specified a savepath, use that
         asprintf(&savepathSlug, "%s/saves/%s/", offblast->configPath, 
                 theUser->email);
 
