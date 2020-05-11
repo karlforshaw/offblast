@@ -25,16 +25,29 @@
 
 // Alpha 0.4 
 //      - THERE ARE A LOT OF TODO's and sloppy handling of things!
+//
+//      - Evict the launcher signature from launch targets when their 
+//          launcher is removed from the config (or replaced).
+//
 //      - Save directory per user.
+//          This is now working in Cemu, but work needs to be done to
+//          make this work nicely with retroarch
+//
+//      - Steam Integration
+//
 //      - OpenGameDb, auto download/update? Evict Assets and update.
+//
 //      -. watch out for vram! glDeleteTextures
 //          We could move to a tile store object which has a fixed array of
 //          tiles (enough to fill 1.5 screens on both sides) each tile has a 
 //          last on screen tick and when we need to load new textures we evict
 //          the oldest before loading the new texture
+//
 //      - better aniations that support incremental jumps if you input a command
 //          during a running animation
+//
 //      - Invalid date format is a thing
+//
 //      - Deadzone checks
 //         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
 //
@@ -205,7 +218,6 @@ typedef struct MainUi {
 
     int32_t descriptionWidth;
     int32_t descriptionHeight;
-    // int32_t boxWidth; TODO remove
     int32_t boxHeight;
     int32_t boxPad;
 
@@ -640,6 +652,11 @@ int main(int argc, char** argv) {
             memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
 
         }
+
+        // XXX why don't we just discard the entire launcher file on startup
+        // and recreate it from the config? Is there any need to persist it
+        // at all? maybe we're just making things difficult for the sake of 
+        // it.
 
 
         printf("Setting up platform: %s\n", (char*)&theLauncher->platform);
