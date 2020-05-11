@@ -94,6 +94,8 @@
 #include <math.h>
 #include <pthread.h>
 #include <time.h>
+#include <X11/Xlib.h>
+#include <X11/Xmu/WinUtil.h>
         
 #define GL3_PROTOTYPES 1
 #include <GL/glew.h>
@@ -315,6 +317,7 @@ typedef struct OffblastUi {
     Launcher *launchers;
 
     SDL_Window *window;
+    Window windowRaw;
 
     pid_t runningPid;
     LaunchTarget *playingTarget;
@@ -379,6 +382,8 @@ void renderImage(float x, float y, float w, float h, Image* image,
 void loadTexture(UiTile *tile);
 void pressSearch();
 void loadPlayerOnePlaytimeFile();
+Window getActiveWindowRaw();
+void raiseWindow(Display * display, Window win);
 
 
 OffblastUi *offblast;
@@ -1244,6 +1249,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     offblast->window = window;
+    offblast->windowRaw= getActiveWindowRaw();
+    // TODO remove
+    printf("WINDOW ID %d\n", (int)offblast->windowRaw);
 
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 
@@ -3833,9 +3841,27 @@ void loadPlayerOnePlaytimeFile() {
 }
 
 void pressGuide() {
+
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND 
             && offblast->runningPid > 0) 
     {
+
+        uint32_t emulatorWindowRaw = getActiveWindowRaw();
+
+        /*
+        SDL_RaiseWindow(offblast->window);
+        SDL_SetWindowFullscreen(offblast->window, 
+                SDL_WINDOW_FULLSCREEN_DESKTOP);
+                */
+        Display* d = XOpenDisplay(NULL);
+        raiseWindow(d, offblast->windowRaw);
+
+        sleep(2);
+        printf("raising emu\n");
+        raiseWindow(d, emulatorWindowRaw);
+
+        /*
+        printf("closing window %d\n", emulatorWindowId);
         killpg(offblast->runningPid, SIGKILL);
         offblast->mode = OFFBLAST_UI_MODE_MAIN;
         offblast->runningPid = 0;
@@ -3885,5 +3911,59 @@ void pressGuide() {
         offblast->startPlayTick = 0;
 
         updateHomeLists();
+        */
     }
+}
+
+Window getActiveWindowRaw() {
+
+    printf("connecting X server ... ");
+    Display* d = XOpenDisplay(NULL);
+    if(d == NULL){
+        printf("fail\n");
+        exit(1);
+    }else{
+        printf("success\n");
+    }
+
+    Window w;
+    int revert_to;
+    printf("getting input focus window ... ");
+    XGetInputFocus(d, &w, &revert_to); // see man
+    if(!w){
+        printf("fail\n");
+        exit(1);
+    }else if(w == 0){
+        printf("no focus window\n");
+        exit(1);
+    }else{
+        printf("success (window: %d)\n", (int)w);
+    }
+
+    return w;
+
+}
+
+
+void raiseWindow(Display * display, Window win){
+
+  XEvent xev;
+  Window root;
+
+  xev.type = ClientMessage;
+  xev.xclient.display = display;
+  xev.xclient.window = win;
+  xev.xclient.message_type = XInternAtom(
+  display,
+  "_NET_ACTIVE_WINDOW",0);
+  xev.xclient.format = 32;
+  xev.xclient.data.l[0] = 2L;
+  xev.xclient.data.l[1] = CurrentTime;
+
+  root = XDefaultRootWindow(display);
+
+  XSendEvent( display,root,0,
+  SubstructureNotifyMask | 
+  SubstructureRedirectMask,
+  &xev);
 }
