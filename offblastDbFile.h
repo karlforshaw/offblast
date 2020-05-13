@@ -41,7 +41,7 @@ typedef struct LauncherFile {
 
 #define OFFBLAST_NAME_MAX 256
 typedef struct LaunchTarget {
-    uint32_t targetSignature;
+    uint64_t targetSignature;
     uint32_t romSignature;
 
     char name[OFFBLAST_NAME_MAX];
@@ -68,13 +68,13 @@ typedef struct OffblastBlobFile {
 } OffblastBlobFile;
 
 typedef struct OffblastBlob {
-    uint32_t targetSignature;
+    uint64_t targetSignature;
     size_t length;
     char content[];
 } OffblastBlob;
 
 typedef struct PlayTime {
-    uint32_t targetSignature;
+    uint64_t targetSignature;
     uint32_t msPlayed;
     uint32_t lastPlayed;
 } PlayTime;
@@ -93,7 +93,7 @@ void *growDbFileIfNecessary(OffblastDbFile* dbFileStruct,
         enum OffBlastDbType type);
 
 int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file, 
-        uint32_t targetSignature);
+        uint64_t targetSignature);
 
 int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file, 
         uint32_t targetSignature);

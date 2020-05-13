@@ -32,6 +32,7 @@
 //          make this work nicely with retroarch
 //
 //      - Steam Integration
+//          got a scraper running now.
 //
 //      - OpenGameDb, auto download/update? Evict Assets and update.
 //
@@ -583,7 +584,7 @@ int main(int argc, char** argv) {
                     strlen(theCemuPath));
 
         }
-        else {
+        else if (strcmp("custom", theLauncher->type) == 0){
 
             json_object_object_get_ex(launcherNode, "rom_path",
                     &romPathStringNode);
@@ -597,6 +598,10 @@ int main(int argc, char** argv) {
             memcpy(&theLauncher->extension, 
                     theExtension, strlen(theExtension));
 
+        }
+        else {
+            printf("Unsupported Launcher Type: %s", theLauncher->type);
+            continue;
         }
 
         json_object_object_get_ex(launcherNode, "platform",
@@ -702,10 +707,9 @@ int main(int argc, char** argv) {
                     asprintf(&gameSeed, "%s_%s", 
                             theLauncher->platform, gameName);
 
-                    uint32_t targetSignature = 0;
-
-                    lmmh_x86_32(gameSeed, strlen(gameSeed), 33, 
-                            &targetSignature);
+                    uint64_t targetSignature = 0;
+                    lmmh_x64_128(gameSeed, strlen(gameSeed), 33, 
+                            (uint64_t*)&targetSignature);
 
                     int32_t indexOfEntry = launchTargetIndexByTargetSignature(
                             launchTargetFile, targetSignature);
@@ -734,7 +738,7 @@ int main(int argc, char** argv) {
                         char *description = getCsvField(csvLine, 6);
                         char *coverArtUrl = getCsvField(csvLine, 7);
 
-                        printf("\n--\nAdding: \n%s\n%u\n%s\n%s\ng: %s\n\nm: %s\n", 
+                        printf("\n--\nAdding: \n%s\n%" PRIu64 "\n%s\n%s\ng: %s\n\nm: %s\n", 
                                 gameSeed, 
                                 targetSignature, 
                                 gameName, 
@@ -832,7 +836,7 @@ int main(int argc, char** argv) {
 
                     }
                     else {
-                        printf("%d index found, We already have %u:%s\n", 
+                        printf("%d index found, We already have %"PRIu64":%s\n", 
                                 indexOfEntry,
                                 targetSignature, 
                                 gameSeed);

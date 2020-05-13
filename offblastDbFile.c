@@ -138,7 +138,7 @@ void* growDbFileIfNecessary(OffblastDbFile* dbFileStruct, size_t itemSize, enum 
 }
 
 int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file, 
-        uint32_t targetSignature) 
+        uint64_t targetSignature) 
 {
     int32_t foundIndex = -1;
     for (uint32_t i = 0; i < file->nEntries; i++) {
