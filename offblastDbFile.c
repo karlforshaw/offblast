@@ -145,26 +145,32 @@ int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file,
         if (file->entries[i].targetSignature == 
                 targetSignature) {
             foundIndex = i;
+            break;
         }
     }
     return foundIndex;
 }
 
-int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file, 
-        uint32_t romSignature) 
+int32_t launchTargetIndexByIdMatch(LaunchTargetFile *file, 
+        char *idStr, char *platform) 
 {
     int32_t foundIndex = -1;
+
     for (uint32_t i = 0; i < file->nEntries; i++) {
-        if (file->entries[i].romSignature == 
-                romSignature) {
+        if (strcmp(file->entries[i].id, idStr) == 0 
+                && strcmp(file->entries[i].platform, platform) == 0) 
+        {
             foundIndex = i;
+            break;
         }
     }
     return foundIndex;
 }
 
 
-int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, char *searchString) {
+int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, 
+        char *searchString, char *platform) 
+{
 
     int32_t bestIndex = -1;
     float bestScore = 0;
@@ -173,6 +179,10 @@ int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, char *searchString)
     printf("\nLooking for: %s\n--------------\n", searchString);
 
     for (uint32_t i = 0; i < file->nEntries; i++) {
+
+        if (strcmp(file->entries[i].platform, platform) != 0) {
+            continue;
+        }
 
         // File name needle match
         char *workingCopy = strdup(searchString);

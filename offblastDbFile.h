@@ -42,8 +42,8 @@ typedef struct LauncherFile {
 #define OFFBLAST_NAME_MAX 256
 typedef struct LaunchTarget {
     uint64_t targetSignature;
-    uint32_t romSignature;
 
+    char id[OFFBLAST_NAME_MAX];
     char name[OFFBLAST_NAME_MAX];
     char date[10];
     uint32_t ranking;
@@ -95,8 +95,8 @@ void *growDbFileIfNecessary(OffblastDbFile* dbFileStruct,
 int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file, 
         uint64_t targetSignature);
 
-int32_t launchTargetIndexByRomSignature(LaunchTargetFile *file, 
-        uint32_t targetSignature);
-
 int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, 
-        char *search);
+        char *search, char *platform);
+
+int32_t launchTargetIndexByIdMatch(LaunchTargetFile *file, 
+        char *idStr, char *platform);

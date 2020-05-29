@@ -139,6 +139,18 @@ typedef struct Image {
     unsigned char *atlas;
 } Image;
 
+typedef struct RomFound {
+    char path[256];
+    char name[OFFBLAST_NAME_MAX];
+    char id[OFFBLAST_NAME_MAX];
+} RomFound;
+
+typedef struct RomFoundList {
+    uint32_t allocated;
+    uint32_t numItems;
+    RomFound *items;
+} RomFoundList;
+
 typedef struct UiTile{
     struct LaunchTarget *target;
     Image image;
@@ -389,6 +401,9 @@ void loadPlayerOnePlaytimeFile();
 Window getActiveWindowRaw();
 void raiseWindow(Display * display, Window win);
 void killRunningGame(); 
+void importFromCemu(Launcher *theLauncher);
+void importFromSteam(Launcher *theLauncher);
+void importFromCustom(Launcher *theLauncher);
 
 OffblastUi *offblast;
 
@@ -583,6 +598,19 @@ int main(int argc, char** argv) {
                     theCemuPath, 
                     strlen(theCemuPath));
 
+            json_object_object_get_ex(launcherNode, "platform",
+                    &platformStringNode);
+            thePlatform = json_object_get_string(platformStringNode);
+            assert(strlen(thePlatform) < 256);
+            memcpy(&theLauncher->platform, 
+                    thePlatform, strlen(thePlatform));
+
+            json_object_object_get_ex(launcherNode, "cmd",
+                    &cmdStringNode);
+            theCommand = json_object_get_string(cmdStringNode);
+            assert(strlen(theCommand) < 512);
+            memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
+
         }
         else if (strcmp("custom", theLauncher->type) == 0){
 
@@ -598,41 +626,30 @@ int main(int argc, char** argv) {
             memcpy(&theLauncher->extension, 
                     theExtension, strlen(theExtension));
 
+            json_object_object_get_ex(launcherNode, "platform",
+                    &platformStringNode);
+            thePlatform = json_object_get_string(platformStringNode);
+            assert(strlen(thePlatform) < 256);
+            memcpy(&theLauncher->platform, 
+                    thePlatform, strlen(thePlatform));
+
+            json_object_object_get_ex(launcherNode, "cmd",
+                    &cmdStringNode);
+            theCommand = json_object_get_string(cmdStringNode);
+            assert(strlen(theCommand) < 512);
+            memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
+
+        }
+        else if (strcmp("steam", theLauncher->type) == 0){
+            memcpy(&theLauncher->platform, 
+                    "steam", strlen("steam"));
         }
         else {
-            printf("Unsupported Launcher Type: %s", theLauncher->type);
+            printf("Unsupported Launcher Type: %s\n", theLauncher->type);
             continue;
         }
 
-        json_object_object_get_ex(launcherNode, "platform",
-                &platformStringNode);
-        thePlatform = json_object_get_string(platformStringNode);
-        assert(strlen(thePlatform) < 256);
-        memcpy(&theLauncher->platform, 
-                thePlatform, strlen(thePlatform));
 
-        json_object_object_get_ex(launcherNode, "cmd",
-                &cmdStringNode);
-        theCommand = json_object_get_string(cmdStringNode);
-        assert(strlen(theCommand) < 512);
-        memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
-
-        for (int i = 0; i < launchTargetFile->nEntries; ++i) {
-            int isOrphan = 1;
-            for (int j=0; j < nConfigLaunchers; j++) {
-                if (launchTargetFile->entries[i].launcherSignature 
-                        == configLauncherSignatures[j]) 
-                {
-                    isOrphan = 0;
-                }
-            }
-
-            if (isOrphan) {
-                printf("ORPHANED GAME: \n%s\n", 
-                        launchTargetFile->entries[i].name);
-                launchTargetFile->entries[i].launcherSignature = 0;
-            }
-        }
 
         // TODO maybe we should also do a platform cleanup too?
         printf("Setting up platform: %s\n", (char*)&theLauncher->platform);
@@ -667,12 +684,6 @@ int main(int argc, char** argv) {
             }
         }
 
-        struct romFound {
-            char path[256];
-            char name[256];
-        };
-        struct romFound *fileFoundBlock;
-        int numItems = 0;
 
         if (!platformScraped) {
 
@@ -737,13 +748,14 @@ int main(int argc, char** argv) {
                         char *metaScoreString = getCsvField(csvLine, 4);
                         char *description = getCsvField(csvLine, 6);
                         char *coverArtUrl = getCsvField(csvLine, 7);
+                        char *gameId = getCsvField(csvLine, 8);
 
-                        printf("\n--\nAdding: \n%s\n%" PRIu64 "\n%s\n%s\ng: %s\n\nm: %s\n", 
+                        printf("\n--\nAdding: \n%s\n%" PRIu64 "\n%s\n%s\ng: %s\n\nm: %s\n%s\n", 
                                 gameSeed, 
                                 targetSignature, 
                                 gameName, 
                                 gameDate,
-                                scoreString, metaScoreString);
+                                scoreString, metaScoreString, gameId);
 
                         LaunchTarget *newEntry = 
                             &launchTargetFile->entries[launchTargetFile->nEntries];
@@ -762,6 +774,10 @@ int main(int argc, char** argv) {
                         memcpy(&newEntry->coverUrl, 
                                 coverArtUrl,
                                 strlen(coverArtUrl));
+
+                        memcpy(&newEntry->id, 
+                                gameId,
+                                strlen(gameId));
 
                         // TODO harden
                         if (strlen(gameDate) != 10) {
@@ -833,6 +849,7 @@ int main(int argc, char** argv) {
                         free(metaScoreString);
                         free(description);
                         free(coverArtUrl);
+                        free(gameId);
 
                     }
                     else {
@@ -852,307 +869,40 @@ int main(int argc, char** argv) {
             fclose(openGameDbFile);
         }
 
-        unsigned int nEntriesToAlloc = 1000; // TODO come back to this
-        unsigned int nAllocated = nEntriesToAlloc;
-
-        fileFoundBlock = 
-            calloc(nEntriesToAlloc, sizeof(struct romFound));
-
-        // Get a games list from Cemu
         if (strcmp(theLauncher->type, "cemu") == 0) {
+            importFromCemu(theLauncher);
+        }
+        else if (strcmp(theLauncher->type, "steam") == 0) {
+            importFromSteam(theLauncher);
+        }
+        else if (strcmp(theLauncher->type, "custom") == 0) { 
+            importFromCustom(theLauncher);
+        }
 
-            char *cemuSettingsFilePath;
-            asprintf(&cemuSettingsFilePath, "%ssettings.xml", 
-                    theLauncher->cemuPath);
-            printf("reading from settings file %s\n", cemuSettingsFilePath);
-
-            xmlDoc *settingsDoc = NULL;
-
-            xmlXPathContextPtr xpathCtx; 
-            xmlXPathObjectPtr xpathObj; 
-
-            settingsDoc = xmlParseFile(cemuSettingsFilePath);
-            assert(settingsDoc);
-            xpathCtx = xmlXPathNewContext(settingsDoc);
-
-            xpathObj = xmlXPathEvalExpression(
-                    (xmlChar *)"//GameCache/Entry", 
-                    xpathCtx);
-
-            if(xpathObj == NULL) {
-                fprintf(stderr,"Error: unable to evaluate xpath expression\n");
-                xmlXPathFreeContext(xpathCtx); 
-                xmlFreeDoc(settingsDoc); 
-                exit(1);
-            }
-            else {
-                xmlNodeSet *entries = xpathObj->nodesetval;
-                int size = (entries) ? entries->nodeNr : 0;
-                int nodei;
-
-                for(nodei = size - 1; nodei >= 0; nodei--) {
-
-                    assert(entries->nodeTab[nodei]);
-
-                    xmlNode *properties 
-                        = entries->nodeTab[nodei]->children;
-
-                    for(xmlNode *child = properties; child; child = child->next) 
-                    {
-
-                        if (strcmp((char *)child->name, "name") == 0) {
-
-                            printf("name: %s\n", 
-                                    child->children->content);
-
-                            if (strlen((char *)child->children->content) > 255) {
-                                printf("Warning: name is longer than 255: %s", 
-                                        child->children->content);
-                                continue;
-                            }
-
-                            memcpy(
-                                    fileFoundBlock[numItems].name, 
-                                    child->children->content, 
-                                    strlen((char *)child->children->content));
-
-                        }
-                        else if (strcmp((char *)child->name, "path") == 0) {
-
-                            printf("path: %s\n", 
-                                    child->children->content);
-
-                            if (strlen((char *)child->children->content) > 255) {
-                                printf("Warning: name is longer than 255: %s", 
-                                        child->children->content);
-                                continue;
-                            }
-
-                            memcpy(
-                                    fileFoundBlock[numItems].path, 
-                                    child->children->content, 
-                                    strlen((char *)child->children->content));
-
-                        }
+    }
 
 
-                        // §55 TODO KARL                     
-                    }
-
-                    numItems++;
-                    printf("---\n");
+    // TODO this is sort of bugged
+    for (int i = 0; i < launchTargetFile->nEntries; ++i) {
+        int isOrphan = 0;
+        if (launchTargetFile->entries[i].launcherSignature) { 
+            isOrphan = 1;
+            for (int j=0; j < nConfigLaunchers; j++) {
+                if (launchTargetFile->entries[i].launcherSignature 
+                        == configLauncherSignatures[j]) 
+                {
+                    isOrphan = 0;
                 }
             }
         }
-        else if (strcmp(theLauncher->type, "custom") == 0) { // Scan the directory
-            DIR *dir = opendir(theLauncher->romPath);
-            // TODO NFS shares when unavailable just lock this up!
-            if (dir == NULL) {
-                printf("Path %s failed to open\n", theLauncher->romPath);
-                break;
-            }
 
-            struct dirent *currentEntry;
+        if (isOrphan) {
+            printf("ORPHANED GAME: \n%s\n%u\n", 
+                    launchTargetFile->entries[i].name,
+                    launchTargetFile->entries[i].launcherSignature);
 
-            while ((currentEntry = readdir(dir)) != NULL) {
-
-                char *ext = strrchr(currentEntry->d_name, '.');
-
-                if (ext && strcmp(ext, theLauncher->extension) == 0){
-
-                    char *fullPath = NULL;
-                    asprintf(&fullPath, "%s/%s", 
-                            theLauncher->romPath, currentEntry->d_name);
-
-                    memcpy(&fileFoundBlock[numItems].path, 
-                            fullPath, 
-                            strlen(fullPath));
-
-                    free(fullPath);
-
-                    numItems++;
-
-                    // §55 TODO KARL this has to be a function and has to be
-                    // called for each emulator, also why are you not freeing
-                    // the old block of memory?
-                    if (numItems == nAllocated) {
-
-                        /*
-                        unsigned int bytesToAllocate = nEntriesToAlloc * 256;
-                        nAllocated += nEntriesToAlloc;
-
-                        void *newBlock = realloc(fileNameBlock, 
-                                nAllocated * 256);
-
-                        if (newBlock == NULL) {
-                            printf("failed to reallocate enough ram\n");
-                            return 0;
-                        }
-
-                        fileNameBlock = newBlock;
-                        matchingFileNames = fileNameBlock;
-
-                        memset(
-                                matchingFileNames+numItems, 
-                                0x0,
-                                bytesToAllocate);
-
-                        */
-                        printf("ran out of entries in the array\n");
-                        exit(1);
-
-                    }
-                }
-            }
-
-            closedir(dir);
+            launchTargetFile->entries[i].launcherSignature = 0;
         }
-
-        if (numItems == 0) { 
-            printf("no items found\n");
-            free(fileFoundBlock);
-            continue;
-        }
-
-
-        uint32_t contentSignature = 0;
-        lmmh_x86_32(fileFoundBlock, numItems*sizeof(struct romFound), 
-                33, &contentSignature);
-
-        printf("contentsHash:%u\n", contentSignature);
-        uint32_t rescrapeRequired = 0;
-
-
-        if (theLauncher->contentsHash != contentSignature) {
-            printf("Launcher targets for %u have changed!\n", 
-                    theLauncher->signature);
-
-            theLauncher->contentsHash = contentSignature;
-            rescrapeRequired = 1;
-        }
-        else {
-            printf("Contents unchanged for: %u\n", theLauncher->signature);
-        }
-
-
-        if (rescrapeRequired) {
-            void *romData = calloc(1, ROM_PEEK_SIZE);
-
-            for (uint32_t j=0;j<numItems; j++) {
-
-                char romPathCopy[PATH_MAX];
-                char *romPathTrimmed = (char*)&romPathCopy; 
-
-                if (strcmp(theLauncher->type, "cemu") == 0) {
-                    memcpy(romPathTrimmed, 
-                            fileFoundBlock[j].path+2, 
-                            strlen(fileFoundBlock[j].path+1)); 
-
-                    char *slash;
-                    while ((slash = strchr(romPathCopy, '\\')) != NULL) {
-                        *slash = '/';
-                    }
-                }
-                else {
-                    romPathTrimmed = (char*) &fileFoundBlock[j].path;
-                }
-
-                /*
-                asprintf(&romPathTrimmed, "%s/%s", 
-                        thePath,
-                        matchingFileNames[j]);
-                */
-
-                // TODO check it's not disc 2 or 3 etc
-
-                uint32_t romSignature;
-                FILE *romFd = fopen(romPathTrimmed, "rb");
-                if (! romFd) {
-                    printf("cannot open from rom\n");
-                    continue;
-                }
-
-                for (uint32_t i = 0; i < ROM_PEEK_SIZE; ++i) {
-                    if (!fread(romData + i, sizeof(char), 1, romFd)) {
-                        if (i == 0) {
-                            printf("cannot read from rom %s\n",
-                                    romPathTrimmed);
-                            continue;
-                        }
-                    }
-                }
-
-                lmmh_x86_32(romData, ROM_PEEK_SIZE, 33, &romSignature);
-                memset(romData, 0x0, ROM_PEEK_SIZE);
-                printf("signature is %u\n", romSignature);
-
-                memset(romData, 0x0, ROM_PEEK_SIZE);
-                fclose(romFd);
-
-                int32_t indexOfEntry = launchTargetIndexByRomSignature(
-                        launchTargetFile, romSignature);
-
-                if (indexOfEntry > -1) {
-                    printf("target is already in the db\n");
-                    LaunchTarget *theTarget = 
-                        &launchTargetFile->entries[indexOfEntry];
-                    theTarget->launcherSignature = theLauncher->signature;
-                }
-                else {
-
-                    char *searchString = NULL;
-
-                    if (strlen((char*)&fileFoundBlock[j].name) == 0) {
-                        searchString = calloc(1, 
-                                strlen((char*)&fileFoundBlock[j].path) + 1);
-
-                        char *startOfFileName = 
-                            strrchr((char*)&fileFoundBlock[j].path, '/');
-                        startOfFileName++;
-                        mempcpy(searchString, 
-                                startOfFileName,
-                                strlen(startOfFileName));
-
-                        char *ext = strchr(searchString, '(');
-                        if (ext == NULL) ext = strrchr(searchString, '.');
-                        if (ext != NULL) *ext = '\0';
-                        if (*(ext-1) == ' ') *(ext-1) = '\0';
-                    }
-                    else {
-                        searchString = calloc(1, 
-                                strlen((char*)&fileFoundBlock[j].name) + 1);
-
-                        mempcpy(searchString, 
-                                (char*)&fileFoundBlock[j].name, 
-                                strlen((char*)&fileFoundBlock[j].name));
-                    }
-
-                    indexOfEntry = launchTargetIndexByNameMatch(
-                            launchTargetFile, searchString);
-
-                    free(searchString);
-
-                    printf("found by name at index %d\n", indexOfEntry);
-
-                    if (indexOfEntry > -1) {
-
-                        LaunchTarget *theTarget = 
-                            &launchTargetFile->entries[indexOfEntry];
-
-                        theTarget->romSignature = romSignature;
-                        theTarget->launcherSignature = theLauncher->signature;
-                        memcpy(&theTarget->path, 
-                                (char *) &fileFoundBlock[j].path,
-                                strlen((char *) &fileFoundBlock[j].path));
-                    
-                    }
-                }
-            }; 
-
-            free(romData);
-        }
-
-        free(fileFoundBlock);
     }
 
     printf("DEBUG - got %u platforms\n", offblast->nPlatforms);
@@ -1791,8 +1541,7 @@ int main(int argc, char** argv) {
 
                         float desaturate = 0.2;
                         float alpha = 1.0;
-                        if (strlen(theTile->target->path) == 0 || 
-                                strlen(theTile->target->path) == 0) 
+                        if (theTile->target->launcherSignature == 0) 
                         {
                             desaturate = 0.3;
                             alpha = 0.7;
@@ -2539,6 +2288,9 @@ const char *platformString(char *key) {
     else if (strcmp(key, "wii_u") == 0) {
         return "Wii-U";
     }
+    else if (strcmp(key, "steam") == 0) {
+        return "Steam";
+    }
 
     return "Unknown Platform";
 }
@@ -2561,7 +2313,22 @@ void *loadCover(void *arg) {
     tile->image.loadState = 
         LOAD_STATE_LOADING;
 
-    char *coverArtPath = getCoverPath(tile->target->targetSignature); 
+    uint32_t isSteam = (strcmp(tile->target->platform, "steam") == 0);
+    char *coverArtPath;
+
+    if (isSteam) {
+        coverArtPath = calloc(PATH_MAX, sizeof(char));
+        char *homePath = getenv("HOME");
+        asprintf(&coverArtPath, 
+                "%s/.steam/steam/appcache/librarycache/%s_library_600x900.jpg", 
+                homePath,
+                tile->target->id);
+
+        printf("STEAM IMAGE PATH: %s\n", coverArtPath);
+    }
+    else {
+        coverArtPath = getCoverPath(tile->target->targetSignature); 
+    }
 
     int n;
     stbi_set_flip_vertically_on_load(1);
@@ -2570,7 +2337,7 @@ void *loadCover(void *arg) {
             (int*)&tile->image.width, (int*)&tile->image.height, 
             &n, 4);
 
-    if(tile->image.atlas == NULL) {
+    if(tile->image.atlas == NULL && !isSteam) {
 
         printf("need to download %s\n", coverArtPath);
 
@@ -2743,13 +2510,31 @@ void launch() {
     LaunchTarget *target = 
         offblast->mainUi.activeRowset->rowCursor->tileCursor->target;
 
-    if (strlen(target->path) == 0 || 
-            target->launcherSignature == 0) 
-    {
+    if (target->launcherSignature == 0) {
+        printf("%s has no launcher \n", target->name);
+    }
+
+    int32_t foundIndex = -1;
+    for (uint32_t i = 0; i < offblast->nLaunchers; ++i) {
+        if (target->launcherSignature == 
+                offblast->launchers[i].signature) 
+        {
+            foundIndex = i;
+        }
+    }
+
+    if (foundIndex == -1) {
+        printf("%s has no launcher\n", target->name);
+        return;
+    }
+
+    Launcher *theLauncher = &offblast->launchers[foundIndex];
+    int32_t isSteam = (strcmp(theLauncher->type, "steam") == 0);
+
+    if (!isSteam && strlen(target->path) == 0) {
         printf("%s has no launch candidate\n", target->name);
     }
     else {
-
 
         User *theUser = offblast->players[0].user;
 
@@ -2766,126 +2551,117 @@ void launch() {
 
         char *launchString = calloc(PATH_MAX, sizeof(char));
 
-        int32_t foundIndex = -1;
+        if (isSteam) {
+            asprintf(&launchString, "steam -silent -applaunch %s",
+                    target->id);
+        }
+        else {
 
-        for (uint32_t i = 0; i < offblast->nLaunchers; ++i) {
-            if (target->launcherSignature == 
-                    offblast->launchers[i].signature) 
-            {
-                foundIndex = i;
+            memcpy(launchString, 
+                    theLauncher->cmd, 
+                    strlen(theLauncher->cmd));
+
+            assert(strlen(launchString));
+
+            char *p;
+            uint8_t replaceIter = 0, replaceLimit = 8;
+            while ((p = strstr(launchString, "%ROM%"))) {
+
+                memmove(
+                        p + strlen(target->path) + 2, 
+                        p + 5,
+                        strlen(p));
+
+                *p = '"';
+                memcpy(p+1, target->path, strlen(target->path));
+                *(p + 1 + strlen(target->path)) = '"';
+
+                replaceIter++;
+                if (replaceIter >= replaceLimit) {
+                    printf("rom replace iterations exceeded, breaking\n");
+                    break;
+                }
             }
-        }
 
-        if (foundIndex == -1) {
-            printf("%s has no launcher\n", target->name);
-            return;
-        }
+            if (strcmp(theLauncher->type, "cemu") == 0) {
 
-        Launcher *theLauncher = &offblast->launchers[foundIndex];
+                assert(strlen(theLauncher->cemuPath));
+                char *cemuBinSlug;
 
-        memcpy(launchString, 
-                theLauncher->cmd, 
-                strlen(theLauncher->cmd));
+                asprintf(&cemuBinSlug, "%s/Cemu.exe", theLauncher->cemuPath);
 
-        assert(strlen(launchString));
+                replaceIter = 0; replaceLimit = 8;
+                while ((p = strstr(launchString, "%CEMU_BIN%"))) {
 
-        char *p;
-        uint8_t replaceIter = 0, replaceLimit = 8;
-        while ((p = strstr(launchString, "%ROM%"))) {
+                    memmove(
+                            p + strlen(cemuBinSlug) + 2, 
+                            p + strlen("%CEMU_BIN%"),
+                            strlen(p));
 
-            memmove(
-                    p + strlen(target->path) + 2, 
-                    p + 5,
-                    strlen(p));
+                    *p = '"';
+                    memcpy(p+1, cemuBinSlug, strlen(cemuBinSlug));
+                    *(p + 1 + strlen(cemuBinSlug)) = '"';
 
-            *p = '"';
-            memcpy(p+1, target->path, strlen(target->path));
-            *(p + 1 + strlen(target->path)) = '"';
+                    replaceIter++;
+                    if (replaceIter >= replaceLimit) {
+                        printf("cemu path replace iterations exceeded, breaking\n");
+                        break;
+                    }
+                }
+                free(cemuBinSlug);
 
-            replaceIter++;
-            if (replaceIter >= replaceLimit) {
-                printf("rom replace iterations exceeded, breaking\n");
-                break;
+                char *cemuAccountSlug;
+                if (theUser->cemuAccount != NULL) {
+                    cemuAccountSlug = (char*)theUser->cemuAccount;
+                }
+                else {
+                    cemuAccountSlug = "80000001";
+                }
+
+                // TODO write a function for this
+                while ((p = strstr(launchString, "%CEMU_ACCOUNT%"))) {
+
+                    memmove(
+                            p + strlen(cemuAccountSlug) + 2, 
+                            p + strlen("%CEMU_ACCOUNT%"),
+                            strlen(p));
+
+                    *p = '"';
+                    memcpy(p+1, cemuAccountSlug, 
+                            strlen(cemuAccountSlug));
+
+                    *(p + 1 + strlen(cemuAccountSlug)) = '"';
+
+                    replaceIter++;
+                    if (replaceIter >= replaceLimit) {
+                        printf("cemu account replace iterations exceeded, breaking\n");
+                        break;
+                    }
+                }
+
             }
-        }
 
-        if (strcmp(theLauncher->type, "cemu") == 0) {
-
-            assert(strlen(theLauncher->cemuPath));
-            char *cemuBinSlug;
-
-            asprintf(&cemuBinSlug, "%s/Cemu.exe", theLauncher->cemuPath);
-
+            // TODO only works if the directory is there, if it's not we'll need 
+            // to create it
             replaceIter = 0; replaceLimit = 8;
-            while ((p = strstr(launchString, "%CEMU_BIN%"))) {
+            while ((p = strstr(launchString, "%SAVEPATH%"))) {
 
                 memmove(
-                        p + strlen(cemuBinSlug) + 2, 
-                        p + strlen("%CEMU_BIN%"),
+                        p + strlen(savepathSlug) + 2, 
+                        p + strlen("%SAVEPATH%"),
                         strlen(p));
 
                 *p = '"';
-                memcpy(p+1, cemuBinSlug, strlen(cemuBinSlug));
-                *(p + 1 + strlen(cemuBinSlug)) = '"';
+                memcpy(p+1, savepathSlug, strlen(savepathSlug));
+                *(p + 1 + strlen(savepathSlug)) = '"';
 
                 replaceIter++;
                 if (replaceIter >= replaceLimit) {
-                    printf("cemu path replace iterations exceeded, breaking\n");
-                    break;
-                }
-            }
-            free(cemuBinSlug);
-
-            char *cemuAccountSlug;
-            if (theUser->cemuAccount != NULL) {
-                cemuAccountSlug = (char*)theUser->cemuAccount;
-            }
-            else {
-                cemuAccountSlug = "80000001";
-            }
-
-            // TODO write a function for this
-            while ((p = strstr(launchString, "%CEMU_ACCOUNT%"))) {
-
-                memmove(
-                        p + strlen(cemuAccountSlug) + 2, 
-                        p + strlen("%CEMU_ACCOUNT%"),
-                        strlen(p));
-
-                *p = '"';
-                memcpy(p+1, cemuAccountSlug, 
-                        strlen(cemuAccountSlug));
-
-                *(p + 1 + strlen(cemuAccountSlug)) = '"';
-
-                replaceIter++;
-                if (replaceIter >= replaceLimit) {
-                    printf("cemu account replace iterations exceeded, breaking\n");
+                    printf("savepath iterations exceeded, breaking\n");
                     break;
                 }
             }
 
-        }
-
-        // TODO only works if the directory is there, if it's not we'll need 
-        // to create it
-        replaceIter = 0; replaceLimit = 8;
-        while ((p = strstr(launchString, "%SAVEPATH%"))) {
-
-            memmove(
-                    p + strlen(savepathSlug) + 2, 
-                    p + strlen("%SAVEPATH%"),
-                    strlen(p));
-
-            *p = '"';
-            memcpy(p+1, savepathSlug, strlen(savepathSlug));
-            *(p + 1 + strlen(savepathSlug)) = '"';
-
-            replaceIter++;
-            if (replaceIter >= replaceLimit) {
-                printf("savepath iterations exceeded, breaking\n");
-                break;
-            }
         }
 
         printf("OFFBLAST! %s\n", launchString);
@@ -3695,6 +3471,12 @@ void updateHomeLists(){
     // __ROWS__ Essentials per platform 
     for (uint32_t iPlatform = 0; iPlatform < offblast->nPlatforms; iPlatform++) {
 
+        uint32_t isSteam = 0;
+
+        if (strcmp(offblast->platforms[iPlatform], "steam") == 0) {
+            isSteam = 1;
+        }
+
         uint32_t topRatedMax = 25;
         UiTile *tiles = calloc(topRatedMax, sizeof(UiTile));
         assert(tiles);
@@ -3705,6 +3487,10 @@ void updateHomeLists(){
             LaunchTarget *target = &launchTargetFile->entries[i];
 
             if (strcmp(target->platform, offblast->platforms[iPlatform]) == 0) {
+                
+                if (isSteam && target->launcherSignature == 0) {
+                    continue;
+                }
 
                 tiles[numTiles].target = target; 
                 tiles[numTiles].next = &tiles[numTiles+1]; 
@@ -4006,4 +3792,385 @@ void raiseWindow(Display * display, Window win){
   SubstructureNotifyMask | 
   SubstructureRedirectMask,
   &xev);
+}
+
+RomFoundList *newRomList(){
+    unsigned int nEntriesToAlloc = 100;
+
+    RomFoundList *list = calloc(1, sizeof(RomFoundList));
+    assert(list);
+
+    list->items = calloc(nEntriesToAlloc, sizeof(struct RomFound));
+    assert(list->items);
+    list->allocated = nEntriesToAlloc;
+
+    return list;
+}
+
+uint32_t pushToRomList(RomFoundList *list, char *path, char *name, char *id) {
+    if (list->numItems +1 >= list->allocated) {
+        list->items = realloc(list->items, 
+                list->allocated * sizeof(RomFound) + 
+                100 * sizeof(RomFound));
+    }
+
+    if (list->items == NULL) {
+        return 0;
+    }
+
+    RomFound *rom = &list->items[list->numItems++];
+    if (path != NULL) memcpy(rom->path, path, strlen(path));
+    if (name != NULL) memcpy(rom->name, name, strlen(name));
+    if (id != NULL) memcpy(rom->id, id, strlen(id));
+
+    return 1;
+}
+
+uint32_t romListContentSig(RomFoundList *list) {
+    uint32_t contentSignature = 0;
+    lmmh_x86_32(list, list->numItems * sizeof(RomFound), 
+            33, &contentSignature);
+
+    return contentSignature;
+}
+
+void freeRomList(RomFoundList *list) {
+    free(list->items);
+    free(list);
+}
+
+// These functions need to find a list of games
+// create the fields needed to update the internal game db
+void importFromCemu(Launcher *theLauncher) {
+
+    RomFoundList *list = newRomList();
+
+    char *cemuSettingsFilePath;
+    asprintf(&cemuSettingsFilePath, "%ssettings.xml", 
+            theLauncher->cemuPath);
+    printf("reading from settings file %s\n", cemuSettingsFilePath);
+
+    xmlDoc *settingsDoc = NULL;
+
+    xmlXPathContextPtr xpathCtx; 
+    xmlXPathObjectPtr xpathObj; 
+
+    settingsDoc = xmlParseFile(cemuSettingsFilePath);
+    assert(settingsDoc);
+    xpathCtx = xmlXPathNewContext(settingsDoc);
+
+    xpathObj = xmlXPathEvalExpression(
+            (xmlChar *)"//GameCache/Entry", 
+            xpathCtx);
+
+    if(xpathObj == NULL) {
+        fprintf(stderr,"Error: unable to evaluate xpath expression\n");
+        xmlXPathFreeContext(xpathCtx); 
+        xmlFreeDoc(settingsDoc); 
+        exit(1);
+    }
+    else {
+        xmlNodeSet *entries = xpathObj->nodesetval;
+        int size = (entries) ? entries->nodeNr : 0;
+        int nodei;
+
+        for(nodei = size - 1; nodei >= 0; nodei--) {
+
+            RomFound currentFind = {};
+
+            assert(entries->nodeTab[nodei]);
+
+            xmlNode *properties 
+                = entries->nodeTab[nodei]->children;
+
+            for(xmlNode *child = properties; child; child = child->next) 
+            {
+
+                if (strcmp((char *)child->name, "name") == 0) {
+                    if (strlen((char *)child->children->content) > 
+                            OFFBLAST_NAME_MAX) 
+                    {
+                        printf("Warning: name is longer than 255: %s", 
+                                child->children->content);
+                        continue;
+                    }
+
+                    memcpy(&currentFind.name, child->children->content,
+                            strlen((char*)child->children->content));
+                }
+                else if (strcmp((char *)child->name, "path") == 0) {
+                    if (strlen((char *)child->children->content) > 
+                            OFFBLAST_NAME_MAX) 
+                    {
+                        printf("Warning: path is longer than 255: %s", 
+                                child->children->content);
+                        continue;
+                    }
+
+                    memcpy(&currentFind.path, child->children->content,
+                            strlen((char*)child->children->content));
+                }
+            }
+
+            pushToRomList(list, (char *)&currentFind.path, 
+                    (char *)&currentFind.name, NULL);
+        }
+
+    }
+
+    xmlXPathFreeContext(xpathCtx); 
+    xmlFreeDoc(settingsDoc); 
+
+    if (list->numItems == 0) { 
+        printf("no items found\n");
+        freeRomList(list);
+        list = NULL;
+        return;
+    }
+
+    uint32_t rescrapeRequired = 0;
+
+    if (theLauncher->contentsHash != romListContentSig(list)) {
+        printf("Launcher targets for %u have changed!\n", 
+                theLauncher->signature);
+
+        theLauncher->contentsHash = romListContentSig(list);
+        rescrapeRequired = 1;
+    }
+    else {
+        printf("Contents unchanged for: %u\n", theLauncher->signature);
+    }
+
+
+    if (rescrapeRequired) {
+
+        for (uint32_t j=0 ; j< list->numItems; j++) {
+
+            int32_t indexOfEntry = launchTargetIndexByNameMatch(
+                    offblast->launchTargetFile, 
+                    list->items[j].name, 
+                    theLauncher->platform);
+
+            printf("found by name at index %d\n", indexOfEntry);
+
+            if (indexOfEntry > -1) {
+
+                LaunchTarget *theTarget = 
+                    &offblast->launchTargetFile->entries[indexOfEntry];
+
+                theTarget->launcherSignature = theLauncher->signature;
+                memcpy(&theTarget->path, 
+                        list->items[j].path,
+                        strlen(list->items[j].path));
+
+            }
+        } 
+    }
+
+    freeRomList(list);
+}
+
+
+
+void importFromSteam(Launcher *theLauncher) {
+
+    RomFoundList *list = newRomList();
+    char *homePath = getenv("HOME");
+
+    char *registryPath = NULL;
+    asprintf(&registryPath, "%s/.steam/registry.vdf", homePath);
+
+    FILE *fp = fopen(registryPath, "r");
+    if (fp == NULL) {
+        perror("Couldn't open steam registry\n");
+        return;
+    }
+
+    char *lineBuffer = calloc(512, sizeof(char));
+    assert(lineBuffer);
+    uint32_t inAppsSection = 0;
+    int32_t depth = 0;
+    char *idStr = NULL;
+    char *currentId = calloc(64, sizeof(char));
+    char *currentIdCursor;
+    uint32_t installed = 0;
+
+    while(fgets(lineBuffer, 512, fp)) {
+        if (inAppsSection) {
+
+            if (strstr(lineBuffer, "{")) ++depth;
+            if (strstr(lineBuffer, "}")) --depth;
+            if (depth < 0) break;
+
+            if (depth == 1 && strstr(lineBuffer, "\"")) {
+
+                if (installed) {
+                    printf("New steam game %s\n", currentId);
+                    pushToRomList(list, NULL, NULL, currentId);
+                }
+
+                idStr = lineBuffer;
+                memset(currentId, 0, 64);
+                installed = 0;
+
+                while (isspace(*idStr) || *idStr == '\"') ++idStr;
+                currentIdCursor = currentId;
+                while (isdigit(*idStr)) {
+                    memcpy(currentIdCursor++, idStr++, sizeof(char));
+                }
+            }
+            if (depth == 2) {
+                if (strstr(lineBuffer, "Installed") 
+                        && strstr(lineBuffer, "1")) 
+                {
+                    installed = 1;
+                }
+            }
+        }
+        else if (strstr(lineBuffer, "\"apps\"") != NULL) {
+            inAppsSection = 1;
+        }
+    }
+
+    fclose(fp);
+    free(registryPath);
+    free(currentId);
+
+    if (list->numItems == 0) { 
+        printf("no items found\n");
+        freeRomList(list);
+        return;
+    }
+
+    uint32_t rescrapeRequired = 0;
+    if (theLauncher->contentsHash != romListContentSig(list)) {
+        printf("Launcher targets for %u have changed!\n", 
+                theLauncher->signature);
+
+        theLauncher->contentsHash = romListContentSig(list);
+        rescrapeRequired = 1;
+    }
+    else {
+        printf("Contents unchanged for: %u\n", theLauncher->signature);
+    }
+
+
+    if (rescrapeRequired) {
+
+        int32_t indexOfEntry = -1;
+
+        for (uint32_t j=0; j < list->numItems; j++) {
+
+            indexOfEntry = launchTargetIndexByIdMatch(
+                    offblast->launchTargetFile, list->items[j].id, theLauncher->platform);
+
+            printf("found by id at index %d\n", indexOfEntry);
+
+            if (indexOfEntry > -1) {
+
+                LaunchTarget *theTarget = 
+                    &offblast->launchTargetFile->entries[indexOfEntry];
+
+                theTarget->launcherSignature = theLauncher->signature;
+            }
+        } 
+    }
+
+    freeRomList(list);
+}
+
+
+void importFromCustom(Launcher *theLauncher) {
+
+    RomFoundList *list = newRomList();
+
+    // TODO NFS shares when unavailable just lock this up!
+    DIR *dir = opendir(theLauncher->romPath);
+    if (dir == NULL) {
+        printf("Path %s failed to open\n", theLauncher->romPath);
+        return;
+    }
+
+    struct dirent *currentEntry;
+    while ((currentEntry = readdir(dir)) != NULL) {
+
+        char *ext = strrchr(currentEntry->d_name, '.');
+        if (ext && strcmp(ext, theLauncher->extension) == 0) {
+
+            char *fullPath = NULL;
+            asprintf(&fullPath, "%s/%s", 
+                    theLauncher->romPath, currentEntry->d_name);
+
+            pushToRomList(list, fullPath, NULL, NULL);
+            free(fullPath);
+        }
+    }
+
+    closedir(dir);
+    if (list->numItems == 0) { 
+        freeRomList(list);
+        return;
+    }
+
+    uint32_t rescrapeRequired = 0;
+    if (theLauncher->contentsHash != romListContentSig(list)) {
+        printf("Launcher targets for %u have changed!\n", 
+                theLauncher->signature);
+        theLauncher->contentsHash = romListContentSig(list);
+        rescrapeRequired = 1;
+    }
+    else {
+        printf("Contents unchanged for: %u\n", theLauncher->signature);
+    }
+
+    if (rescrapeRequired) {
+        void *romData = calloc(1, ROM_PEEK_SIZE);
+
+        for (uint32_t j=0; j< list->numItems; j++) {
+
+            // TODO check it's not disc 2 or 3 etc
+            char *searchString = NULL;
+
+            searchString = calloc(1, 
+                    strlen((char*)&list->items[j].path) + 1);
+
+            char *startOfFileName = 
+                strrchr((char*)&list->items[j].path, '/');
+
+            startOfFileName++;
+            mempcpy(searchString, 
+                    startOfFileName,
+                    strlen(startOfFileName));
+
+            char *ext = strchr(searchString, '(');
+
+            if (ext == NULL) ext = strrchr(searchString, '.');
+            if (ext != NULL) *ext = '\0';
+            if (*(ext-1) == ' ') *(ext-1) = '\0';
+
+            int32_t indexOfEntry = launchTargetIndexByNameMatch(
+                    offblast->launchTargetFile, searchString, theLauncher->platform);
+            free(searchString);
+
+
+            if (indexOfEntry > -1) {
+
+                LaunchTarget *theTarget = 
+                    &offblast->launchTargetFile->entries[indexOfEntry];
+
+                theTarget->launcherSignature = theLauncher->signature;
+                memcpy(&theTarget->path, 
+                        (char *) &list->items[j].path,
+                        strlen((char *) &list->items[j].path));
+
+            }
+            else {
+                printf("No match found for %s\n", list->items[j].path);
+            }
+        }
+
+        free(romData);
+    } 
+
+    freeRomList(list);
 }
