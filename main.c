@@ -24,15 +24,13 @@
 #define NAVIGATION_MOVE_DURATION 250 
 
 #define WINDOW_MANAGER_I3 1
+#define WINDOW_MANAGER_GNOME 2
 
 // Alpha 0.4 
 //
 //      - Save directory per user.
 //          This is now working in Cemu, but work needs to be done to
 //          make this work nicely with retroarch
-//
-//      - Steam Integration
-//          got a scraper running now.
 //
 //      - OpenGameDb, auto download/update? Evict Assets and update.
 //
@@ -50,7 +48,6 @@
 //      - Deadzone checks
 //         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
 //
-//
 // TODO multidisk PS games.
 //      - need to get smart about detection of multidisk PS games and not
 //          entirely sure how to do it just yet. I could either create m3u files
@@ -61,13 +58,7 @@
 //          file present we use that instead?
 //
 // TODO steam support
-//      * looks like if you ls .steam/steam/userdata there's a folder for 
-//      each game you've played.. this could be a good way to scrape and auto
-//      populate for steam.
-//
-// TODO tighter retroarch integration, 
-//      * we can compile this against libretro.h and tap into stuff from 
-//      the shared object
+//  When a game is removed offblast still thinks it's playable
 //
 // TODO List caches, I think when we generate lists we should cache
 //      them in files.. maybe?
@@ -86,7 +77,7 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_ttf.h>
+#include <SDL2/SDL_syswm.h>
 #include <json-c/json.h>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
@@ -332,12 +323,14 @@ typedef struct OffblastUi {
     Launcher *launchers;
 
     SDL_Window *window;
-    Window windowRaw;
     uint32_t windowManager;
+    Window resumeWindow;
 
     pid_t runningPid;
     LaunchTarget *playingTarget;
     uint32_t startPlayTick;
+
+    uint32_t uiStopButtonHot;
 
 } OffblastUi;
 
@@ -345,6 +338,11 @@ typedef struct CurlFetch {
     size_t size;
     unsigned char *data;
 } CurlFetch;
+
+typedef struct WindowInfo {
+    Display *display;
+    Window window;
+} WindowInfo;
 
 
 uint32_t megabytes(uint32_t n);
@@ -399,11 +397,13 @@ void loadTexture(UiTile *tile);
 void pressSearch();
 void loadPlayerOnePlaytimeFile();
 Window getActiveWindowRaw();
-void raiseWindow(Display * display, Window win);
+void raiseWindow();
 void killRunningGame(); 
 void importFromCemu(Launcher *theLauncher);
 void importFromSteam(Launcher *theLauncher);
 void importFromCustom(Launcher *theLauncher);
+WindowInfo getOffblastWindowInfo();
+uint32_t activeWindowIsOffblast();
 
 OffblastUi *offblast;
 
@@ -1006,9 +1006,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     offblast->window = window;
-    offblast->windowRaw= getActiveWindowRaw();
-    // TODO remove
-    printf("WINDOW ID %d\n", (int)offblast->windowRaw);
+    
     char *windowManager = getenv("XDG_CURRENT_DESKTOP");
     assert(windowManager);
 
@@ -1791,6 +1789,90 @@ int main(int argc, char** argv) {
             }
     
         }
+        else if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {
+
+            double yOffset = offblast->winHeight - 
+                        goldenRatioLarge(offblast->winHeight, 3);
+
+            char *headerText = "Now playing";
+
+            uint32_t titleWidth = getTextLineWidth(headerText, 
+                    offblast->titleCharData);
+
+            renderText(offblast, 
+                    offblast->winWidth / 2 - titleWidth / 2, 
+                    yOffset,
+                    OFFBLAST_TEXT_TITLE, 1.0, 0,
+                    headerText);
+
+            yOffset -= 100;
+
+            char *titleText = 
+                offblast->mainUi.activeRowset->rowCursor->tileCursor->target->name;
+
+            uint32_t nameWidth = 
+                getTextLineWidth(titleText, offblast->infoCharData);
+
+            renderText(offblast, 
+                    offblast->winWidth / 2 - nameWidth/ 2, 
+                    yOffset,
+                    OFFBLAST_TEXT_INFO, 1.0, 0,
+                    titleText);
+
+            yOffset -= (offblast->infoPointSize * 3);
+
+            UiTile *theTile = 
+                offblast->mainUi.activeRowset->rowCursor->tileCursor;
+            Image *imageToShow;
+
+            if (theTile->image.textureHandle == 0) {
+                imageToShow = &offblast->missingCoverImage;
+            }
+            else {
+                imageToShow = &theTile->image;
+            }
+
+            double xPos = offblast->winWidth / 2 - getWidthForScaledImage(
+                    mainUi->boxHeight,
+                    imageToShow) / 2;
+
+            renderImage(
+                    xPos,
+                    yOffset - mainUi->boxHeight,
+                    0, 
+                    mainUi->boxHeight, 
+                    imageToShow, 
+                    0.2, 
+                    1);
+
+            yOffset -= (mainUi->boxHeight + 200);
+
+            double stopWidth = 
+                getTextLineWidth("Stop", offblast->infoCharData);
+
+            double resumeWidth = 
+                getTextLineWidth("Resume", offblast->infoCharData);
+
+            double totalWidth = stopWidth + 200 + resumeWidth;
+
+            renderText(offblast, 
+                    offblast->winWidth/2 - totalWidth/2, 
+                    yOffset,
+                    OFFBLAST_TEXT_INFO, 
+                    (offblast->uiStopButtonHot ? 0.6 : 1.0), 
+                    0,
+                    "Resume");
+
+            renderText(offblast, 
+                    offblast->winWidth/2 - totalWidth/2 + resumeWidth + 200,
+                    yOffset,
+                    OFFBLAST_TEXT_INFO, 
+                    (offblast->uiStopButtonHot ? 1.0 : 0.6),  
+                    0,
+                    "Stop");
+
+
+        }
 
         uint32_t frameTime = SDL_GetTicks() - lastTick;
         char *fpsString;
@@ -1998,6 +2080,11 @@ void changeColumn(uint32_t direction)
             // TODO bugged out, ends up at 5
             if (offblast->playerSelectUi.cursor < 0)
                 offblast->playerSelectUi.cursor = 0;
+        }
+    }
+    if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {
+        if(activeWindowIsOffblast()) {
+            offblast->uiStopButtonHot = !offblast->uiStopButtonHot;
         }
     }
 }
@@ -2313,9 +2400,9 @@ void *loadCover(void *arg) {
     tile->image.loadState = 
         LOAD_STATE_LOADING;
 
-    uint32_t isSteam = (strcmp(tile->target->platform, "steam") == 0);
     char *coverArtPath;
 
+    /*
     if (isSteam) {
         coverArtPath = calloc(PATH_MAX, sizeof(char));
         char *homePath = getenv("HOME");
@@ -2326,9 +2413,9 @@ void *loadCover(void *arg) {
 
         printf("STEAM IMAGE PATH: %s\n", coverArtPath);
     }
-    else {
-        coverArtPath = getCoverPath(tile->target->targetSignature); 
-    }
+    else 
+    */
+    coverArtPath = getCoverPath(tile->target->targetSignature); 
 
     int n;
     stbi_set_flip_vertically_on_load(1);
@@ -2337,7 +2424,7 @@ void *loadCover(void *arg) {
             (int*)&tile->image.width, (int*)&tile->image.height, 
             &n, 4);
 
-    if(tile->image.atlas == NULL && !isSteam) {
+    if(tile->image.atlas == NULL) {
 
         printf("need to download %s\n", coverArtPath);
 
@@ -2375,8 +2462,19 @@ void *downloadCover(char *coverArtPath, UiTile *tile) {
     //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
-    char *url = (char *) 
-        tile->target->coverUrl;
+    char *url = NULL;
+    char *dynamicUrl = calloc(PATH_MAX, sizeof(char));
+
+    if (strcmp(tile->target->platform, "steam") == 0) {
+        asprintf(&dynamicUrl, 
+            "https://steamcdn-a.akamaihd.net/steam/apps/%s/library_600x900.jpg", 
+            tile->target->id);
+
+        url = dynamicUrl;
+    }
+    else {
+        url = (char *) tile->target->coverUrl;
+    }
 
     printf("Downloading Art for %s\n", 
             tile->target->name);
@@ -2386,7 +2484,9 @@ void *downloadCover(char *coverArtPath, UiTile *tile) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
 
     uint32_t res = curl_easy_perform(curl);
+
     curl_easy_cleanup(curl);
+    free(dynamicUrl);
 
     if (res != CURLE_OK) {
         printf("%s\n", curl_easy_strerror(res));
@@ -2664,6 +2764,7 @@ void launch() {
 
         }
 
+        // TODO detect when the command errors or doesn't exist and handle it
         printf("OFFBLAST! %s\n", launchString);
 
         char *commandStr;
@@ -2721,9 +2822,14 @@ void pressSearch(int32_t joystickIndex) {
 void pressConfirm(int32_t joystickIndex) {
 
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {
-        if((int)getActiveWindowRaw() == (int)offblast->windowRaw) {
-            printf("got focus, so let's kill it\n");
+        if(activeWindowIsOffblast() && offblast->uiStopButtonHot) 
+        {
             killRunningGame();
+        }
+        else {
+            printf("Resume the current game on window %lu \n", 
+                    offblast->resumeWindow);
+            raiseWindow(offblast->resumeWindow);
         }
     }
     else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
@@ -3672,9 +3778,10 @@ void killRunningGame() {
 
         default:
             killpg(offblast->runningPid, SIGKILL);
-            SDL_RaiseWindow(offblast->window);
-            SDL_SetWindowFullscreen(offblast->window, 
-                    SDL_WINDOW_FULLSCREEN_DESKTOP);
+            //Display *d = XOpenDisplay(NULL);
+            //raiseWindow();
+            //SDL_SetWindowFullscreen(offblast->window, 
+             //       SDL_WINDOW_FULLSCREEN_DESKTOP);
             break;
     }
     printf("killed %d\n", offblast->runningPid);
@@ -3725,73 +3832,114 @@ void killRunningGame() {
     updateHomeLists();
 }
 
+uint32_t activeWindowIsOffblast() {
+    WindowInfo winInfo = getOffblastWindowInfo();
+
+    if((int)getActiveWindowRaw() == (int)winInfo.window) 
+        return 1;
+    else 
+        return 0;
+   
+}
+
 void pressGuide() {
 
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND 
             && offblast->runningPid > 0) 
     {
 
-        if (offblast->windowManager == WINDOW_MANAGER_I3) {
-            system("i3-msg workspace offblast");
-        }
-        else {
-            killRunningGame();
-        }
+        if (!activeWindowIsOffblast()) {
 
+            offblast->resumeWindow = getActiveWindowRaw();
+            offblast->uiStopButtonHot = 0;
+
+            if (offblast->windowManager == WINDOW_MANAGER_I3) {
+                system("i3-msg workspace offblast");
+            }
+            else {
+                raiseWindow(0);
+            }
+        }
     }
 }
 
 Window getActiveWindowRaw() {
 
-    printf("connecting X server ... ");
     Display* d = XOpenDisplay(NULL);
+
     if(d == NULL){
-        printf("fail\n");
-        exit(1);
-    }else{
-        printf("success\n");
+        printf("Couldn't connect to Xserver\n");
+        return 0;
     }
 
     Window w;
     int revert_to;
+
     printf("getting input focus window ... ");
+
     XGetInputFocus(d, &w, &revert_to); // see man
+
     if(!w){
-        printf("fail\n");
-        exit(1);
+        printf("Couldn't get the active window\n");
+        return 0;
     }else if(w == 0){
         printf("no focus window\n");
         exit(1);
     }else{
-        printf("success (window: %d)\n", (int)w);
+        printf("ACTIVE WINDOW (window: %d)\n", (int)w);
     }
 
     return w;
-
 }
 
 
-void raiseWindow(Display * display, Window win){
+WindowInfo getOffblastWindowInfo() {
 
-  XEvent xev;
-  Window root;
+    WindowInfo windowInfo = {};
 
-  xev.type = ClientMessage;
-  xev.xclient.display = display;
-  xev.xclient.window = win;
-  xev.xclient.message_type = XInternAtom(
-  display,
-  "_NET_ACTIVE_WINDOW",0);
-  xev.xclient.format = 32;
-  xev.xclient.data.l[0] = 2L;
-  xev.xclient.data.l[1] = CurrentTime;
+    SDL_SysWMinfo wmInfo;
+    SDL_VERSION(&wmInfo.version);
+    SDL_GetWindowWMInfo(offblast->window, &wmInfo);
 
-  root = XDefaultRootWindow(display);
+    windowInfo.window = wmInfo.info.x11.window;
+    windowInfo.display = wmInfo.info.x11.display;
 
-  XSendEvent( display,root,0,
-  SubstructureNotifyMask | 
-  SubstructureRedirectMask,
-  &xev);
+    printf("OFFBLAST WINDOW ID %d\n", (int)windowInfo.window);
+
+    return windowInfo;
+}
+
+
+void raiseWindow(Window window){
+
+    WindowInfo offblastWinInfo = getOffblastWindowInfo();
+    WindowInfo winInfo;
+    if (window == 0) {
+        winInfo = offblastWinInfo;
+    }
+    else {
+        winInfo.window = window;
+        winInfo.display = offblastWinInfo.display;
+    }
+
+    printf("in raisewin with %lu %p\n", winInfo.window, winInfo.display);
+
+    XWindowAttributes wattr;
+
+    XEvent xev;
+    memset(&xev, 0, sizeof(xev));
+    xev.type = ClientMessage;
+    xev.xclient.display = winInfo.display;
+    xev.xclient.window = winInfo.window;
+    xev.xclient.message_type = XInternAtom(winInfo.display, "_NET_ACTIVE_WINDOW", 0);
+    xev.xclient.format = 32;
+    xev.xclient.data.l[0] = 2L; /* 2 == Message from a window pager */
+    xev.xclient.data.l[1] = CurrentTime;
+
+    XGetWindowAttributes(winInfo.display, winInfo.window, &wattr);
+    XSendEvent(winInfo.display, wattr.screen->root, False,
+            SubstructureNotifyMask | SubstructureRedirectMask,
+            &xev);
 }
 
 RomFoundList *newRomList(){
