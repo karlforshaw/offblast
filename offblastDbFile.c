@@ -190,10 +190,10 @@ int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file,
         uint32_t numTokens = 0;
         float score;
 
-        char *token = token = strtok(workingCopy, " ");
+        char *token = strtok(workingCopy, " ");
         while(token != NULL) {
             numTokens++;
-            if ((strstr(file->entries[i].name, token) != NULL)) {
+            if ((strcasestr(file->entries[i].name, token) != NULL)) {
                 //printf("Pass 1; Token Match: %s\n", token);
                 tokensMatched++;
             }
@@ -203,10 +203,10 @@ int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file,
 
         // Entry name needle match
         workingCopy = strdup(file->entries[i].name);
-        token = token = strtok(workingCopy, " ");
+        token = strtok(workingCopy, " ");
         while(token != NULL) {
             numTokens++;
-            if ((strstr(searchString, token) != NULL)) {
+            if ((strcasestr(searchString, token) != NULL)) {
                 //printf("Pass2: Token Match: %s\n", token);
                 tokensMatched++;
             }

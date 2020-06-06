@@ -28,6 +28,9 @@
 
 // Alpha 0.4 
 //
+//      - contents signatures are no longer persisted so we're rescraping on 
+//        every load
+//
 //      - Save directory per user.
 //          This is now working in Cemu, but work needs to be done to
 //          make this work nicely with retroarch
@@ -1013,6 +1016,9 @@ int main(int argc, char** argv) {
     if (strcmp(windowManager, "i3") == 0) {
         offblast->windowManager = WINDOW_MANAGER_I3;
         system("i3-msg move to workspace offblast && i3-msg workspace offblast");
+    }
+    if (strcmp(windowManager, "GNOME") >= 0) {
+        offblast->windowManager = WINDOW_MANAGER_GNOME;
     }
     else {
         perror("Your window manager is not yet supported\n");
@@ -3875,8 +3881,6 @@ Window getActiveWindowRaw() {
     Window w;
     int revert_to;
 
-    printf("getting input focus window ... ");
-
     XGetInputFocus(d, &w, &revert_to); // see man
 
     if(!w){
@@ -3886,7 +3890,7 @@ Window getActiveWindowRaw() {
         printf("no focus window\n");
         exit(1);
     }else{
-        printf("ACTIVE WINDOW (window: %d)\n", (int)w);
+        //printf("ACTIVE WINDOW (window: %d)\n", (int)w);
     }
 
     return w;
@@ -3904,7 +3908,7 @@ WindowInfo getOffblastWindowInfo() {
     windowInfo.window = wmInfo.info.x11.window;
     windowInfo.display = wmInfo.info.x11.display;
 
-    printf("OFFBLAST WINDOW ID %d\n", (int)windowInfo.window);
+    //printf("OFFBLAST WINDOW ID %d\n", (int)windowInfo.window);
 
     return windowInfo;
 }
@@ -3921,8 +3925,6 @@ void raiseWindow(Window window){
         winInfo.window = window;
         winInfo.display = offblastWinInfo.display;
     }
-
-    printf("in raisewin with %lu %p\n", winInfo.window, winInfo.display);
 
     XWindowAttributes wattr;
 
@@ -4079,8 +4081,10 @@ void importFromCemu(Launcher *theLauncher) {
     uint32_t rescrapeRequired = 0;
 
     if (theLauncher->contentsHash != romListContentSig(list)) {
-        printf("Launcher targets for %u have changed!\n", 
-                theLauncher->signature);
+        printf("Launcher targets for %u have changed! %u vs %u\n", 
+                theLauncher->signature,
+                theLauncher->contentsHash,
+                romListContentSig(list));
 
         theLauncher->contentsHash = romListContentSig(list);
         rescrapeRequired = 1;
