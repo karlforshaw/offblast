@@ -3535,7 +3535,7 @@ void updateHomeLists(){
     uint32_t libraryLength = 0;
     for (uint32_t i = 0; i < launchTargetFile->nEntries; ++i) {
         LaunchTarget *target = &launchTargetFile->entries[i];
-        if (strlen(target->path) != 0) 
+        if (target->launcherSignature != 0) 
             libraryLength++;
     }
 
@@ -3547,11 +3547,11 @@ void updateHomeLists(){
 
         uint32_t tileCount = 0;
 
-        for (uint32_t i = launchTargetFile->nEntries; i > 0; i--) {
+        for (uint32_t i = launchTargetFile->nEntries-1; i > 0; --i) {
 
             LaunchTarget *target = &launchTargetFile->entries[i];
 
-            if (strlen(target->path) != 0) {
+            if (target->launcherSignature != 0) {
 
                 tiles[tileCount].target = target;
                 tiles[tileCount].next = &tiles[tileCount+1];
