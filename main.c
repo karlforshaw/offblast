@@ -261,6 +261,7 @@ typedef struct OffblastUi {
     uint32_t running;
     enum UiMode mode;
     char *configPath;
+    Display *XDisplay;
 
     PlayerSelectUi playerSelectUi;
     MainUi mainUi;
@@ -1034,6 +1035,12 @@ int main(int argc, char** argv) {
     glFrontFace(GL_CW);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    offblast->XDisplay = XOpenDisplay(NULL);
+    if(offblast->XDisplay == NULL){
+        printf("Couldn't connect to Xserver\n");
+        return 0;
+    }
 
 
     // § Init UI
@@ -2828,14 +2835,16 @@ void pressSearch(int32_t joystickIndex) {
 void pressConfirm(int32_t joystickIndex) {
 
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {
-        if(activeWindowIsOffblast() && offblast->uiStopButtonHot) 
-        {
-            killRunningGame();
-        }
-        else {
-            printf("Resume the current game on window %lu \n", 
+        if(activeWindowIsOffblast()) {
+            if(offblast->uiStopButtonHot) 
+            {
+                killRunningGame();
+            }
+            else {
+                printf("Resume the current game on window %lu \n", 
                     offblast->resumeWindow);
-            raiseWindow(offblast->resumeWindow);
+                raiseWindow(offblast->resumeWindow);
+            }
         }
     }
     else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
@@ -3871,17 +3880,10 @@ void pressGuide() {
 
 Window getActiveWindowRaw() {
 
-    Display* d = XOpenDisplay(NULL);
-
-    if(d == NULL){
-        printf("Couldn't connect to Xserver\n");
-        return 0;
-    }
-
     Window w;
     int revert_to;
 
-    XGetInputFocus(d, &w, &revert_to); // see man
+    XGetInputFocus(offblast->XDisplay, &w, &revert_to); // see man
 
     if(!w){
         printf("Couldn't get the active window\n");
@@ -3962,6 +3964,8 @@ uint32_t pushToRomList(RomFoundList *list, char *path, char *name, char *id) {
         list->items = realloc(list->items, 
                 list->allocated * sizeof(RomFound) + 
                 100 * sizeof(RomFound));
+
+        list->allocated += 100;
     }
 
     if (list->items == NULL) {
@@ -3978,7 +3982,7 @@ uint32_t pushToRomList(RomFoundList *list, char *path, char *name, char *id) {
 
 uint32_t romListContentSig(RomFoundList *list) {
     uint32_t contentSignature = 0;
-    lmmh_x86_32(list, list->numItems * sizeof(RomFound), 
+    lmmh_x86_32(list->items, list->numItems * sizeof(RomFound), 
             33, &contentSignature);
 
     return contentSignature;
@@ -4246,16 +4250,29 @@ void importFromCustom(Launcher *theLauncher) {
     struct dirent *currentEntry;
     while ((currentEntry = readdir(dir)) != NULL) {
 
-        char *ext = strrchr(currentEntry->d_name, '.');
-        if (ext && strcmp(ext, theLauncher->extension) == 0) {
+        if (strcmp(currentEntry->d_name, ".") == 0) continue;
+        if (strcmp(currentEntry->d_name, "..") == 0) continue;
 
-            char *fullPath = NULL;
-            asprintf(&fullPath, "%s/%s", 
-                    theLauncher->romPath, currentEntry->d_name);
+        char *ext = strrchr((char*)currentEntry->d_name, '.');
+        if (ext == NULL) continue;
 
-            pushToRomList(list, fullPath, NULL, NULL);
-            free(fullPath);
+        char *workingExt = strdup(theLauncher->extension);
+        char *token = strtok(workingExt, ",");
+
+        while (token) {
+            if (strcmp(ext, token) == 0) {
+
+                char *fullPath = NULL;
+                asprintf(&fullPath, "%s/%s", 
+                        theLauncher->romPath, currentEntry->d_name);
+
+                pushToRomList(list, fullPath, NULL, NULL);
+                free(fullPath);
+            }
+            token = strtok(NULL, ",");
         }
+
+        free(workingExt);
     }
 
     closedir(dir);
