@@ -1,7 +1,7 @@
 # OffBlast
 An experimental game launcher written in C with SDL2. This is ALPHA software, please be patient.
 
-[Offblast Game Launcher](https://postimg.cc/Lgvm6PBb)
+[![offblast.png](https://i.postimg.cc/YjB0Rf4M/offblast.png)](https://postimg.cc/Lgvm6PBb)
 
 # Compilation Requirements (Ubuntu, Pop!\_OS)
 Install the required libraries
