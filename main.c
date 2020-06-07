@@ -31,8 +31,6 @@
 //      - contents signatures are no longer persisted so we're rescraping on 
 //        every load
 //
-//      - playtime file location
-//
 //      - OpenGameDb, auto download/update? Evict Assets and update.
 //
 //      -. watch out for vram! glDeleteTextures
@@ -114,6 +112,8 @@ typedef struct User {
     char avatarPath[PATH_MAX];
     char cemuAccount[32];
     char retroarchConfig[PATH_MAX];
+    char savePath[PATH_MAX];
+    char dolphinCardPath[PATH_MAX];
 } User;
 
 typedef struct Player {
@@ -947,12 +947,16 @@ int main(int argc, char** argv) {
         json_object *workingAvatarPathNode = NULL;
         json_object *workingCemuAccountNode = NULL;
         json_object *workingRetroarchConfigNode = NULL;
+        json_object *workingSavePathNode = NULL;
+        json_object *workingDolphinCardPathNode = NULL;
 
         const char *theName= NULL;
         const char *theEmail = NULL;
         const char *theAvatarPath= NULL;
         const char *theCemuAccount = NULL;
         const char *theRetroarchConfig = NULL;
+        const char *theSavePath = NULL;
+        const char *theDolphinCardPath = NULL;
 
         workingUserNode = json_object_array_get_idx(usersObject, iUser);
         json_object_object_get_ex(workingUserNode, "name",
@@ -965,6 +969,10 @@ int main(int argc, char** argv) {
                 &workingCemuAccountNode);
         json_object_object_get_ex(workingUserNode, "retroarch_config",
                 &workingRetroarchConfigNode);
+        json_object_object_get_ex(workingUserNode, "save_path",
+                &workingSavePathNode);
+        json_object_object_get_ex(workingUserNode, "dolphin_card",
+                &workingDolphinCardPathNode);
 
 
         theName = json_object_get_string(workingNameNode);
@@ -996,6 +1004,24 @@ int main(int argc, char** argv) {
             if (strlen(theRetroarchConfig) < PATH_MAX) 
                 memcpy(&pUser->retroarchConfig, 
                         theRetroarchConfig, strlen(theRetroarchConfig));
+        }
+
+        if (workingSavePathNode) {
+            theSavePath= 
+                json_object_get_string(workingSavePathNode);
+
+            if (strlen(theSavePath) < PATH_MAX) 
+                memcpy(&pUser->savePath, 
+                        theSavePath, strlen(theSavePath));
+        }
+
+        if (workingDolphinCardPathNode) {
+            theDolphinCardPath = 
+                json_object_get_string(workingDolphinCardPathNode);
+
+            if (strlen(theDolphinCardPath) < PATH_MAX) 
+                memcpy(&pUser->dolphinCardPath, 
+                        theDolphinCardPath, strlen(theDolphinCardPath));
         }
 
     }
@@ -2718,6 +2744,50 @@ void launch() {
                 }
             }
 
+            if (strlen(theUser->savePath) != 0) {
+                replaceIter = 0; replaceLimit = 8;
+
+                while ((p = strstr(launchString, "%SAVE_PATH%"))) {
+
+                    memmove(
+                            p + strlen(theUser->savePath) + 2, 
+                            p + strlen("%SAVE_PATH%"),
+                            strlen(p));
+
+                    *p = '"';
+                    memcpy(p+1, theUser->savePath, strlen(theUser->savePath));
+                    *(p + 1 + strlen(theUser->savePath)) = '"';
+
+                    replaceIter++;
+                    if (replaceIter >= replaceLimit) {
+                        printf("save path iter exceeded, breaking\n");
+                        break;
+                    }
+                }
+            }
+
+            if (strlen(theUser->dolphinCardPath) != 0) {
+                replaceIter = 0; replaceLimit = 8;
+
+                while ((p = strstr(launchString, "%DOLPHIN_CARD%"))) {
+
+                    memmove(
+                            p + strlen(theUser->dolphinCardPath) + 2, 
+                            p + strlen("%DOLPHIN_CARD%"),
+                            strlen(p));
+
+                    //*p = '"';
+                    memcpy(p, theUser->dolphinCardPath, strlen(theUser->dolphinCardPath));
+                    //*(p + 1 + strlen(theUser->dolphinCardPath)) = '"';
+
+                    replaceIter++;
+                    if (replaceIter >= replaceLimit) {
+                        printf("dolphin path iter exceeded, breaking\n");
+                        break;
+                    }
+                }
+            }
+
             if (strcmp(theLauncher->type, "cemu") == 0) {
 
                 assert(strlen(theLauncher->cemuPath));
@@ -2776,12 +2846,6 @@ void launch() {
 
             }
 
-            // TODO looks like retroarch has changed and won't allow us to 
-            // specify directories on the cmd now, so we'll have to A: create
-            // the save path if it doesn't exist,
-            // b: write a retroarch config appendage file and use the
-            // --append-config command line argument to pass it in.
-            // (if retroarch)
             if (strcmp(theLauncher->type, "retroarch") == 0 
                     && strlen(theUser->retroarchConfig) != 0) 
             {
