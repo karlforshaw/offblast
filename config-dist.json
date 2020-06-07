@@ -1,22 +1,70 @@
 {
-    "paths": [{
-        "path": "/home/user/Games/sony_playstation/",
-        "extension": ".7z",
-        "launcher": "cat %ROM% --save=%SAVEPATH% --savestate=%SAVEPATH%",
-        "platform": "sony_playstation"
-    },{
-        "path": "/home/user/roms/psx",
-        "extension": ".7z",
-        "launcher": "cat %ROM%",
-        "platform": "sony_playstation"
-    }],
-    "users": [
+    "launchers": [
         {
-            "name": "User 1",
-            "email": "myemail@domain.com",
-            "avatar": "/home/user/Pictures/me.jpg"
+            "type": "cemu",
+            "cemu_path": "/home/karl/Apps/Cemu/cemu1.19.1/",
+            "cmd": "/home/karl/.local/share/lutris/runners/wine/lutris-5.7-x86_64/bin/wine %CEMU_BIN% -f -a %CEMU_ACCOUNT% -g %ROM%",
+            "platform": "wii_u"
+        },
+        {
+            "type": "retroarch",
+            "rom_path": "/home/karl/SeraphStore/Games/Super Console/psx",
+            "extension": ".cue,.m3u",
+            "cmd": "retroarch -f --appendconfig=%RETROARCH_CONFIG% -L /home/karl/.config/retroarch/cores/mednafen_psx_hw_libretro.so %ROM%",
+            "platform": "playstation"
+        },
+        {
+            "type": "custom",
+            "rom_path": "/home/karl/SeraphStore/Games/Super Console/gc",
+            "extension": ".iso",
+            "cmd": "dolphin-emu-nogui -C \"Dolphin.Core.MemcardAPath=%DOLPHIN_CARD%\" %ROM%",
+            "platform": "gamecube"
+        },
+        {
+            "type": "retroarch",
+            "rom_path": "/home/karl/SeraphStore/Games/Super Console/nes",
+            "extension": ".zip",
+            "cmd": "retroarch -f --appendconfig=%RETROARCH_CONFIG% -L /home/karl/.config/retroarch/cores/nestopia_libretro.so %ROM%",
+            "platform": "nintendo_entertainment_system"
+        },
+        {
+            "type": "retroarch",
+            "rom_path": "/home/karl/SeraphStore/Games/Super Console/snes",
+            "extension": ".zip",
+            "cmd": "retroarch -f --appendconfig=%RETROARCH_CONFIG% -L /home/karl/.config/retroarch/cores/mednafen_snes_libretro.so %ROM%",
+            "platform": "super_nintendo_entertainment_system"
+        },
+        {
+            "type": "steam"
         }
     ],
-    "opengamedb": "/home/user/opengamedb",
-    "savedir": "/home/user/gamesaves"
+    "users": [
+        {
+            "name": "Karl",
+            "email": "my@email.com",
+            "avatar": "/home/karl/Pictures/avatars/karl.jpg",
+            "cemu_account": "80000001",
+            "retroarch_config": "/home/karl/.offblast/karl_ra.cfg",
+            "savepath": "/home/karl/SeraphStore/Games/Super Console/saves/karl/",
+            "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/karl/dolphin/karl.USA.raw"
+        }, {
+            "name": "Cloud",
+            "email": "my@email.com",
+            "avatar": "/home/karl/Pictures/avatars/cloud.jpg",
+            "cemu_account": "80000002",
+            "retroarch_config": "/home/karl/.offblast/cloud_ra.cfg",
+            "savepath": "/home/karl/SeraphStore/Games/Super Console/saves/cloud/",
+            "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/cloud/dolphin/USA.raw"
+        }, {
+            "name": "Pai",
+            "email": "my@email.com",
+            "avatar": "/home/karl/Pictures/avatars/pai.jpg",
+            "cemu_account": "80000003",
+            "retroarch_config": "/home/karl/.offblast/pai_ra.cfg",
+            "savepath": "/home/karl/SeraphStore/Games/Super Console/saves/pai/",
+            "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/pai/dolphin/USA.raw"
+        }
+    ],
+    "opengamedb": "/home/karl/opengamedb",
+    "playtime_path": "/home/karl/SeraphStore/Games/Super Console/saves/"
 }
