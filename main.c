@@ -115,6 +115,7 @@ typedef struct User {
     char email[512];
     char avatarPath[PATH_MAX];
     char cemuAccount[32];
+    char retroarchConfig[PATH_MAX];
 } User;
 
 typedef struct Player {
@@ -616,7 +617,9 @@ int main(int argc, char** argv) {
             memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
 
         }
-        else if (strcmp("custom", theLauncher->type) == 0){
+        else if (strcmp("custom", theLauncher->type) == 0 || 
+                strcmp("retroarch", theLauncher->type) == 0)
+        {
 
             json_object_object_get_ex(launcherNode, "rom_path",
                     &romPathStringNode);
@@ -879,7 +882,9 @@ int main(int argc, char** argv) {
         else if (strcmp(theLauncher->type, "steam") == 0) {
             importFromSteam(theLauncher);
         }
-        else if (strcmp(theLauncher->type, "custom") == 0) { 
+        else if (strcmp(theLauncher->type, "custom") == 0||
+                strcmp(theLauncher->type, "retroarch") == 0) 
+        { 
             importFromCustom(theLauncher);
         }
 
@@ -928,11 +933,13 @@ int main(int argc, char** argv) {
         json_object *workingEmailNode = NULL;
         json_object *workingAvatarPathNode = NULL;
         json_object *workingCemuAccountNode = NULL;
+        json_object *workingRetroarchConfigNode = NULL;
 
         const char *theName= NULL;
         const char *theEmail = NULL;
         const char *theAvatarPath= NULL;
         const char *theCemuAccount = NULL;
+        const char *theRetroarchConfig = NULL;
 
         workingUserNode = json_object_array_get_idx(usersObject, iUser);
         json_object_object_get_ex(workingUserNode, "name",
@@ -943,6 +950,8 @@ int main(int argc, char** argv) {
                 &workingAvatarPathNode);
         json_object_object_get_ex(workingUserNode, "cemu_account",
                 &workingCemuAccountNode);
+        json_object_object_get_ex(workingUserNode, "retroarch_config",
+                &workingRetroarchConfigNode);
 
 
         theName = json_object_get_string(workingNameNode);
@@ -965,6 +974,15 @@ int main(int argc, char** argv) {
             if (strlen(theCemuAccount) < 32) 
                 memcpy(&pUser->cemuAccount, 
                         theCemuAccount, strlen(theCemuAccount));
+        }
+
+        if (workingRetroarchConfigNode) {
+            theRetroarchConfig = 
+                json_object_get_string(workingRetroarchConfigNode);
+
+            if (strlen(theRetroarchConfig) < PATH_MAX) 
+                memcpy(&pUser->retroarchConfig, 
+                        theRetroarchConfig, strlen(theRetroarchConfig));
         }
 
     }
@@ -2651,15 +2669,6 @@ void launch() {
 
         User *theUser = offblast->players[0].user;
 
-        // TODO looks like retroarch has changed and won't allow us to 
-        // specify directories on the cmd now, so we'll have to A: create
-        // the save path if it doesn't exist,
-        // b: write a retroarch config appendage file and use the
-        // --append-config command line argument to pass it in.
-        // (if retroarch)
-        char *savepathSlug;
-        asprintf(&savepathSlug, "%s/saves/%s/", offblast->configPath, 
-                theUser->email);
 
 
         char *launchString = calloc(PATH_MAX, sizeof(char));
@@ -2754,24 +2763,35 @@ void launch() {
 
             }
 
-            // TODO only works if the directory is there, if it's not we'll need 
-            // to create it
-            replaceIter = 0; replaceLimit = 8;
-            while ((p = strstr(launchString, "%SAVEPATH%"))) {
+            // TODO looks like retroarch has changed and won't allow us to 
+            // specify directories on the cmd now, so we'll have to A: create
+            // the save path if it doesn't exist,
+            // b: write a retroarch config appendage file and use the
+            // --append-config command line argument to pass it in.
+            // (if retroarch)
+            if (strcmp(theLauncher->type, "retroarch") == 0 
+                    && strlen(theUser->retroarchConfig) != 0) 
+            {
 
-                memmove(
-                        p + strlen(savepathSlug) + 2, 
-                        p + strlen("%SAVEPATH%"),
-                        strlen(p));
+                replaceIter = 0; replaceLimit = 8;
 
-                *p = '"';
-                memcpy(p+1, savepathSlug, strlen(savepathSlug));
-                *(p + 1 + strlen(savepathSlug)) = '"';
+                // TODO write a function to replace this stuff
+                while ((p = strstr(launchString, "%RETROARCH_CONFIG%"))) {
 
-                replaceIter++;
-                if (replaceIter >= replaceLimit) {
-                    printf("savepath iterations exceeded, breaking\n");
-                    break;
+                    memmove(
+                            p + strlen(theUser->retroarchConfig) + 2, 
+                            p + strlen("%RETROARCH_CONFIG%"),
+                            strlen(p));
+
+                    *p = '"';
+                    memcpy(p+1, theUser->retroarchConfig, strlen(theUser->retroarchConfig));
+                    *(p + 1 + strlen(theUser->retroarchConfig)) = '"';
+
+                    replaceIter++;
+                    if (replaceIter >= replaceLimit) {
+                        printf("retroarch configi iter exceeded, breaking\n");
+                        break;
+                    }
                 }
             }
 
