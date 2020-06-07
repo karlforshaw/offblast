@@ -32,8 +32,14 @@ int InitDbFile(char *path, OffblastDbFile *dbFileStruct,
     if (sb.st_size == 0) {
         if (fallocate(fd, 0, 0, initialBytesToAllocate) == -1) 
         {
-            printf("couldn't allocate space for the db %s\n", path);
-            perror("error :");
+            printf("fallocate failed on, falling back to writing zeroes %s\n", 
+                    path);
+
+            if (ftruncate(fd, initialBytesToAllocate) == 0) {
+                perror("Completely failed to initiate playtime file");
+            }
+
+            sb.st_size = initialBytesToAllocate;
         }
         else {
             sb.st_size = initialBytesToAllocate;

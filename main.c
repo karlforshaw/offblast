@@ -260,6 +260,7 @@ typedef struct OffblastUi {
     uint32_t running;
     enum UiMode mode;
     char *configPath;
+    char *playtimePath;
     Display *XDisplay;
 
     PlayerSelectUi playerSelectUi;
@@ -500,6 +501,20 @@ int main(int argc, char** argv) {
         json_object_get_string(configForOpenGameDb);
 
     printf("Found OpenGameDb at %s\n", openGameDbPath);
+
+    json_object *configForPlaytimePath;
+    json_object_object_get_ex(configObj, "playtime_path", 
+            &configForPlaytimePath);
+
+    if (configForPlaytimePath) {
+        offblast->playtimePath = 
+            (char *)json_object_get_string(configForPlaytimePath);
+    }
+    else {
+        offblast->playtimePath = configPath;
+    }
+    printf("Playtime location: %s\n", offblast->playtimePath);
+
 
     char *launchTargetDbPath;
     asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
@@ -3786,8 +3801,8 @@ void loadPlayerOnePlaytimeFile() {
     assert(email);
 
     char *playTimeDbPath;
-    asprintf(&playTimeDbPath, "%s/%s_playtime.bin", 
-            offblast->configPath, email);
+    asprintf(&playTimeDbPath, "%s/%s.playtime", 
+            offblast->playtimePath, email);
 
     OffblastDbFile playTimeDb = {0};
     if (!InitDbFile(playTimeDbPath, &playTimeDb, 
