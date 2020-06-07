@@ -31,9 +31,7 @@
 //      - contents signatures are no longer persisted so we're rescraping on 
 //        every load
 //
-//      - Save directory per user.
-//          This is now working in Cemu, but work needs to be done to
-//          make this work nicely with retroarch
+//      - playtime file location
 //
 //      - OpenGameDb, auto download/update? Evict Assets and update.
 //
@@ -3980,6 +3978,7 @@ RomFoundList *newRomList(){
 }
 
 uint32_t pushToRomList(RomFoundList *list, char *path, char *name, char *id) {
+
     if (list->numItems +1 >= list->allocated) {
         list->items = realloc(list->items, 
                 list->allocated * sizeof(RomFound) + 
@@ -4135,6 +4134,15 @@ void importFromCemu(Launcher *theLauncher) {
                     &offblast->launchTargetFile->entries[indexOfEntry];
 
                 theTarget->launcherSignature = theLauncher->signature;
+
+                if (theTarget->path != NULL && strlen(theTarget->path)) {
+                    printf("%s already has a path, overwriting with %s\n",
+                            theTarget->name,
+                            list->items[j].path);
+
+                    memset(&theTarget->path, 0x00, PATH_MAX);
+                }
+
                 memcpy(&theTarget->path, 
                         list->items[j].path,
                         strlen(list->items[j].path));
@@ -4144,6 +4152,7 @@ void importFromCemu(Launcher *theLauncher) {
     }
 
     freeRomList(list);
+    list = NULL;
 }
 
 
@@ -4253,6 +4262,7 @@ void importFromSteam(Launcher *theLauncher) {
     }
 
     freeRomList(list);
+    list = NULL;
 }
 
 
@@ -4288,6 +4298,7 @@ void importFromCustom(Launcher *theLauncher) {
 
                 pushToRomList(list, fullPath, NULL, NULL);
                 free(fullPath);
+
             }
             token = strtok(NULL, ",");
         }
@@ -4298,6 +4309,7 @@ void importFromCustom(Launcher *theLauncher) {
     closedir(dir);
     if (list->numItems == 0) { 
         freeRomList(list);
+        list = NULL;
         return;
     }
 
@@ -4317,7 +4329,6 @@ void importFromCustom(Launcher *theLauncher) {
 
         for (uint32_t j=0; j< list->numItems; j++) {
 
-            // TODO check it's not disc 2 or 3 etc
             char *searchString = NULL;
 
             searchString = calloc(1, 
@@ -4347,6 +4358,14 @@ void importFromCustom(Launcher *theLauncher) {
                 LaunchTarget *theTarget = 
                     &offblast->launchTargetFile->entries[indexOfEntry];
 
+                if (theTarget->path != NULL && strlen(theTarget->path)) {
+                    printf("%s already has a path, overwriting with %s\n",
+                            theTarget->name,
+                            list->items[j].path);
+
+                    memset(&theTarget->path, 0x00, PATH_MAX);
+                }
+
                 theTarget->launcherSignature = theLauncher->signature;
                 memcpy(&theTarget->path, 
                         (char *) &list->items[j].path,
@@ -4362,4 +4381,5 @@ void importFromCustom(Launcher *theLauncher) {
     } 
 
     freeRomList(list);
+    list = NULL;
 }
