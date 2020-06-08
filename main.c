@@ -2824,13 +2824,11 @@ void launch() {
                 while ((p = strstr(launchString, "%DOLPHIN_CARD%"))) {
 
                     memmove(
-                            p + strlen(theUser->dolphinCardPath) + 2, 
+                            p + strlen(theUser->dolphinCardPath), 
                             p + strlen("%DOLPHIN_CARD%"),
                             strlen(p));
 
-                    //*p = '"';
                     memcpy(p, theUser->dolphinCardPath, strlen(theUser->dolphinCardPath));
-                    //*(p + 1 + strlen(theUser->dolphinCardPath)) = '"';
 
                     replaceIter++;
                     if (replaceIter >= replaceLimit) {
