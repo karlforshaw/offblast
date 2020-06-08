@@ -23,7 +23,6 @@ typedef struct OffblastDbFile {
 typedef struct Launcher {
 
     uint32_t signature;
-    uint32_t contentsHash; // NOT DONE
 
     char type[256];
     char platform[256];

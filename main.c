@@ -255,6 +255,16 @@ typedef struct MainUi {
 
 } MainUi ;
 
+typedef struct LauncherContentsHash {
+    uint32_t launcherSignature;
+    uint32_t contentSignature;
+} LauncherContentsHash;
+
+typedef struct LauncherContentsFile {
+    uint32_t length;
+    LauncherContentsHash *entries;
+} LauncherContentsFile;
+
 typedef struct OffblastUi {
 
     uint32_t running;
@@ -326,6 +336,8 @@ typedef struct OffblastUi {
     uint32_t nLaunchers;
     Launcher *launchers;
 
+    LauncherContentsFile launcherContentsCache;
+
     SDL_Window *window;
     uint32_t windowManager;
     Window resumeWindow;
@@ -347,6 +359,7 @@ typedef struct WindowInfo {
     Display *display;
     Window window;
 } WindowInfo;
+
 
 
 uint32_t megabytes(uint32_t n);
@@ -408,6 +421,9 @@ void importFromSteam(Launcher *theLauncher);
 void importFromCustom(Launcher *theLauncher);
 WindowInfo getOffblastWindowInfo();
 uint32_t activeWindowIsOffblast();
+uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature, 
+        uint32_t newContentsHash);
+
 
 OffblastUi *offblast;
 
@@ -543,6 +559,31 @@ int main(int argc, char** argv) {
         (OffblastBlobFile*) descriptionDb.memory;
     free(descriptionDbPath);
 
+
+    char *launcherContentsHashFilePath;
+    asprintf(&launcherContentsHashFilePath, 
+            "%s/launchercontents.bin", configPath);
+
+    FILE *launcherContentsFd = fopen(launcherContentsHashFilePath, "rb");
+    offblast->launcherContentsCache.length = 0; 
+    uint32_t lengthHeader = 0;
+    if (launcherContentsFd != NULL 
+            && fread(&lengthHeader, sizeof(uint32_t), 1 , launcherContentsFd) > 0)
+    {
+        printf("Got something (%u) in the contents cache\n", lengthHeader);
+        offblast->launcherContentsCache.length = lengthHeader;
+        offblast->launcherContentsCache.entries = 
+            calloc(lengthHeader, sizeof(LauncherContentsHash));
+
+        size_t itemsRead = fread(offblast->launcherContentsCache.entries, 
+            sizeof(LauncherContentsHash), lengthHeader, launcherContentsFd);
+
+        assert(itemsRead == lengthHeader);
+        fclose(launcherContentsFd);
+    }
+    else {
+        printf("No contents hash found, everything will rescrape.\n");
+    }
 
 
 #if 0
@@ -903,6 +944,17 @@ int main(int argc, char** argv) {
 
     }
 
+    // Write out the contents cache
+    launcherContentsFd = fopen(launcherContentsHashFilePath, "wb");
+    assert(launcherContentsFd);
+    fwrite(&offblast->launcherContentsCache.length, 
+            sizeof(uint32_t), 1, launcherContentsFd);
+    fwrite(
+            offblast->launcherContentsCache.entries, 
+            sizeof(LauncherContentsHash), 
+            offblast->launcherContentsCache.length, 
+            launcherContentsFd);
+    fclose(launcherContentsFd);
 
     // TODO this is sort of bugged
     for (int i = 0; i < launchTargetFile->nEntries; ++i) {
@@ -4182,13 +4234,8 @@ void importFromCemu(Launcher *theLauncher) {
 
     uint32_t rescrapeRequired = 0;
 
-    if (theLauncher->contentsHash != romListContentSig(list)) {
-        printf("Launcher targets for %u have changed! %u vs %u\n", 
-                theLauncher->signature,
-                theLauncher->contentsHash,
-                romListContentSig(list));
-
-        theLauncher->contentsHash = romListContentSig(list);
+    if (launcherContentsCacheUpdated(theLauncher->signature, romListContentSig(list))) {
+        printf("Launcher targets for %u have changed!\n", theLauncher->signature);
         rescrapeRequired = 1;
     }
     else {
@@ -4307,11 +4354,10 @@ void importFromSteam(Launcher *theLauncher) {
     }
 
     uint32_t rescrapeRequired = 0;
-    if (theLauncher->contentsHash != romListContentSig(list)) {
+    if (launcherContentsCacheUpdated(theLauncher->signature, romListContentSig(list))) {
         printf("Launcher targets for %u have changed!\n", 
                 theLauncher->signature);
 
-        theLauncher->contentsHash = romListContentSig(list);
         rescrapeRequired = 1;
     }
     else {
@@ -4393,10 +4439,9 @@ void importFromCustom(Launcher *theLauncher) {
     }
 
     uint32_t rescrapeRequired = 0;
-    if (theLauncher->contentsHash != romListContentSig(list)) {
+    if (launcherContentsCacheUpdated(theLauncher->signature, romListContentSig(list))) {
         printf("Launcher targets for %u have changed!\n", 
                 theLauncher->signature);
-        theLauncher->contentsHash = romListContentSig(list);
         rescrapeRequired = 1;
     }
     else {
@@ -4461,4 +4506,47 @@ void importFromCustom(Launcher *theLauncher) {
 
     freeRomList(list);
     list = NULL;
+}
+
+
+uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature, uint32_t newContentsHash) {
+
+    uint32_t isInvalid = 1;
+    int32_t foundAtIndex = -1;
+
+    for (uint32_t i=0; i < offblast->launcherContentsCache.length; ++i) {
+        if (offblast->launcherContentsCache.entries[i].launcherSignature 
+                    == launcherSignature) 
+        {
+            foundAtIndex = i;
+            if (offblast->launcherContentsCache.entries[i].contentSignature
+                    == newContentsHash) isInvalid = 0;
+            break;
+        }
+    }
+
+    if (isInvalid) {
+        if (foundAtIndex > -1) {
+            offblast->launcherContentsCache.entries[foundAtIndex].contentSignature 
+                = newContentsHash;
+        }
+        else {
+            size_t currentLength = offblast->launcherContentsCache.length;
+            offblast->launcherContentsCache.entries = realloc(
+                offblast->launcherContentsCache.entries,
+                (currentLength+1) * sizeof(LauncherContentsHash));
+
+            assert(offblast->launcherContentsCache.entries);
+
+            offblast->launcherContentsCache.entries[currentLength].contentSignature 
+                = newContentsHash;
+
+            offblast->launcherContentsCache.entries[currentLength].launcherSignature 
+                = launcherSignature;
+
+            offblast->launcherContentsCache.length++;
+        }
+    }
+
+    return isInvalid;
 }
