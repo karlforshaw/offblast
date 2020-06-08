@@ -175,7 +175,7 @@ int32_t launchTargetIndexByIdMatch(LaunchTargetFile *file,
 
 
 int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, 
-        char *searchString, char *platform) 
+        char *searchString, char *platform, float *matchScore) 
 {
 
     int32_t bestIndex = -1;
@@ -231,7 +231,10 @@ int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file,
                 //        "doing nothing!--\n");
             }
             else if (score > bestScore) {
+
                 bestScore = score;
+                *matchScore = bestScore;
+
                 bestIndex = i;
             }
         }

@@ -47,8 +47,8 @@ typedef struct LaunchTarget {
     char date[10];
     uint32_t ranking;
 
-    //char fileName[256];
     char path[PATH_MAX];
+    float matchScore;
     char platform[256];
     uint32_t launcherSignature;
 
@@ -95,7 +95,7 @@ int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file,
         uint64_t targetSignature);
 
 int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, 
-        char *search, char *platform);
+        char *search, char *platform, float *matchScore);
 
 int32_t launchTargetIndexByIdMatch(LaunchTargetFile *file, 
         char *idStr, char *platform);

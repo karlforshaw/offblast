@@ -4111,10 +4111,14 @@ RomFoundList *newRomList(){
 uint32_t pushToRomList(RomFoundList *list, char *path, char *name, char *id) {
 
     if (list->numItems +1 >= list->allocated) {
+
         list->items = realloc(list->items, 
                 list->allocated * sizeof(RomFound) + 
                 100 * sizeof(RomFound));
 
+        assert(list->items);
+
+        memset(&list->items[list->numItems], 0x00, 100 * sizeof(RomFound));
         list->allocated += 100;
     }
 
@@ -4247,14 +4251,18 @@ void importFromCemu(Launcher *theLauncher) {
 
         for (uint32_t j=0 ; j< list->numItems; j++) {
 
+            float matchScore = 0;
             int32_t indexOfEntry = launchTargetIndexByNameMatch(
                     offblast->launchTargetFile, 
                     list->items[j].name, 
-                    theLauncher->platform);
+                    theLauncher->platform,
+                    &matchScore);
 
             printf("found by name at index %d\n", indexOfEntry);
 
-            if (indexOfEntry > -1) {
+            if (indexOfEntry > -1 &&
+                    matchScore > offblast->launchTargetFile->entries[indexOfEntry].matchScore) 
+            {
 
                 LaunchTarget *theTarget = 
                     &offblast->launchTargetFile->entries[indexOfEntry];
@@ -4472,12 +4480,19 @@ void importFromCustom(Launcher *theLauncher) {
             if (ext != NULL) *ext = '\0';
             if (*(ext-1) == ' ') *(ext-1) = '\0';
 
+            float matchScore = 0;
+
             int32_t indexOfEntry = launchTargetIndexByNameMatch(
-                    offblast->launchTargetFile, searchString, theLauncher->platform);
+                    offblast->launchTargetFile, 
+                    searchString, 
+                    theLauncher->platform,
+                    &matchScore);
+
             free(searchString);
 
 
-            if (indexOfEntry > -1) {
+            if (indexOfEntry > -1 && 
+                    matchScore > offblast->launchTargetFile->entries[indexOfEntry].matchScore) {
 
                 LaunchTarget *theTarget = 
                     &offblast->launchTargetFile->entries[indexOfEntry];
@@ -4494,6 +4509,7 @@ void importFromCustom(Launcher *theLauncher) {
                 memcpy(&theTarget->path, 
                         (char *) &list->items[j].path,
                         strlen((char *) &list->items[j].path));
+                theTarget->matchScore = matchScore;
 
             }
             else {
