@@ -28,8 +28,8 @@
 
 // Alpha 0.4 
 //
-//      - contents signatures are no longer persisted so we're rescraping on 
-//        every load
+//      - Optimize cover loading
+//      - Add a missing game log
 //
 //      - OpenGameDb, auto download/update? Evict Assets and update.
 //
