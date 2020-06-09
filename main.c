@@ -1563,12 +1563,12 @@ int main(int argc, char** argv) {
 
                 // Set the origin Y
                 UiRow *rowToRender = mainUi->activeRowset->rowCursor;
-                rowToRender = rowToRender->nextRow;
+                rowToRender = rowToRender->nextRow->nextRow;
                 float desaturate = 0.2;
                 float alpha = 1.0;
 
-                float yBase = offblast->winFold - 2*mainUi->boxHeight - mainUi->boxPad;
-                printf("winfold %d\n", offblast->winFold);
+                float yBase = offblast->winFold - 3*mainUi->boxHeight - 2*mainUi->boxPad;
+
                 if (mainUi->verticalAnimation->animating != 0) 
                 {
                     double change = easeInOutCirc(
