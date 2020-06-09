@@ -29,6 +29,10 @@
 // Alpha 0.4 
 //
 //      - Optimize cover loading
+//      - Get player switch working
+//      - search is bugged to fuck on slower machines, says something about a 
+//          double free
+//      - power off menu option
 //      - Add a missing game log
 //
 //      - OpenGameDb, auto download/update? Evict Assets and update.
