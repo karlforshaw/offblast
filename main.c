@@ -28,7 +28,7 @@
 
 // Alpha 0.4 
 //
-//      - Optimize cover loading
+//      - fix jump to start/end
 //      - Get player switch working
 //      - search is bugged to fuck on slower machines, says something about a 
 //          double free
@@ -1601,29 +1601,29 @@ int main(int argc, char** argv) {
                         else 
                             tileToDisplace = theTile->previous;
 
-                        loadTexture(tileToDisplace);
-                        if (tileToDisplace->image.textureHandle == 0) 
-                            imageToShow = &offblast->missingCoverImage;
-                        else 
-                            imageToShow = &tileToDisplace->image;
+                        if (tileToDisplace) {
 
-                        uint32_t currentTileWidth = getWidthForScaledImage(
-                                mainUi->boxHeight,
-                                imageToShow);
+                            loadTexture(tileToDisplace);
+                            if (tileToDisplace->image.textureHandle == 0) 
+                                imageToShow = &offblast->missingCoverImage;
+                            else 
+                                imageToShow = &tileToDisplace->image;
 
-                        displacement = easeInOutCirc(
-                                (double)SDL_GetTicks() 
-                                - mainUi->horizontalAnimation->startTick,
-                                0.0,
-                                (double)(currentTileWidth + mainUi->boxPad),
-                                (double)mainUi->horizontalAnimation->durationMs);
+                            uint32_t currentTileWidth = getWidthForScaledImage(
+                                    mainUi->boxHeight,
+                                    imageToShow);
 
-                        if (mainUi->horizontalAnimation->direction > 0) {
-                            displacement = -displacement;
+                            displacement = easeInOutCirc(
+                                    (double)SDL_GetTicks() 
+                                    - mainUi->horizontalAnimation->startTick,
+                                    0.0,
+                                    (double)(currentTileWidth + mainUi->boxPad),
+                                    (double)mainUi->horizontalAnimation->durationMs);
+
+                            if (mainUi->horizontalAnimation->direction > 0) {
+                                displacement = -displacement;
+                            }
                         }
-
-                        printf("displace %f\n", displacement);
-
                     }
 
 
@@ -2415,6 +2415,7 @@ void jumpEnd(uint32_t direction)
         if (animationRunning() == 0)
         {
 
+            // TODO This is broken
             if (!ui->showMenu) {
                 if (direction == 0) {
                         ui->activeRowset->movingToTarget = 
