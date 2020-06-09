@@ -1561,18 +1561,159 @@ int main(int argc, char** argv) {
             }
             else {
 
-                // TODO what if theres only one row? maybe we should stop 
-                // starting this at -2?
-                UiRow *rowToRender = mainUi->activeRowset->rowCursor->nextRow;
+                // Set the origin Y
+                UiRow *rowToRender = mainUi->activeRowset->rowCursor;
                 rowToRender = rowToRender->nextRow;
+                float desaturate = 0.2;
+                float alpha = 1.0;
 
-                for (int32_t iRow = -2; iRow < ROWS_TOTAL-2; iRow++) {
+                float yBase = offblast->winFold - 2*mainUi->boxHeight - mainUi->boxPad;
+                printf("winfold %d\n", offblast->winFold);
+                if (mainUi->verticalAnimation->animating != 0) 
+                {
+                    double change = easeInOutCirc(
+                            (double)SDL_GetTicks() 
+                            - mainUi->verticalAnimation->startTick,
+                            0.0,
+                            (double)mainUi->boxHeight+ mainUi->boxPad,
+                            (double)mainUi->verticalAnimation->durationMs);
 
+                    if (mainUi->verticalAnimation->direction > 0) {
+                        change = -change;
+                    }
+
+                    yBase += change;
+                }
+
+                while (yBase < offblast->winHeight) {
+
+                    double displacement = 0;
+                    UiTile *theTile = rowToRender->tileCursor;
+                    Image *imageToShow;
+
+                    if (mainUi->horizontalAnimation->animating != 0 
+                            && rowToRender == mainUi->activeRowset->rowCursor) 
+                    {
+                        // We need the width of the cursor
+                        UiTile *tileToDisplace;
+                        if (mainUi->horizontalAnimation->direction > 0)
+                            tileToDisplace = theTile;
+                        else 
+                            tileToDisplace = theTile->previous;
+
+                        loadTexture(tileToDisplace);
+                        if (tileToDisplace->image.textureHandle == 0) 
+                            imageToShow = &offblast->missingCoverImage;
+                        else 
+                            imageToShow = &tileToDisplace->image;
+
+                        uint32_t currentTileWidth = getWidthForScaledImage(
+                                mainUi->boxHeight,
+                                imageToShow);
+
+                        displacement = easeInOutCirc(
+                                (double)SDL_GetTicks() 
+                                - mainUi->horizontalAnimation->startTick,
+                                0.0,
+                                (double)(currentTileWidth + mainUi->boxPad),
+                                (double)mainUi->horizontalAnimation->durationMs);
+
+                        if (mainUi->horizontalAnimation->direction > 0) {
+                            displacement = -displacement;
+                        }
+
+                        printf("displace %f\n", displacement);
+
+                    }
+
+
+                    // Render Backwards
+                    float xBase = offblast->winMargin + displacement;
+                    if (rowToRender->tileCursor->previous != NULL) {
+                        theTile = theTile->previous;
+                        while ((xBase - mainUi->boxPad) > 0) {
+
+                            loadTexture(theTile);
+                            if (theTile->image.textureHandle == 0) 
+                                imageToShow = &offblast->missingCoverImage;
+                            else 
+                                imageToShow = &theTile->image;
+
+                            uint32_t width = getWidthForScaledImage(
+                                    mainUi->boxHeight,
+                                    imageToShow);
+
+                            xBase -= (width + mainUi->boxPad);
+
+                            desaturate = 0.2;
+                            alpha = 1.0;
+
+                            if (theTile->target->launcherSignature == 0) 
+                            {
+                                desaturate = 0.3;
+                                alpha = 0.7;
+                            }
+
+                            renderImage(
+                                    xBase, yBase,
+                                    0, mainUi->boxHeight, 
+                                    imageToShow, 
+                                    desaturate, 
+                                    alpha);
+
+                            if (!(theTile = theTile->previous)) break;
+                        }
+                    }
+
+                    // Render Forwards
+                    xBase = offblast->winMargin + displacement;
+                    theTile = rowToRender->tileCursor;
+
+                    while (xBase < offblast->winWidth) {
+
+                        loadTexture(theTile);
+                        if (theTile->image.textureHandle == 0) 
+                            imageToShow = &offblast->missingCoverImage;
+                        else 
+                            imageToShow = &theTile->image;
+
+                        uint32_t width = getWidthForScaledImage(
+                                    mainUi->boxHeight,
+                                    imageToShow);
+
+                        desaturate = 0.2;
+                        alpha = 1.0;
+
+                        if (theTile->target->launcherSignature == 0) 
+                        {
+                            desaturate = 0.3;
+                            alpha = 0.7;
+                        }
+
+                        renderImage(
+                                xBase, 
+                                yBase,
+                                0, 
+                                mainUi->boxHeight, 
+                                imageToShow, 
+                                desaturate, 
+                                alpha);
+
+                        xBase += (width + mainUi->boxPad);
+
+                        if (!(theTile = theTile->next)) break;
+                    }
+
+                    yBase += mainUi->boxHeight + mainUi->boxPad;
+                    rowToRender = rowToRender->previousRow;
+
+                    /*
                     // TODO loadTexture - if we've got the 
                     // same tile in two lists, it's going to have the same 
                     // texture loaded on to the gpu multiple times
                     // Need to have some kind of texture handle map for launch 
                     // targets
+                    //
 
                     int32_t advanceX = 0;
                     int32_t shiftX = 0;
@@ -1690,7 +1831,7 @@ int main(int argc, char** argv) {
 
 
                     // TODO if there's only one row don't infinite?
-                    rowToRender = rowToRender->previousRow;
+                    */
                 }
 
                 glUniform1f(offblast->imageDesaturateUni, 0.0f);
@@ -1712,7 +1853,7 @@ int main(int argc, char** argv) {
                         bwStartColor, bwEndColor);
 
                 // § INFO AREA
-                float alpha = 1.0;
+                alpha = 1.0;
                 if (mainUi->infoAnimation->animating == 1) {
                     double change = easeInOutCirc(
                             (double)SDL_GetTicks() - 
