@@ -27,11 +27,9 @@
 
 // Alpha 0.4 
 //
-//      - fix jump to start/end - let's make this jump screen instead
 //      - search is bugged to fuck on slower machines, says something about a 
 //          double free
-//      - power off menu option
-//      - Add a missing game log
+//      - fix jump to start/end - let's make this jump screen instead
 //
 //      - OpenGameDb, auto download/update? Evict Assets and update.
 //
@@ -417,6 +415,7 @@ WindowInfo getOffblastWindowInfo();
 uint32_t activeWindowIsOffblast();
 uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature, 
         uint32_t newContentsHash);
+void logMissingGame(char *missingGamePath);
 
 OffblastUi *offblast;
 
@@ -4658,6 +4657,7 @@ void importFromCustom(Launcher *theLauncher) {
             }
             else {
                 printf("No match found for %s\n", list->items[j].path);
+                logMissingGame(list->items[j].path);
             }
         }
 
@@ -4709,4 +4709,15 @@ uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature, uint32_t newCo
     }
 
     return isInvalid;
+}
+
+void logMissingGame(char *missingGamePath){
+    char *path = NULL;
+    asprintf(&path, "%s/missinggames.log", offblast->configPath);
+    FILE * fp = fopen(path, "a+");
+
+    fwrite(missingGamePath, strlen(missingGamePath), 1, fp);
+    fwrite("\n", 1, 1, fp);
+
+    fclose(fp);
 }
