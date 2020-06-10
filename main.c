@@ -28,7 +28,6 @@
 // Alpha 0.4 
 //
 //      - fix jump to start/end - let's make this jump screen instead
-//      - Get player switch working
 //      - search is bugged to fuck on slower machines, says something about a 
 //          double free
 //      - power off menu option
@@ -262,6 +261,7 @@ typedef struct LauncherContentsFile {
 typedef struct OffblastUi {
 
     uint32_t running;
+    uint32_t shutdownFlag;
     enum UiMode mode;
     char *configPath;
     char *playtimePath;
@@ -424,6 +424,10 @@ void openPlayerSelect() {
     offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
 }
 void setExit() {
+    offblast->running = 0;
+};
+void shutdownMachine() {
+    offblast->shutdownFlag = 1;
     offblast->running = 0;
 };
 void doSearch() {
@@ -1171,8 +1175,16 @@ int main(int argc, char** argv) {
     mainUi->menuItems[2].callback = openPlayerSelect;
     mainUi->menuItems[3].label = "Exit Offblast";
     mainUi->menuItems[3].callback = setExit;
+
     mainUi->menuCursor = 0;
     mainUi->numMenuItems = 4;
+
+    if (1) {
+        mainUi->menuItems[4].label = "Shut Down Machine";
+        mainUi->menuItems[4].callback = shutdownMachine;
+        mainUi->numMenuItems = 5;
+    }
+
 
     // Missing Cover texture init
     {
@@ -2162,6 +2174,10 @@ int main(int argc, char** argv) {
     SDL_GL_DeleteContext(glContext);
     SDL_DestroyWindow(window);
     SDL_Quit();
+
+    if (offblast->shutdownFlag) {
+        system("systemctl poweroff");
+    }
 
     return 0;
 }
