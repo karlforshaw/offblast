@@ -13,7 +13,6 @@
 #define LOAD_STATE_COMPLETE 3
 
 #define OFFBLAST_NOWRAP 0
-#define OFFBLAST_MAX_PLAYERS 4
 
 #define OFFBLAST_TEXT_TITLE 1
 #define OFFBLAST_TEXT_INFO 2
@@ -28,7 +27,7 @@
 
 // Alpha 0.4 
 //
-//      - fix jump to start/end
+//      - fix jump to start/end - let's make this jump screen instead
 //      - Get player switch working
 //      - search is bugged to fuck on slower machines, says something about a 
 //          double free
@@ -51,22 +50,13 @@
 //      - Deadzone checks
 //         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
 //
-// TODO multidisk PS games.
-//      - need to get smart about detection of multidisk PS games and not
-//          entirely sure how to do it just yet. I could either create m3u files
-//          for all my playstation games and just launch the m3u's.. maybe 
-//          add a tool that creates it.. but that's harder than it needs to be
-//          perhaps when we are detecting tokens we could see if theres a 
-//          "(Disk X)" token in the string and if there is and theres an m3u
-//          file present we use that instead?
-//
 // TODO steam support
 //  When a game is removed offblast still thinks it's playable
 //
 // TODO List caches, I think when we generate lists we should cache
 //      them in files.. maybe?
 // TODO Collections, this is more of an opengamedb ticket but It would be
-//      cool to feature collections from youtuvers such as metal jesus.
+//      cool to feature collections from youtubers such as metal jesus.
 //
 
 #include <stdio.h>
@@ -324,7 +314,7 @@ typedef struct OffblastUi {
     GLuint textProgram;
     GLint textAlphaUni;
 
-    Player players[OFFBLAST_MAX_PLAYERS];
+    Player player;
 
     size_t nUsers;
     User *users;
@@ -416,7 +406,7 @@ void renderImage(float x, float y, float w, float h, Image* image,
         float desaturation, float alpha);
 void loadTexture(UiTile *tile);
 void pressSearch();
-void loadPlayerOnePlaytimeFile();
+void loadPlaytimeFile();
 Window getActiveWindowRaw();
 void raiseWindow();
 void killRunningGame(); 
@@ -428,9 +418,11 @@ uint32_t activeWindowIsOffblast();
 uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature, 
         uint32_t newContentsHash);
 
-
 OffblastUi *offblast;
 
+void openPlayerSelect() {
+    offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
+}
 void setExit() {
     offblast->running = 0;
 };
@@ -442,7 +434,6 @@ void doHome() {
     offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
     updateGameInfo();
 }
-
 
 
 
@@ -1086,7 +1077,7 @@ int main(int argc, char** argv) {
     memcpy(&pUser->name, "Guest", strlen("Guest"));
     memcpy(&pUser->avatarPath, "guest-512.jpg", strlen("guest-512.jpg"));
     offblast->nUsers++;
-    loadPlayerOnePlaytimeFile();
+    loadPlaytimeFile();
 
     // XXX START SDL HERE
 
@@ -1177,6 +1168,7 @@ int main(int argc, char** argv) {
     mainUi->menuItems[1].label = "Search";
     mainUi->menuItems[1].callback = doSearch;
     mainUi->menuItems[2].label = "Change User";
+    mainUi->menuItems[2].callback = openPlayerSelect;
     mainUi->menuItems[3].label = "Exit Offblast";
     mainUi->menuItems[3].callback = setExit;
     mainUi->menuCursor = 0;
@@ -1287,10 +1279,7 @@ int main(int argc, char** argv) {
     free(debugAtlas);
     debugAtlas = NULL;
 
-    for (uint32_t i = 0; i < OFFBLAST_MAX_PLAYERS; ++i) {
-        offblast->players[i].jsIndex = -1;
-    }
-
+    offblast->player.jsIndex = -1;
     playerSelectUi->images = calloc(offblast->nUsers, sizeof(Image));
     playerSelectUi->widthForAvatar = 
         calloc(offblast->nUsers+1, sizeof(float));
@@ -1477,8 +1466,9 @@ int main(int argc, char** argv) {
 
                 printf("controller added %d\n", devEvent->which);
                 SDL_GameController *controller;
-                if (SDL_IsGameController(devEvent->which) == SDL_TRUE) {
-
+                if (SDL_IsGameController(devEvent->which) == SDL_TRUE 
+                        && offblast->player.jsIndex == -1) 
+                {
                     controller = SDL_GameControllerOpen(devEvent->which); 
                     if (controller == NULL)  {
                         printf("failed to add %d\n", devEvent->which);
@@ -1490,7 +1480,12 @@ int main(int argc, char** argv) {
                 }
             }
             else if (event.type == SDL_CONTROLLERDEVICEREMOVED) {
-                printf("controller removed\n");
+                SDL_ControllerDeviceEvent *devEvent = 
+                    (SDL_ControllerDeviceEvent*)&event;
+                if (offblast->player.jsIndex == devEvent->which) {
+                    offblast->player.jsIndex = -1;
+                    printf("controller removed\n");
+                }
             }
             else if (event.type == SDL_KEYUP) {
                 SDL_KeyboardEvent *keyEvent = (SDL_KeyboardEvent*) &event;
@@ -1542,7 +1537,7 @@ int main(int argc, char** argv) {
 
         // § Player Detection
         // TODO should we do this on every loop?
-        if (offblast->players[0].emailHash == 0) {
+        if (offblast->player.emailHash == 0) {
             offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
             // TODO this should probably kill all the active animations?
             // or fire their callbacks immediately
@@ -2904,7 +2899,7 @@ void launch() {
     }
     else {
 
-        User *theUser = offblast->players[0].user;
+        User *theUser = offblast->player.user;
 
 
 
@@ -3159,29 +3154,18 @@ void pressConfirm(int32_t joystickIndex) {
 
         printf("joystick %d\n", joystickIndex);
 
+        offblast->player.user = theUser;
+        offblast->player.emailHash = emailSignature;
+        loadPlaytimeFile();
+        updateHomeLists();
 
-        for (uint32_t k = 0; k < OFFBLAST_MAX_PLAYERS; k++) {
-
-            if (offblast->players[k].emailHash == 0) {
-
-                offblast->players[k].user = theUser;
-                offblast->players[k].emailHash = emailSignature;
-                loadPlayerOnePlaytimeFile();
-                updateHomeLists();
-
-                if (joystickIndex > -1) {
-                    offblast->players[k].jsIndex = joystickIndex;
-                    printf("Controller: %s\nAdded to Player %d\n",
-                            SDL_GameControllerNameForIndex(joystickIndex), k);
-                }
-
-                break;
-            }
-
+        if (joystickIndex > -1) {
+            offblast->player.jsIndex = joystickIndex;
+            printf("Controller: %s\nAdded to Player\n",
+                    SDL_GameControllerNameForIndex(joystickIndex));
         }
 
         offblast->mode = OFFBLAST_UI_MODE_MAIN;
-
     }
     else if (offblast->mainUi.showSearch) {
         // TODO not sure I like the way I'm using mode, I think maybe things
@@ -4047,10 +4031,10 @@ void updateResults() {
 
 
 
-void loadPlayerOnePlaytimeFile() {
+void loadPlaytimeFile() {
 
     char *email;
-    Player *thePlayer = &offblast->players[0];
+    Player *thePlayer = &offblast->player;
     if (thePlayer->emailHash == 0) {
         email = offblast->users[0].email;
     }
