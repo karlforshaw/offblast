@@ -31,7 +31,6 @@
 //          double free
 //      - fix jump to start/end - let's make this jump screen instead
 //
-//      - OpenGameDb, auto download/update? Evict Assets and update.
 //
 //      -. watch out for vram! glDeleteTextures
 //          We could move to a tile store object which has a fixed array of
@@ -46,6 +45,21 @@
 //
 //      - Deadzone checks
 //         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
+//
+// TODO 
+//      - OpenGameDb, auto download/update? Evict Assets and update.
+//
+// TODO Better config slugs, I'd love to have player specific slugs so that
+//  anything in the player section could be included in the launcher entries like
+//  %PLAYER_FOO%
+//
+// TODO Platform browser meny entries, Add a meny entry for each installed 
+//  platform so you can easily see whats installed
+//
+// TODO Installed State
+//  The greyed out cover might not be as obvious as we think.
+//
+// TODO Hours played in info
 //
 // TODO steam support
 //  When a game is removed offblast still thinks it's playable
