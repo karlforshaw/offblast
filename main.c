@@ -27,11 +27,11 @@
 
 // Alpha 0.4 
 //
+//      - fix jump to start/end - let's make this jump screen instead
 //      - search is bugged to fuck on slower machines, says something about a 
 //          double free
-//      - fix jump to start/end - let's make this jump screen instead
 //
-//
+// Alpha 0.5 
 //      -. watch out for vram! glDeleteTextures
 //          We could move to a tile store object which has a fixed array of
 //          tiles (enough to fill 1.5 screens on both sides) each tile has a 
