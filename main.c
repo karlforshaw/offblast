@@ -20,7 +20,6 @@
 
 // Alpha 0.4 
 //
-//      - installed/not installed text
 //      - fix jump to start/end - let's make this jump screen instead
 //
 // Alpha 0.5 
