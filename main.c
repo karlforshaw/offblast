@@ -1,24 +1,17 @@
 #define _GNU_SOURCE
-#define PHI 1.618033988749895
 
-#define COLS_ON_SCREEN 5
-#define COLS_TOTAL 10 
-#define ROWS_TOTAL 6
-#define MAX_LAUNCH_COMMAND_LENGTH 512
+#define PHI 1.618033988749895
 #define MAX_PLATFORMS 50 
+#define OFFBLAST_MAX_SEARCH 64
 
 #define LOAD_STATE_COLD 0
 #define LOAD_STATE_LOADING 1
 #define LOAD_STATE_READY 2
 #define LOAD_STATE_COMPLETE 3
 
-#define OFFBLAST_NOWRAP 0
-
 #define OFFBLAST_TEXT_TITLE 1
 #define OFFBLAST_TEXT_INFO 2
 #define OFFBLAST_TEXT_DEBUG 3
-
-#define OFFBLAST_MAX_SEARCH 64
 
 #define NAVIGATION_MOVE_DURATION 250 
 
@@ -27,11 +20,18 @@
 
 // Alpha 0.4 
 //
+//      - installed/not installed text
 //      - fix jump to start/end - let's make this jump screen instead
-//      - search is bugged to fuck on slower machines, says something about a 
-//          double free
 //
 // Alpha 0.5 
+//
+//      - split search results into letters, maybe groups of up to 50 if 25
+//          feels bad. Once this is in place, allow for searching by platform
+//          and add meny entries to show you your library by platform.
+//
+//      - search is bugged out on slower machines, says something about a 
+//          double free
+//
 //      -. watch out for vram! glDeleteTextures
 //          We could move to a tile store object which has a fixed array of
 //          tiles (enough to fill 1.5 screens on both sides) each tile has a 
@@ -40,8 +40,6 @@
 //
 //      - better aniations that support incremental jumps if you input a command
 //          during a running animation
-//
-//      - Invalid date format is a thing
 //
 //      - Deadzone checks
 //         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
@@ -394,7 +392,7 @@ void imageToGlTexture(GLuint *textureHandle, unsigned char *pixelData,
 void changeRow(uint32_t direction);
 void changeColumn(uint32_t direction);
 void pressConfirm();
-void jumpEnd(uint32_t direction);
+void jumpScreen(uint32_t direction);
 void pressCancel();
 void pressGuide();
 void updateResults();
@@ -407,7 +405,7 @@ size_t curlWrite(void *contents, size_t size, size_t nmemb, void *userP);
 int playTimeSort(const void *a, const void *b);
 int lastPlayedSort(const void *a, const void *b);
 uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata);
-void renderText(OffblastUi *offblast, float x, float y, 
+uint32_t renderText(OffblastUi *offblast, float x, float y, 
         uint32_t textMode, float alpha, uint32_t lineMaxW, char *string);
 void initQuad(Quad* quad);
 void resizeQuad(float x, float y, float w, float h, Quad *quad);
@@ -1470,10 +1468,10 @@ int main(int argc, char** argv) {
                         pressSearch();
                         break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
-                        jumpEnd(0);
+                        jumpScreen(0);
                         break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
-                        jumpEnd(1);
+                        jumpScreen(1);
                         break;
                     case SDL_CONTROLLER_BUTTON_GUIDE:
                         pressGuide();
@@ -1574,6 +1572,7 @@ int main(int argc, char** argv) {
 
 
         if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
+
 
             // § Blocks
             if (mainUi->activeRowset->numRows == 0) {
@@ -1726,132 +1725,6 @@ int main(int argc, char** argv) {
 
                     yBase += mainUi->boxHeight + mainUi->boxPad;
                     rowToRender = rowToRender->previousRow;
-
-                    /*
-                    // TODO loadTexture - if we've got the 
-                    // same tile in two lists, it's going to have the same 
-                    // texture loaded on to the gpu multiple times
-                    // Need to have some kind of texture handle map for launch 
-                    // targets
-                    //
-
-                    int32_t advanceX = 0;
-                    int32_t shiftX = 0;
-
-                    for (uint32_t iTile = 0; 
-                            iTile < rowToRender->length; 
-                            iTile++) 
-                    {
-                        UiTile *theTile = &rowToRender->tiles[iTile];
-                        Image *imageToShow;
-                        loadTexture(theTile);
-
-                        if (theTile->image.textureHandle == 0) {
-                            imageToShow = &offblast->missingCoverImage;
-                        }
-                        else {
-                            imageToShow = &theTile->image;
-                        }
-
-                        if (theTile == rowToRender->tileCursor) 
-                        {
-                            shiftX = advanceX;
-                        }
-
-                        theTile->baseX = advanceX;
-
-                        advanceX += getWidthForScaledImage(
-                                    mainUi->boxHeight,
-                                    imageToShow);
-
-                        advanceX += mainUi->boxPad;
-                    }
-
-
-                    int32_t xOffset = offblast->winMargin;
-                    if (mainUi->horizontalAnimation->animating != 0 
-                            && rowToRender == mainUi->activeRowset->rowCursor) 
-                    {
-                        double displace = 
-                            (double)(rowToRender->tileCursor->baseX 
-                                - rowToRender->movingToTile->baseX);
-
-                        double change = easeInOutCirc(
-                                (double)SDL_GetTicks() 
-                                - mainUi->horizontalAnimation->startTick,
-                                0.0,
-                                displace,
-                                (double)mainUi->horizontalAnimation->durationMs);
-
-                        if (mainUi->horizontalAnimation->direction < 0) {
-                            change = -change;
-                        }
-
-                        xOffset += change;
-                    }
-
-                    int32_t yOffset = (offblast->winFold - mainUi->boxHeight) + 
-                        (iRow * (mainUi->boxHeight + mainUi->boxPad));
-                    if (mainUi->verticalAnimation->animating != 0) 
-                    {
-                        double change = easeInOutCirc(
-                                (double)SDL_GetTicks() 
-                                - mainUi->verticalAnimation->startTick,
-                                0.0,
-                                (double)mainUi->boxHeight+ mainUi->boxPad,
-                                (double)mainUi->verticalAnimation->durationMs);
-
-                        if (mainUi->verticalAnimation->direction > 0) {
-                            change = -change;
-                        }
-
-                        yOffset += change;
-
-                    }
-
-
-                    for (uint32_t iTile = 0; 
-                            iTile < rowToRender->length; 
-                            iTile++) 
-                    {
-                        UiTile *theTile = &rowToRender->tiles[iTile];
-                        Image *imageToShow;
-
-                        if (theTile->image.textureHandle == 0) {
-                            imageToShow = &offblast->missingCoverImage;
-                        }
-                        else {
-                            imageToShow = &theTile->image;
-                        }
-
-                        float desaturate = 0.2;
-                        float alpha = 1.0;
-                        if (theTile->target->launcherSignature == 0) 
-                        {
-                            desaturate = 0.3;
-                            alpha = 0.7;
-                        }
-
-                        double actualX = xOffset + theTile->baseX - shiftX;
-                        uint32_t isInYBounds = (yOffset < offblast->winHeight
-                                && yOffset > 0 - mainUi->boxHeight);
-                        if (actualX < offblast->winWidth && isInYBounds) {
-                            renderImage(
-                                    actualX, 
-                                    yOffset,
-                                    0, 
-                                    mainUi->boxHeight, 
-                                    imageToShow, 
-                                    desaturate, 
-                                    alpha);
-                        }
-
-                    }
-
-
-
-                    // TODO if there's only one row don't infinite?
-                    */
                 }
 
                 glUniform1f(offblast->imageDesaturateUni, 0.0f);
@@ -1915,8 +1788,13 @@ int main(int argc, char** argv) {
 
 
                 pixelY -= offblast->infoPointSize * 1.4;
-                renderText(offblast, offblast->winMargin, pixelY, 
+                uint32_t infoWidth = renderText(offblast, offblast->winMargin, pixelY, 
                         OFFBLAST_TEXT_INFO, alpha, 0, mainUi->infoText);
+
+                renderText(offblast, 
+                        offblast->winMargin + infoWidth, 
+                        pixelY, 
+                        OFFBLAST_TEXT_INFO, alpha, 0, "ready to play?");
 
 
                 pixelY -= offblast->infoPointSize + mainUi->boxPad;
@@ -2431,7 +2309,7 @@ void changeRow(uint32_t direction)
     }
 }
 
-void jumpEnd(uint32_t direction) 
+void jumpScreen(uint32_t direction) 
 {
     MainUi *ui = &offblast->mainUi;
 
@@ -3336,7 +3214,7 @@ uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata) {
 }
 
 
-void renderText(OffblastUi *offblast, float x, float y, 
+uint32_t renderText(OffblastUi *offblast, float x, float y, 
         uint32_t textMode, float alpha, uint32_t lineMaxW, char *string) 
 {
 
@@ -3370,7 +3248,7 @@ void renderText(OffblastUi *offblast, float x, float y,
             break;
 
         default:
-            return;
+            return 0;
     }
 
     float winWidth = (float)offblast->winWidth;
@@ -3504,6 +3382,8 @@ void renderText(OffblastUi *offblast, float x, float y,
     glDisableVertexAttribArray(0);
     glDisableVertexAttribArray(1);
     glUseProgram(0);
+
+    return currentWidth;
 
 }
 
@@ -4503,7 +4383,7 @@ void importFromSteam(Launcher *theLauncher) {
                 }
             }
         }
-        else if (strstr(lineBuffer, "\"apps\"") != NULL) {
+        else if (strcasestr(lineBuffer, "\"apps\"") != NULL) {
             inAppsSection = 1;
         }
     }
