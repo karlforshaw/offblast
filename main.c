@@ -405,7 +405,7 @@ size_t curlWrite(void *contents, size_t size, size_t nmemb, void *userP);
 int playTimeSort(const void *a, const void *b);
 int lastPlayedSort(const void *a, const void *b);
 uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata);
-uint32_t renderText(OffblastUi *offblast, float x, float y, 
+void renderText(OffblastUi *offblast, float x, float y, 
         uint32_t textMode, float alpha, uint32_t lineMaxW, char *string);
 void initQuad(Quad* quad);
 void resizeQuad(float x, float y, float w, float h, Quad *quad);
@@ -1706,7 +1706,7 @@ int main(int argc, char** argv) {
                         if (theTile->target->launcherSignature == 0) 
                         {
                             desaturate = 0.3;
-                            alpha = 0.7;
+                            alpha = 0.5;
                         }
 
                         renderImage(
@@ -1788,13 +1788,8 @@ int main(int argc, char** argv) {
 
 
                 pixelY -= offblast->infoPointSize * 1.4;
-                uint32_t infoWidth = renderText(offblast, offblast->winMargin, pixelY, 
+                renderText(offblast, offblast->winMargin, pixelY, 
                         OFFBLAST_TEXT_INFO, alpha, 0, mainUi->infoText);
-
-                renderText(offblast, 
-                        offblast->winMargin + infoWidth, 
-                        pixelY, 
-                        OFFBLAST_TEXT_INFO, alpha, 0, "ready to play?");
 
 
                 pixelY -= offblast->infoPointSize + mainUi->boxPad;
@@ -3214,7 +3209,7 @@ uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata) {
 }
 
 
-uint32_t renderText(OffblastUi *offblast, float x, float y, 
+void renderText(OffblastUi *offblast, float x, float y, 
         uint32_t textMode, float alpha, uint32_t lineMaxW, char *string) 
 {
 
@@ -3222,7 +3217,7 @@ uint32_t renderText(OffblastUi *offblast, float x, float y,
     glEnable(GL_TEXTURE_2D);
 
     uint32_t currentLine = 0;
-    uint32_t currentWidth = 0;
+    float currentWidth = 0;
     uint32_t lineHeight = 0;
     float originalX = x;
 
@@ -3248,7 +3243,7 @@ uint32_t renderText(OffblastUi *offblast, float x, float y,
             break;
 
         default:
-            return 0;
+            return;
     }
 
     float winWidth = (float)offblast->winWidth;
@@ -3382,9 +3377,6 @@ uint32_t renderText(OffblastUi *offblast, float x, float y,
     glDisableVertexAttribArray(0);
     glDisableVertexAttribArray(1);
     glUseProgram(0);
-
-    return currentWidth;
-
 }
 
 void initQuad(Quad* quad) {
