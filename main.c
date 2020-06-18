@@ -18,10 +18,6 @@
 #define WINDOW_MANAGER_I3 1
 #define WINDOW_MANAGER_GNOME 2
 
-// Alpha 0.4 
-//
-//      - fix jump to start/end - let's make this jump screen instead
-//
 // Alpha 0.5 
 //
 //      - split search results into letters, maybe groups of up to 50 if 25
@@ -249,6 +245,8 @@ typedef struct MainUi {
     UiRowset *searchRowset;
     UiRowset *filteredRowset;
 
+    uint32_t rowGeometryInvalid;
+
     char *titleText;
     char *infoText;
     char *descriptionText;
@@ -427,6 +425,7 @@ uint32_t activeWindowIsOffblast();
 uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature, 
         uint32_t newContentsHash);
 void logMissingGame(char *missingGamePath);
+void calculateRowGeometry(UiRow *row);
 
 OffblastUi *offblast;
 
@@ -442,10 +441,12 @@ void shutdownMachine() {
 };
 void doSearch() {
     offblast->mainUi.activeRowset = offblast->mainUi.searchRowset;
+    offblast->mainUi.rowGeometryInvalid = 1;
     offblast->mainUi.showSearch = 1;
 }
 void doHome() {
     offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
+    offblast->mainUi.rowGeometryInvalid = 1;
     updateGameInfo();
 }
 
@@ -1413,6 +1414,8 @@ int main(int argc, char** argv) {
     mainUi->homeRowset->rowCursor = mainUi->homeRowset->rows;
     mainUi->activeRowset = mainUi->homeRowset;
 
+    mainUi->rowGeometryInvalid = 1;
+
     updateHomeLists();
 
 
@@ -1421,6 +1424,7 @@ int main(int argc, char** argv) {
 
         if (needsReRender(window) == 1) {
             printf("Window size changed, sizes updated.\n");
+            mainUi->rowGeometryInvalid = 1;
         }
 
         SDL_Event event;
@@ -1573,11 +1577,19 @@ int main(int argc, char** argv) {
         if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
 
 
+
             // § Blocks
             if (mainUi->activeRowset->numRows == 0) {
                 printf("norows!\n");
             }
             else {
+
+                if (mainUi->rowGeometryInvalid) {
+                    for (uint32_t i=0; i < mainUi->activeRowset->numRows; ++i) {
+                        calculateRowGeometry(&mainUi->activeRowset->rows[i]); 
+                    }
+                    mainUi->rowGeometryInvalid = 0;
+                }
 
                 // Set the origin Y
                 UiRow *rowToRender = mainUi->activeRowset->rowCursor;
@@ -1603,101 +1615,55 @@ int main(int argc, char** argv) {
                     yBase += change;
                 }
 
+                Image *missingImage = &offblast->missingCoverImage;
+                uint32_t missingImageWidth = getWidthForScaledImage(
+                        offblast->mainUi.boxHeight,
+                        missingImage);
+
                 while (yBase < offblast->winHeight) {
 
-                    double displacement = 0;
+                    int32_t displacement = 0;
                     UiTile *theTile = rowToRender->tileCursor;
+
+                    uint32_t theWidth = missingImageWidth;
+                    if (theTile->image.width > 0 ) 
+                        theWidth = theTile->image.width;
+
                     Image *imageToShow;
+
+                    displacement = theTile->baseX - offblast->winMargin;
 
                     if (mainUi->horizontalAnimation->animating != 0 
                             && rowToRender == mainUi->activeRowset->rowCursor) 
                     {
-                        // We need the width of the cursor
-                        UiTile *tileToDisplace;
-                        if (mainUi->horizontalAnimation->direction > 0)
-                            tileToDisplace = theTile;
-                        else 
-                            tileToDisplace = theTile->previous;
-
-                        if (tileToDisplace) {
-
-                            loadTexture(tileToDisplace);
-                            if (tileToDisplace->image.textureHandle == 0) 
-                                imageToShow = &offblast->missingCoverImage;
-                            else 
-                                imageToShow = &tileToDisplace->image;
-
-                            uint32_t currentTileWidth = getWidthForScaledImage(
-                                    mainUi->boxHeight,
-                                    imageToShow);
-
-                            displacement = easeInOutCirc(
-                                    (double)SDL_GetTicks() 
-                                    - mainUi->horizontalAnimation->startTick,
-                                    0.0,
-                                    (double)(currentTileWidth + mainUi->boxPad),
-                                    (double)mainUi->horizontalAnimation->durationMs);
-
-                            if (mainUi->horizontalAnimation->direction > 0) {
-                                displacement = -displacement;
-                            }
-                        }
+                        double moveAmount = 
+                            rowToRender->movingToTile->baseX - theTile->baseX;
+                        displacement += easeInOutCirc(
+                                (double)SDL_GetTicks() 
+                                - mainUi->horizontalAnimation->startTick,
+                                0.0,
+                                moveAmount,
+                                (double)mainUi->horizontalAnimation->durationMs);
                     }
 
-
-                    // Render Backwards
-                    float xBase = offblast->winMargin + displacement;
-                    if (rowToRender->tileCursor->previous != NULL) {
+                    while ((int32_t) theTile->baseX - displacement + theWidth 
+                            + mainUi->boxPad > 0) 
+                    {
+                        if (!theTile->previous) break;
                         theTile = theTile->previous;
-                        while ((xBase - mainUi->boxPad) > 0) {
-
-                            loadTexture(theTile);
-                            if (theTile->image.textureHandle == 0) 
-                                imageToShow = &offblast->missingCoverImage;
-                            else 
-                                imageToShow = &theTile->image;
-
-                            uint32_t width = getWidthForScaledImage(
-                                    mainUi->boxHeight,
-                                    imageToShow);
-
-                            xBase -= (width + mainUi->boxPad);
-
-                            desaturate = 0.2;
-                            alpha = 1.0;
-
-                            if (theTile->target->launcherSignature == 0) 
-                            {
-                                desaturate = 0.3;
-                                alpha = 0.7;
-                            }
-
-                            renderImage(
-                                    xBase, yBase,
-                                    0, mainUi->boxHeight, 
-                                    imageToShow, 
-                                    desaturate, 
-                                    alpha);
-
-                            if (!(theTile = theTile->previous)) break;
-                        }
                     }
 
-                    // Render Forwards
-                    xBase = offblast->winMargin + displacement;
-                    theTile = rowToRender->tileCursor;
+                    while ((int32_t) theTile->baseX - displacement 
+                            < (offblast->winWidth*1.2)) 
+                    {
 
-                    while (xBase < offblast->winWidth) {
-
-                        loadTexture(theTile);
                         if (theTile->image.textureHandle == 0) 
-                            imageToShow = &offblast->missingCoverImage;
+                        {
+                            loadTexture(theTile);
+                            imageToShow = missingImage;
+                        }
                         else 
                             imageToShow = &theTile->image;
-
-                        uint32_t width = getWidthForScaledImage(
-                                    mainUi->boxHeight,
-                                    imageToShow);
 
                         desaturate = 0.2;
                         alpha = 1.0;
@@ -1705,21 +1671,19 @@ int main(int argc, char** argv) {
                         if (theTile->target->launcherSignature == 0) 
                         {
                             desaturate = 0.3;
-                            alpha = 0.5;
+                            alpha = 0.7;
                         }
 
                         renderImage(
-                                xBase, 
+                                theTile->baseX - displacement, 
                                 yBase,
-                                0, 
-                                mainUi->boxHeight, 
+                                0, mainUi->boxHeight, 
                                 imageToShow, 
                                 desaturate, 
                                 alpha);
 
-                        xBase += (width + mainUi->boxPad);
-
-                        if (!(theTile = theTile->next)) break;
+                        if (!theTile->next) break;
+                        theTile = theTile->next;
                     }
 
                     yBase += mainUi->boxHeight + mainUi->boxPad;
@@ -3569,8 +3533,7 @@ void loadTexture(UiTile *tile) {
                     loadCover, 
                     (void*)tile);
         }
-
-        if (tile->image.loadState == LOAD_STATE_READY) {
+        else if (tile->image.loadState == LOAD_STATE_READY) {
 
             glGenTextures(1, &tile->image.textureHandle);
             imageToGlTexture(
@@ -3584,6 +3547,9 @@ void loadTexture(UiTile *tile) {
 
             tile->image.loadState = LOAD_STATE_COMPLETE;
             free(tile->image.atlas);
+            tile->image.atlas = NULL;
+
+            offblast->mainUi.rowGeometryInvalid = 1;
         }
     }
 }
@@ -4605,4 +4571,33 @@ void logMissingGame(char *missingGamePath){
     fwrite("\n", 1, 1, fp);
 
     fclose(fp);
+}
+
+void calculateRowGeometry(UiRow *row) {
+
+    UiTile *theTile = NULL;
+    uint32_t theWidth = 0;
+    uint32_t xAdvance = 0;
+
+    Image *missingImage = &offblast->missingCoverImage;
+    uint32_t missingImageWidth = getWidthForScaledImage(
+            offblast->mainUi.boxHeight,
+            missingImage);
+
+    for(uint8_t i = 0; i < row->length; ++i) {
+
+        theTile = &row->tiles[i];
+        theTile->baseX = xAdvance;
+
+        if (theTile->image.textureHandle == 0) {
+            theWidth = missingImageWidth;
+        }
+        else {
+            theWidth = getWidthForScaledImage(
+                    offblast->mainUi.boxHeight,
+                    &theTile->image);
+        }
+
+        xAdvance += (theWidth + offblast->mainUi.boxPad);
+    }
 }
