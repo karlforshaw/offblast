@@ -24,9 +24,6 @@
 //          feels bad. Once this is in place, allow for searching by platform
 //          and add meny entries to show you your library by platform.
 //
-//      - search is bugged out on slower machines, says something about a 
-//          double free
-//
 //      -. watch out for vram! glDeleteTextures
 //          We could move to a tile store object which has a fixed array of
 //          tiles (enough to fill 1.5 screens on both sides) each tile has a 
@@ -150,7 +147,7 @@ typedef struct UiTile{
 
 typedef struct UiRow {
     uint32_t length;
-    char name[255];
+    char name[256];
     struct UiTile *tileCursor;
     struct UiTile *tiles;
     struct UiRow *nextRow;
@@ -3609,7 +3606,7 @@ void updateHomeLists(){
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles = tiles; 
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
                 = tiles;
-            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 255);
+            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 256);
             strcpy(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
                     "Jump Back In");
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
@@ -3664,7 +3661,7 @@ void updateHomeLists(){
                 = tiles; 
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
                 = tiles;
-            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 255);
+            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 256);
             strcpy(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
                     "Most played");
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
@@ -3720,7 +3717,7 @@ void updateHomeLists(){
                 = tiles; 
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
                 = tiles;
-            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 255);
+            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 256);
             strcpy(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
                     "Recently Installed");
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
@@ -3781,7 +3778,7 @@ void updateHomeLists(){
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
                 = tiles;
 
-            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 255);
+            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 256);
             snprintf(
                     mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
                     255,
@@ -3896,9 +3893,6 @@ void updateResults() {
 
         free(mainUi->searchRowset->rows[0].tiles);
 
-        // We're gonna start a new row on every count of 25
-        // TODO search rowset needs a lot of memory, how much do we have?
-
         int32_t onRow = -1;
         uint32_t onTile = 0;
         mainUi->searchRowset->rows[0].tiles = tiles; 
@@ -3912,7 +3906,7 @@ void updateResults() {
                 if (onTile != 0) mainUi->searchRowset->numRows++;
                 onRow++;
 
-                memset(mainUi->searchRowset->rows[onRow].name, 0x0, 255);
+                memset(mainUi->searchRowset->rows[onRow].name, 0x0, 256);
                 strcpy(mainUi->searchRowset->rows[onRow].name, "Search Results");
                 
                 // previous
