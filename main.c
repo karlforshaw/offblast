@@ -36,6 +36,9 @@
 //      - better aniations that support incremental jumps if you input a command
 //          during a running animation
 //
+//      - Platform browser meny entries, Add a meny entry for each installed 
+//          platform so you can easily see whats installed
+//
 //      - Deadzone checks
 //         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
 //
@@ -46,11 +49,6 @@
 //  anything in the player section could be included in the launcher entries like
 //  %PLAYER_FOO%
 //
-// TODO Platform browser meny entries, Add a meny entry for each installed 
-//  platform so you can easily see whats installed
-//
-// TODO Installed State
-//  The greyed out cover might not be as obvious as we think.
 //
 // TODO Hours played in info
 //
@@ -152,7 +150,7 @@ typedef struct UiTile{
 
 typedef struct UiRow {
     uint32_t length;
-    char *name;
+    char name[255];
     struct UiTile *tileCursor;
     struct UiTile *tiles;
     struct UiRow *nextRow;
@@ -1400,7 +1398,7 @@ int main(int argc, char** argv) {
 
     // § Init Ui
     mainUi->searchRowset = calloc(1, sizeof(UiRowset));
-    mainUi->searchRowset->rows = calloc(1, sizeof(UiRow));
+    mainUi->searchRowset->rows = calloc(100, sizeof(UiRow)); // TODO
     mainUi->searchRowset->rows[0].tiles = calloc(1, sizeof(UiTile));
     mainUi->searchRowset->rowCursor = mainUi->searchRowset->rows;
     mainUi->searchRowset->numRows = 0;
@@ -1580,7 +1578,7 @@ int main(int argc, char** argv) {
 
             // § Blocks
             if (mainUi->activeRowset->numRows == 0) {
-                printf("norows!\n");
+                //printf("norows!\n");
             }
             else {
 
@@ -3611,8 +3609,9 @@ void updateHomeLists(){
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles = tiles; 
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
                 = tiles;
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
-                = "Jump back in";
+            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 255);
+            strcpy(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
+                    "Jump Back In");
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
                 = tileCount; 
             mainUi->homeRowset->numRows++;
@@ -3665,8 +3664,9 @@ void updateHomeLists(){
                 = tiles; 
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
                 = tiles;
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
-                = "Most played";
+            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 255);
+            strcpy(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
+                    "Most played");
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
                 = tileCount; 
             mainUi->homeRowset->numRows++;
@@ -3720,8 +3720,9 @@ void updateHomeLists(){
                 = tiles; 
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
                 = tiles;
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name 
-                = "Recently Installed";
+            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 255);
+            strcpy(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
+                    "Recently Installed");
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
                 = tileCount; 
             mainUi->homeRowset->numRows++;
@@ -3780,8 +3781,10 @@ void updateHomeLists(){
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
                 = tiles;
 
-            asprintf(
-                    &mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
+            memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 255);
+            snprintf(
+                    mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
+                    255,
                     "Essential %s", 
                     platformString(offblast->platforms[iPlatform]));
 
@@ -3843,8 +3846,8 @@ void updateResults() {
 
     LaunchTargetFile* targetFile = offblast->launchTargetFile;
 
-    // TODO let's assume 25 results for now
-    UiTile *tiles = calloc(25, sizeof(UiTile));
+    // TODO let's assume 250 results for now
+    UiTile *tiles = calloc(250, sizeof(UiTile));
     assert(tiles);
 
     uint32_t tileCount = 0;
@@ -3853,38 +3856,112 @@ void updateResults() {
 
         if (strcasestr(targetFile->entries[i].name, offblast->searchTerm)) {
 
-            if (tileCount < 25) {
+            if (tileCount >= 249) {
+                printf("More than 250 results!\n");
+                printf("\n");
+                break;
+            }
+
+            uint32_t slottedIn = 0;
+            for (int j=0; j < tileCount; ++j) {
+
+                if (strcoll(targetFile->entries[i].name, tiles[j].target->name) 
+                        <= 0) 
+                {
+                    if (tileCount >= 249) break;
+                    uint32_t hanging = tileCount - j;
+                    memmove(&tiles[j+1], &tiles[j], sizeof(UiTile) * hanging);
+                    tileCount++;
+
+                    LaunchTarget *target = &targetFile->entries[i];
+                    tiles[j].target = target;
+                    slottedIn=1;
+
+                    break;
+                }
+            }
+
+            if (!slottedIn) {
                 LaunchTarget *target = &targetFile->entries[i];
                 tiles[tileCount].target = target;
                 tiles[tileCount].next = &tiles[tileCount+1];
                 tiles[tileCount].previous = &tiles[tileCount-1];
                 tileCount++;
             }
-            else {
-                printf("More than 25 results!\n");
-                printf("\n");
-                break;
-            }
-        }
 
+        }
     }
 
     if (tileCount > 0) {
-        tiles[tileCount-1].next = NULL;
-        tiles[0].previous = NULL;
 
         free(mainUi->searchRowset->rows[0].tiles);
 
+        // We're gonna start a new row on every count of 25
+        // TODO search rowset needs a lot of memory, how much do we have?
+
+        int32_t onRow = -1;
+        uint32_t onTile = 0;
         mainUi->searchRowset->rows[0].tiles = tiles; 
         mainUi->searchRowset->rows[0].tileCursor = tiles;
-        mainUi->searchRowset->rows[0].name = "Search Results";
-        mainUi->searchRowset->rows[0].length = tileCount; 
         mainUi->searchRowset->numRows = 1;
 
-        mainUi->searchRowset->rows[0].nextRow = &mainUi->searchRowset->rows[0];
-        mainUi->searchRowset->rows[0].previousRow
-            = &mainUi->searchRowset->rows[0];
+        for (onTile = 0; onTile < tileCount; ++onTile) {
+
+            if (onTile % 25 == 0) {
+
+                if (onTile != 0) mainUi->searchRowset->numRows++;
+                onRow++;
+
+                memset(mainUi->searchRowset->rows[onRow].name, 0x0, 255);
+                strcpy(mainUi->searchRowset->rows[onRow].name, "Search Results");
+                
+                // previous
+                if (onRow > 0) {
+                    mainUi->searchRowset->rows[onRow-1].length = 25; 
+                }
+
+                mainUi->searchRowset->rows[onRow].tiles = &tiles[onTile]; 
+                mainUi->searchRowset->rows[onRow].tileCursor = &tiles[onTile];
+
+                if (onTile > 0) tiles[onTile-1].next = NULL;
+                tiles[onTile].previous = NULL;
+                
+            }
+            else {
+                if (onTile != 0)
+                    tiles[onTile].previous = &tiles[onTile-1];
+            }
+
+            if (onTile+1 != tileCount)
+                tiles[onTile].next = &tiles[onTile+1];
+            else 
+                tiles[onTile].next = NULL;
+        }
+
+        mainUi->searchRowset->rows[onRow].length = onTile % 25;                 
+
+        UiRow *firstRow = &mainUi->searchRowset->rows[0];
+        UiRow *lastRow = 
+            &mainUi->searchRowset->rows[mainUi->searchRowset->numRows -1];
+
+        for (uint32_t i = 0; i < mainUi->searchRowset->numRows; ++i) {
+
+            if (i > 0)
+                mainUi->searchRowset->rows[i].previousRow
+                    = &mainUi->searchRowset->rows[i-1];
+            else
+                mainUi->searchRowset->rows[i].previousRow = lastRow;
+
+            if (i != mainUi->searchRowset->numRows -1)
+                mainUi->searchRowset->rows[i].nextRow = 
+                    &mainUi->searchRowset->rows[i+1];
+            else 
+                mainUi->searchRowset->rows[i].nextRow = firstRow;
+
+        }
+
         mainUi->searchRowset->movingToTarget = tiles[0].target;
+        mainUi->searchRowset->rowCursor = mainUi->searchRowset->rows; 
     }
     else {
         mainUi->searchRowset->numRows = 0;
