@@ -20,6 +20,9 @@
 
 // Alpha 0.5 
 //
+//      - BUG the cover images are now named wrong, we're using a 32 bit
+//          truncation of a 64 bit signature.
+//
 //      - split search results labels into letters, AB-AR . 
 //          Once this is in place, allow for searching by platform
 //          and add menu entries to show you your library by platform.
