@@ -38,7 +38,7 @@ int main () {
         LaunchTarget *target = &launchTargetFile->entries[i];
 
         if (target->launcherSignature) 
-        printf("%s\n%s\n\n", target->name, target->path);
+        printf("%s\n%s\n%u\n\n", target->name, target->path, target->targetSignature);
     }
 
     return 0;
