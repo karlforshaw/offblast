@@ -20,9 +20,20 @@
 
 // Alpha 0.5 
 //
-//      - split search results into letters, maybe groups of up to 50 if 25
-//          feels bad. Once this is in place, allow for searching by platform
-//          and add meny entries to show you your library by platform.
+//      - split search results labels into letters, AB-AR . 
+//          Once this is in place, allow for searching by platform
+//          and add menu entries to show you your library by platform.
+//
+//      - think about the controller added and removed code, do we really 
+//          need to show the player select screen?
+//
+//      - loading isn't represented properly, put a ui lock in place until 
+//          the window loses focus and then unlock the resume or stop 
+//          functionality
+//
+//      - consider importing everything on first load, this will mean if 
+//          you have a shared playtime file you won't get unknown games
+//          popping up in your lists..
 //
 //      -. watch out for vram! glDeleteTextures
 //          We could move to a tile store object which has a fixed array of
@@ -33,11 +44,12 @@
 //      - better aniations that support incremental jumps if you input a command
 //          during a running animation
 //
-//      - Platform browser meny entries, Add a meny entry for each installed 
-//          platform so you can easily see whats installed
-//
 //      - Deadzone checks
 //         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
+//
+//      BUGS
+//       - Image loading has a bug somewhere, if you mess around enough with 
+//          search, everything goes out of the window
 //
 // TODO 
 //      - OpenGameDb, auto download/update? Evict Assets and update.
@@ -3907,8 +3919,15 @@ void updateResults() {
                 onRow++;
 
                 memset(mainUi->searchRowset->rows[onRow].name, 0x0, 256);
-                strcpy(mainUi->searchRowset->rows[onRow].name, "Search Results");
-                
+                //strcpy(mainUi->searchRowset->rows[onRow].name, "Search Results");
+                snprintf(
+                        mainUi->searchRowset->rows[onRow].name,
+                        strlen("Search Results a "),
+                        "Search Results %c",
+                        tiles[onTile].target->name[0]
+                        );
+
+
                 // previous
                 if (onRow > 0) {
                     mainUi->searchRowset->rows[onRow-1].length = 25; 
@@ -4377,7 +4396,6 @@ void importFromSteam(Launcher *theLauncher) {
     char *idStr = NULL;
     char *currentId = calloc(64, sizeof(char));
     char *currentIdCursor;
-    uint32_t installed = 0;
 
     while(fgets(lineBuffer, 512, fp)) {
         if (inAppsSection) {
@@ -4388,14 +4406,9 @@ void importFromSteam(Launcher *theLauncher) {
 
             if (depth == 1 && strstr(lineBuffer, "\"")) {
 
-                if (installed) {
-                    printf("New steam game %s\n", currentId);
-                    pushToRomList(list, NULL, NULL, currentId);
-                }
 
                 idStr = lineBuffer;
                 memset(currentId, 0, 64);
-                installed = 0;
 
                 while (isspace(*idStr) || *idStr == '\"') ++idStr;
                 currentIdCursor = currentId;
@@ -4407,7 +4420,8 @@ void importFromSteam(Launcher *theLauncher) {
                 if (strstr(lineBuffer, "Installed") 
                         && strstr(lineBuffer, "1")) 
                 {
-                    installed = 1;
+                    printf("New steam game %s\n", currentId);
+                    pushToRomList(list, NULL, NULL, currentId);
                 }
             }
         }
