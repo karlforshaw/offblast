@@ -23,7 +23,7 @@
 //      - BUG the cover images are now named wrong, we're using a 32 bit
 //          truncation of a 64 bit signature.
 //
-//      - split search results labels into letters, AB-AR . 
+//      * split search results labels into letters, AB-AR . 
 //          Once this is in place, allow for searching by platform
 //          and add menu entries to show you your library by platform.
 //
@@ -3918,15 +3918,21 @@ void updateResults() {
 
             if (onTile % 25 == 0) {
 
-                if (onTile != 0) mainUi->searchRowset->numRows++;
+                // Update the last letter of the previous row
+                if (onTile != 0) {
+                    mainUi->searchRowset->rows[onRow].name[21] = 
+                        tiles[onTile-1].target->name[0];
+                    mainUi->searchRowset->numRows++;
+                }
+
                 onRow++;
 
                 memset(mainUi->searchRowset->rows[onRow].name, 0x0, 256);
                 //strcpy(mainUi->searchRowset->rows[onRow].name, "Search Results");
                 snprintf(
                         mainUi->searchRowset->rows[onRow].name,
-                        strlen("Search Results a "),
-                        "Search Results %c",
+                        strlen("Search Results (a to z) "),
+                        "Search Results (%c to !)",
                         tiles[onTile].target->name[0]
                         );
 
@@ -3950,8 +3956,11 @@ void updateResults() {
 
             if (onTile+1 != tileCount)
                 tiles[onTile].next = &tiles[onTile+1];
-            else 
+            else {
+                mainUi->searchRowset->rows[onRow].name[21] = 
+                    tiles[onTile].target->name[0];
                 tiles[onTile].next = NULL;
+            }
         }
 
         mainUi->searchRowset->rows[onRow].length = onTile % 25;                 
