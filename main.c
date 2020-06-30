@@ -474,6 +474,8 @@ int main(int argc, char** argv) {
     int madeConfigDir;
     madeConfigDir = mkdir(configPath, S_IRWXU);
     madeConfigDir = mkdir(coverPath, S_IRWXU);
+
+    free(coverPath);
     
     if (madeConfigDir == 0) {
         printf("Created offblast directory\n");
@@ -493,6 +495,7 @@ int main(int argc, char** argv) {
     char *configFilePath;
     asprintf(&configFilePath, "%s/config.json", configPath);
     FILE *configFile = fopen(configFilePath, "r");
+    free(configFilePath);
 
     if (configFile == NULL) {
         printf("Config file config.json is missing, exiting..\n");
@@ -1111,6 +1114,8 @@ int main(int argc, char** argv) {
         }
 
     }
+
+    json_tokener_free(tokener);
 
     User *pUser = &offblast->users[iUser];
     memcpy(&pUser->name, "Guest", strlen("Guest"));
@@ -2080,6 +2085,9 @@ int main(int argc, char** argv) {
 
         lastTick = SDL_GetTicks();
     }
+
+    free(launcherContentsHashFilePath);
+    XCloseDisplay(offblast->XDisplay);
 
     SDL_GL_DeleteContext(glContext);
     SDL_DestroyWindow(window);
