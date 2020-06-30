@@ -20,8 +20,6 @@
 
 // Alpha 0.5 
 //
-//      *named launchers (for meny entries)
-//
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
 //          popping up in your lists..
@@ -644,6 +642,8 @@ int main(int argc, char** argv) {
         const char *thePlatform = NULL;
         json_object *cmdStringNode = NULL;
         const char *theCommand = NULL;
+        json_object *nameStringNode = NULL;
+        const char *theName = NULL;
 
         // Emulator Specific Properties 
         json_object *extensionStringNode = NULL;
@@ -659,6 +659,15 @@ int main(int argc, char** argv) {
         theType = json_object_get_string(typeStringNode);
         assert(strlen(theType) < 256);
         memcpy(&theLauncher->type, theType, strlen(theType));
+
+        json_object_object_get_ex(launcherNode, "name",
+                &nameStringNode);
+
+        if (nameStringNode) {
+            theName= json_object_get_string(nameStringNode);
+            assert(strlen(theName) < 64);
+            memcpy(&theLauncher->name, theName, strlen(theName));
+        }
 
         if (strcmp("cemu", theLauncher->type) == 0) {
 
@@ -1204,8 +1213,14 @@ int main(int argc, char** argv) {
     mainUi->numMenuItems++;
 
     for (uint32_t i = 0; i < offblast->nLaunchers; ++i) {
-        mainUi->menuItems[iItem].label = (char *) platformString(
-                offblast->launchers[i].platform);
+        if (strlen(offblast->launchers[i].name)) {
+            mainUi->menuItems[iItem].label = 
+                (char *) offblast->launchers[i].name;
+        }
+        else {
+            mainUi->menuItems[iItem].label = (char *) platformString(
+                    offblast->launchers[i].platform);
+        }
 
         mainUi->menuItems[iItem].callbackArgs 
             = offblast->launchers[i].platform;

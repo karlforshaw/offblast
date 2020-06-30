@@ -25,6 +25,7 @@ typedef struct Launcher {
     uint32_t signature;
 
     char type[256];
+    char name[64];
     char platform[256];
     char extension[32];
     char cmd[MAX_LAUNCH_COMMAND_LENGTH];
