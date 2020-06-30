@@ -20,13 +20,11 @@
 
 // Alpha 0.5 
 //
+//      *named launchers (for meny entries)
+//
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
 //          popping up in your lists..
-//
-//      - Shell script launchers
-//
-//      - ScummVM launcher type
 //
 //      -. watch out for vram! glDeleteTextures
 //          We could move to a tile store object which has a fixed array of
@@ -43,6 +41,10 @@
 //      BUGS
 //       - Image loading has a bug somewhere, if you mess around enough with 
 //          search, everything goes out of the window
+//
+//       - games with poor match scores should probably be logged to the missing
+//          games log, we're allowing bad matches to go through as long as the 
+//          proper game isn't present
 //
 // TODO 
 //      - OpenGameDb, auto download/update? Evict Assets and update.
@@ -421,6 +423,7 @@ void raiseWindow();
 void killRunningGame(); 
 void importFromCemu(Launcher *theLauncher);
 void importFromSteam(Launcher *theLauncher);
+void importFromScummvm(Launcher *theLauncher);
 void importFromCustom(Launcher *theLauncher);
 WindowInfo getOffblastWindowInfo();
 uint32_t activeWindowIsOffblast();
@@ -717,6 +720,10 @@ int main(int argc, char** argv) {
             memcpy(&theLauncher->platform, 
                     "steam", strlen("steam"));
         }
+        else if (strcmp("scummvm", theLauncher->type) == 0){
+            memcpy(&theLauncher->platform, 
+                    "pc", strlen("pc"));
+        }
         else {
             printf("Unsupported Launcher Type: %s\n", theLauncher->type);
             continue;
@@ -947,6 +954,9 @@ int main(int argc, char** argv) {
         }
         else if (strcmp(theLauncher->type, "steam") == 0) {
             importFromSteam(theLauncher);
+        }
+        else if (strcmp(theLauncher->type, "scummvm") == 0) {
+            importFromScummvm(theLauncher);
         }
         else if (strcmp(theLauncher->type, "custom") == 0||
                 strcmp(theLauncher->type, "retroarch") == 0) 
@@ -2792,8 +2802,9 @@ void launch() {
 
     Launcher *theLauncher = &offblast->launchers[foundIndex];
     int32_t isSteam = (strcmp(theLauncher->type, "steam") == 0);
+    int32_t isScummvm = (strcmp(theLauncher->type, "scummvm") == 0);
 
-    if (!isSteam && strlen(target->path) == 0) {
+    if (!isSteam && !isScummvm && strlen(target->path) == 0) {
         printf("%s has no launch candidate\n", target->name);
     }
     else {
@@ -2807,6 +2818,17 @@ void launch() {
         if (isSteam) {
             asprintf(&launchString, "steam -silent -applaunch %s",
                     target->id);
+        }
+        else if (isScummvm) {
+            if (theUser->savePath) {
+                asprintf(&launchString, "SDL_AUDIODRIVER=alsa scummvm -f --savepath='%s' %s",
+                        theUser->savePath,
+                        target->path);
+            }
+            else {
+                asprintf(&launchString, "SDL_AUDIODRIVER=alsa scummvm -f %s",
+                        target->path);
+            }
         }
         else {
 
@@ -4424,7 +4446,124 @@ void importFromCemu(Launcher *theLauncher) {
     list = NULL;
 }
 
+void importFromScummvm(Launcher *theLauncher) {
 
+    RomFoundList *list = newRomList();
+    char *homePath = getenv("HOME");
+
+    char *registryPath = NULL;
+    asprintf(&registryPath, "%s/.config/scummvm/scummvm.ini", homePath);
+
+    FILE *fp = fopen(registryPath, "r");
+    if (fp == NULL) {
+        perror("Couldn't open scummvm config\n");
+        return;
+    }
+
+    char *lineBuffer = calloc(512, sizeof(char));
+    assert(lineBuffer);
+
+    char *currentId = calloc(64, sizeof(char));
+    char *currentName = calloc(64, sizeof(char));
+
+    while(fgets(lineBuffer, 512, fp)) {
+
+
+        if (lineBuffer[0] == '[') {
+
+            if (strncmp(lineBuffer, "[scummvm]", strlen("[scummvm]")) != 0) {
+
+                // Got a new game
+                memset(currentId, 0, 64);
+                char *closePos = strchr(lineBuffer, ']');
+                assert(*closePos);
+
+                assert(closePos-(lineBuffer+1) <= 64);
+                memcpy(currentId, lineBuffer+1, 
+                        closePos-(lineBuffer+1));
+            }
+        }
+        else if (strcasestr(lineBuffer, "description=") == lineBuffer) {
+            char *startP = strchr(lineBuffer, '=') +1;
+            char *endP = strchr(lineBuffer, '\n');
+
+            if (strchr(lineBuffer, '(')) endP = strchr(lineBuffer, '(');
+            assert(endP);
+
+            memset(currentName, 0, 64);
+            assert(endP-startP <= 64);
+            memcpy(currentName, startP, endP-startP);
+
+            pushToRomList(list, currentId, currentName, NULL);
+        }
+    }
+
+    fclose(fp);
+
+    free(lineBuffer);
+    free(registryPath);
+    free(currentId);
+    free(currentName);
+
+    if (list->numItems == 0) { 
+        printf("no items found\n");
+        freeRomList(list);
+        return;
+    }
+
+    uint32_t rescrapeRequired = 0;
+    if (launcherContentsCacheUpdated(theLauncher->signature, romListContentSig(list))) {
+        printf("Launcher targets for %u have changed!\n", 
+                theLauncher->signature);
+
+        rescrapeRequired = 1;
+    }
+    else {
+        printf("Contents unchanged for: %u\n", theLauncher->signature);
+    }
+
+
+    if (rescrapeRequired) {
+
+        for (uint32_t j=0; j < list->numItems; j++) {
+
+            float matchScore = 0;
+            int32_t indexOfEntry = launchTargetIndexByNameMatch(
+                    offblast->launchTargetFile, 
+                    list->items[j].name, 
+                    theLauncher->platform,
+                    &matchScore);
+
+            printf("found by name at index %d\n", indexOfEntry);
+
+            if (indexOfEntry > -1 &&
+                    matchScore > offblast->launchTargetFile->entries[indexOfEntry].matchScore) 
+            {
+
+                LaunchTarget *theTarget = 
+                    &offblast->launchTargetFile->entries[indexOfEntry];
+
+                theTarget->launcherSignature = theLauncher->signature;
+
+                if (theTarget->path != NULL && strlen(theTarget->path)) {
+                    printf("%s already has a path, overwriting with %s\n",
+                            theTarget->name,
+                            list->items[j].path);
+
+                    memset(&theTarget->path, 0x00, PATH_MAX);
+                }
+
+                memcpy(&theTarget->path, 
+                        list->items[j].path,
+                        strlen(list->items[j].path));
+
+            }
+        } 
+    }
+
+    freeRomList(list);
+    list = NULL;
+}
 
 void importFromSteam(Launcher *theLauncher) {
 
@@ -4483,6 +4622,7 @@ void importFromSteam(Launcher *theLauncher) {
 
     fclose(fp);
     free(registryPath);
+    free(lineBuffer);
     free(currentId);
 
     if (list->numItems == 0) { 
@@ -4622,7 +4762,7 @@ void importFromCustom(Launcher *theLauncher) {
 
 
             if (indexOfEntry > -1 && 
-                    matchScore > offblast->launchTargetFile->entries[indexOfEntry].matchScore) {
+                    matchScore > offblast->launchTargetFile->entries[indexOfEntry].matchScore)             {
 
                 LaunchTarget *theTarget = 
                     &offblast->launchTargetFile->entries[indexOfEntry];

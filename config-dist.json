@@ -45,7 +45,7 @@
             "avatar": "/home/karl/Pictures/avatars/karl.jpg",
             "cemu_account": "80000001",
             "retroarch_config": "/home/karl/.offblast/karl_ra.cfg",
-            "savepath": "/home/karl/SeraphStore/Games/Super Console/saves/karl/",
+            "save_path": "/home/karl/SeraphStore/Games/Super Console/saves/karl/",
             "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/karl/dolphin/karl.USA.raw"
         }, {
             "name": "Cloud",
@@ -53,7 +53,7 @@
             "avatar": "/home/karl/Pictures/avatars/cloud.jpg",
             "cemu_account": "80000002",
             "retroarch_config": "/home/karl/.offblast/cloud_ra.cfg",
-            "savepath": "/home/karl/SeraphStore/Games/Super Console/saves/cloud/",
+            "save_path": "/home/karl/SeraphStore/Games/Super Console/saves/cloud/",
             "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/cloud/dolphin/USA.raw"
         }, {
             "name": "Pai",
@@ -61,7 +61,7 @@
             "avatar": "/home/karl/Pictures/avatars/pai.jpg",
             "cemu_account": "80000003",
             "retroarch_config": "/home/karl/.offblast/pai_ra.cfg",
-            "savepath": "/home/karl/SeraphStore/Games/Super Console/saves/pai/",
+            "save_path": "/home/karl/SeraphStore/Games/Super Console/saves/pai/",
             "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/pai/dolphin/USA.raw"
         }
     ],

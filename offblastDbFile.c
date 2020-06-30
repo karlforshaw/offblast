@@ -222,9 +222,9 @@ int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file,
 
         if (tokensMatched >= 1) {
             score = (float)tokensMatched/numTokens;
-            printf("%s\t%s\n", searchString, file->entries[i].name);
-            printf("Matched %u/%u for a score of %f\n", 
-                    tokensMatched, numTokens, score);
+            //printf("%s\t%s\n", searchString, file->entries[i].name);
+            //printf("Matched %u/%u for a score of %f\n", 
+            //        tokensMatched, numTokens, score);
 
             if (score == bestScore) {
                 //printf("\n--CONFLICT not sure which is best, "
