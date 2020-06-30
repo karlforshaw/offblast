@@ -20,12 +20,11 @@
 
 // Alpha 0.5 
 //
+//      * Allow for searching by platform
+//          meny entries added, add an updaterestuls for platform function.
+//
 //      - BUG the cover images are now named wrong, we're using a 32 bit
 //          truncation of a 64 bit signature.
-//
-//      * split search results labels into letters, AB-AR . 
-//          Once this is in place, allow for searching by platform
-//          and add menu entries to show you your library by platform.
 //
 //      - think about the controller added and removed code, do we really 
 //          need to show the player select screen?
@@ -37,6 +36,10 @@
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
 //          popping up in your lists..
+//
+//      - Shell script launchers
+//
+//      - ScummVM launcher type
 //
 //      -. watch out for vram! glDeleteTextures
 //          We could move to a tile store object which has a fixed array of
@@ -1187,23 +1190,37 @@ int main(int argc, char** argv) {
 
     // Init Menu
     // Let's make enough room for say 20 menu items TODO
+    uint32_t iItem = 0;
     mainUi->menuItems = calloc(20, sizeof(MenuItem));
-    mainUi->menuItems[0].label = "Home";
-    mainUi->menuItems[0].callback = doHome;
-    mainUi->menuItems[1].label = "Search";
-    mainUi->menuItems[1].callback = doSearch;
-    mainUi->menuItems[2].label = "Change User";
-    mainUi->menuItems[2].callback = openPlayerSelect;
-    mainUi->menuItems[3].label = "Exit Offblast";
-    mainUi->menuItems[3].callback = setExit;
+    mainUi->menuItems[iItem].label = "Home";
+    mainUi->menuItems[iItem++].callback = doHome;
+    mainUi->numMenuItems++;
+
+    mainUi->menuItems[iItem].label = "Search";
+    mainUi->menuItems[iItem++].callback = doSearch;
+    mainUi->numMenuItems++;
+
+    mainUi->menuItems[iItem].label = "Change User";
+    mainUi->menuItems[iItem++].callback = openPlayerSelect;
+    mainUi->numMenuItems++;
+
+    for (uint32_t i = 0; i < offblast->nLaunchers; ++i) {
+        mainUi->menuItems[iItem].label = (char *) platformString(
+                offblast->launchers[i].platform);
+        mainUi->menuItems[iItem++].callback = openPlayerSelect;
+        mainUi->numMenuItems++;
+    }
+
+    mainUi->menuItems[iItem].label = "Exit Offblast";
+    mainUi->menuItems[iItem++].callback = setExit;
+    mainUi->numMenuItems++;
 
     mainUi->menuCursor = 0;
-    mainUi->numMenuItems = 4;
 
     if (1) {
-        mainUi->menuItems[4].label = "Shut Down Machine";
-        mainUi->menuItems[4].callback = shutdownMachine;
-        mainUi->numMenuItems = 5;
+        mainUi->menuItems[mainUi->numMenuItems].label = "Shut Down Machine";
+        mainUi->menuItems[mainUi->numMenuItems].callback = shutdownMachine;
+        mainUi->numMenuItems++;
     }
 
 
@@ -3994,7 +4011,6 @@ void updateResults() {
     }
 
     updateGameInfo();
-
 }
 
 
