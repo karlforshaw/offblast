@@ -869,11 +869,14 @@ int main(int argc, char** argv) {
                                 strlen(gameId));
 
                         // TODO harden
-                        if (strlen(gameDate) != 10) {
-                            printf("INVALID DATE FORMAT\n");
+                        if (strlen(gameDate) == 10) {
+                            memcpy(&newEntry->date, gameDate, 10);
+                        }
+                        if (strlen(gameDate) == 4 && strtod(gameDate, NULL)) {
+                            memcpy(&newEntry->date, gameDate, 4);
                         }
                         else {
-                            memcpy(&newEntry->date, gameDate, 10);
+                            printf("INVALID DATE FORMAT\n");
                         }
 
                         float score = -1;
