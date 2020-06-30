@@ -211,6 +211,7 @@ enum UiMode {
 typedef struct MenuItem {
     char *label;
     void (*callback)();
+    void *callbackArgs;
 } MenuItem;
 
 typedef struct PlayerSelectUi {
@@ -1207,7 +1208,12 @@ int main(int argc, char** argv) {
     for (uint32_t i = 0; i < offblast->nLaunchers; ++i) {
         mainUi->menuItems[iItem].label = (char *) platformString(
                 offblast->launchers[i].platform);
-        mainUi->menuItems[iItem++].callback = openPlayerSelect;
+
+        mainUi->menuItems[iItem].callbackArgs 
+            = offblast->launchers[i].platform;
+
+        mainUi->menuItems[iItem++].callback = updateResults;
+
         mainUi->numMenuItems++;
     }
 
@@ -3088,12 +3094,14 @@ void pressConfirm(int32_t joystickIndex) {
         if (offblast->mainUi.showMenu) {
             void (*callback)() = 
                 offblast->mainUi.menuItems[offblast->mainUi.menuCursor].callback;
+            void *callbackArgs = 
+                offblast->mainUi.menuItems[offblast->mainUi.menuCursor].callbackArgs;
 
             if (callback == NULL) 
                 printf("menu null backback!\n");
             else {
                 offblast->mainUi.showMenu = 0;
-                callback();
+                callback(callbackArgs);
             }
 
         }
@@ -3862,10 +3870,10 @@ void updateHomeLists(){
         = mainUi->homeRowset->movingToRow->name;
 }
 
-void updateResults() {
+void updateResults(char *platformString) {
 
     MainUi *mainUi = &offblast->mainUi;
-    if (!strlen(offblast->searchTerm)) {
+    if (platformString == NULL && !strlen(offblast->searchTerm)) {
         mainUi->searchRowset->numRows = 0;
         mainUi->activeRowset = mainUi->homeRowset;
     }
@@ -3883,8 +3891,20 @@ void updateResults() {
 
     for (int i = 0; i < targetFile->nEntries; ++i) {
 
-        if (strcasestr(targetFile->entries[i].name, offblast->searchTerm)) {
+        uint32_t isMatch = 0;
+        if (platformString == NULL
+            && strcasestr(targetFile->entries[i].name, offblast->searchTerm)) 
+        {
+            isMatch = 1;
+        }
+        else if (platformString != NULL  
+                && targetFile->entries[i].launcherSignature != 0 
+                && strcmp(targetFile->entries[i].platform, platformString) == 0) 
+        {
+            isMatch = 1;
+        }
 
+        if (isMatch) {
             if (tileCount >= 249) {
                 printf("More than 250 results!\n");
                 printf("\n");
@@ -4002,6 +4022,7 @@ void updateResults() {
 
         }
 
+        mainUi->searchRowset->movingToRow = firstRow;
         mainUi->searchRowset->movingToTarget = tiles[0].target;
         mainUi->searchRowset->rowCursor = mainUi->searchRowset->rows; 
     }
