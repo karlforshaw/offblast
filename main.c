@@ -20,13 +20,6 @@
 
 // Alpha 0.5 
 //
-//      - BUG the cover images are now named wrong, we're using a 32 bit
-//          truncation of a 64 bit signature.
-//
-//      - loading isn't represented properly, put a ui lock in place until 
-//          the window loses focus and then unlock the resume or stop 
-//          functionality
-//
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
 //          popping up in your lists..
@@ -277,6 +270,7 @@ typedef struct OffblastUi {
 
     uint32_t running;
     uint32_t shutdownFlag;
+    uint32_t loadingFlag;
     enum UiMode mode;
     char *configPath;
     char *playtimePath;
@@ -1462,6 +1456,13 @@ int main(int argc, char** argv) {
                 offblast->running = 0;
                 break;
             }
+            else if (event.type == SDL_WINDOWEVENT) {
+                switch (event.window.event) {
+                    case SDL_WINDOWEVENT_FOCUS_LOST:
+                        offblast->loadingFlag = 0;
+                        break;
+                }
+            }
             else if (event.type == SDL_CONTROLLERAXISMOTION) {
 
                 // TODO only if it's the player ones controller?
@@ -1946,6 +1947,8 @@ int main(int argc, char** argv) {
                         goldenRatioLarge(offblast->winHeight, 3);
 
             char *headerText = "Now playing";
+            if (offblast->loadingFlag)
+                headerText = "Now loading";
 
             uint32_t titleWidth = getTextLineWidth(headerText, 
                     offblast->titleCharData);
@@ -1998,29 +2001,31 @@ int main(int argc, char** argv) {
 
             yOffset -= (mainUi->boxHeight + 200);
 
-            double stopWidth = 
-                getTextLineWidth("Stop", offblast->infoCharData);
+            if (!offblast->loadingFlag) {
+                double stopWidth = 
+                    getTextLineWidth("Stop", offblast->infoCharData);
 
-            double resumeWidth = 
-                getTextLineWidth("Resume", offblast->infoCharData);
+                double resumeWidth = 
+                    getTextLineWidth("Resume", offblast->infoCharData);
 
-            double totalWidth = stopWidth + 200 + resumeWidth;
+                double totalWidth = stopWidth + 200 + resumeWidth;
 
-            renderText(offblast, 
-                    offblast->winWidth/2 - totalWidth/2, 
-                    yOffset,
-                    OFFBLAST_TEXT_INFO, 
-                    (offblast->uiStopButtonHot ? 0.6 : 1.0), 
-                    0,
-                    "Resume");
+                renderText(offblast, 
+                        offblast->winWidth/2 - totalWidth/2, 
+                        yOffset,
+                        OFFBLAST_TEXT_INFO, 
+                        (offblast->uiStopButtonHot ? 0.6 : 1.0), 
+                        0,
+                        "Resume");
 
-            renderText(offblast, 
-                    offblast->winWidth/2 - totalWidth/2 + resumeWidth + 200,
-                    yOffset,
-                    OFFBLAST_TEXT_INFO, 
-                    (offblast->uiStopButtonHot ? 1.0 : 0.6),  
-                    0,
-                    "Stop");
+                renderText(offblast, 
+                        offblast->winWidth/2 - totalWidth/2 + resumeWidth + 200,
+                        yOffset,
+                        OFFBLAST_TEXT_INFO, 
+                        (offblast->uiStopButtonHot ? 1.0 : 0.6),  
+                        0,
+                        "Stop");
+            }
 
 
         }
@@ -2119,6 +2124,7 @@ char *getCsvField(char *line, int fieldNo)
     return fieldString;
 }
 
+// TODO consider using window event resized
 uint32_t needsReRender(SDL_Window *window) 
 {
     int32_t newWidth, newHeight;
@@ -2980,6 +2986,7 @@ void launch() {
         }
         else if (launcherPid > 0) {
 
+            offblast->loadingFlag = 1;
             offblast->mode = OFFBLAST_UI_MODE_BACKGROUND;
             offblast->startPlayTick = SDL_GetTicks();
             offblast->runningPid = launcherPid;
@@ -3016,7 +3023,7 @@ void pressSearch(int32_t joystickIndex) {
 void pressConfirm(int32_t joystickIndex) {
 
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {
-        if(activeWindowIsOffblast()) {
+        if(activeWindowIsOffblast() && !offblast->loadingFlag) {
             if(offblast->uiStopButtonHot) 
             {
                 killRunningGame();
