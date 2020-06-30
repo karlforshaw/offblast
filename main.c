@@ -20,14 +20,8 @@
 
 // Alpha 0.5 
 //
-//      * Allow for searching by platform
-//          meny entries added, add an updaterestuls for platform function.
-//
 //      - BUG the cover images are now named wrong, we're using a 32 bit
 //          truncation of a 64 bit signature.
-//
-//      - think about the controller added and removed code, do we really 
-//          need to show the player select screen?
 //
 //      - loading isn't represented properly, put a ui lock in place until 
 //          the window loses focus and then unlock the resume or stop 
@@ -394,7 +388,7 @@ void animationTick(Animation *theAnimation);
 const char *platformString(char *key);
 void *downloadCover(char *coverArtUrl, UiTile *tile);
 void *loadCover(void *arg);
-char *getCoverPath();
+char *getCoverPath(uint64_t targetSignature);
 GLint loadShaderFile(const char *path, GLenum shaderType);
 GLuint createShaderProgram(GLint vertShader, GLint fragShader);
 void launch();
@@ -1532,10 +1526,11 @@ int main(int argc, char** argv) {
                     if (controller == NULL)  {
                         printf("failed to add %d\n", devEvent->which);
                     }
+                    /*
                     else {
                         offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
                     }
-
+                    */
                 }
             }
             else if (event.type == SDL_CONTROLLERDEVICEREMOVED) {
@@ -2544,13 +2539,13 @@ const char *platformString(char *key) {
 }
 
 
-char *getCoverPath(uint32_t signature) {
+char *getCoverPath(uint64_t signature) {
 
     char *homePath = getenv("HOME");
     assert(homePath);
 
     char *coverArtPath;
-    asprintf(&coverArtPath, "%s/.offblast/covers/%u.jpg", homePath, signature); 
+    asprintf(&coverArtPath, "%s/.offblast/covers/%"PRIu64".jpg", homePath, signature); 
 
     return coverArtPath;
 }
