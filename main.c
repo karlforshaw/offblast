@@ -20,11 +20,6 @@
 
 // Alpha 0.5 
 //
-//      * Launcher menu items are showing by platform, not by launcher
-//
-//      - STEAM, when there's no portrait image for the game, try and get the 
-//          landscape one instead
-//
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
 //          popping up in your lists..
@@ -1231,7 +1226,7 @@ int main(int argc, char** argv) {
         }
 
         mainUi->menuItems[iItem].callbackArgs 
-            = offblast->launchers[i].platform;
+            = &offblast->launchers[i].signature;
 
         mainUi->menuItems[iItem++].callback = updateResults;
 
@@ -3913,10 +3908,10 @@ void updateHomeLists(){
         = mainUi->homeRowset->movingToRow->name;
 }
 
-void updateResults(char *platformString) {
+void updateResults(uint32_t *launcherSignature) {
 
     MainUi *mainUi = &offblast->mainUi;
-    if (platformString == NULL && !strlen(offblast->searchTerm)) {
+    if (!launcherSignature && !strlen(offblast->searchTerm)) {
         mainUi->searchRowset->numRows = 0;
         mainUi->activeRowset = mainUi->homeRowset;
     }
@@ -3926,7 +3921,7 @@ void updateResults(char *platformString) {
 
     LaunchTargetFile* targetFile = offblast->launchTargetFile;
 
-    // TODO let's assume 250 results for now
+    // TODO let's assume 250 results for now XXX
     UiTile *tiles = calloc(250, sizeof(UiTile));
     assert(tiles);
 
@@ -3935,14 +3930,13 @@ void updateResults(char *platformString) {
     for (int i = 0; i < targetFile->nEntries; ++i) {
 
         uint32_t isMatch = 0;
-        if (platformString == NULL
-            && strcasestr(targetFile->entries[i].name, offblast->searchTerm)) 
+        if (!launcherSignature
+                && strcasestr(targetFile->entries[i].name, offblast->searchTerm)) 
         {
             isMatch = 1;
         }
-        else if (platformString != NULL  
-                && targetFile->entries[i].launcherSignature != 0 
-                && strcmp(targetFile->entries[i].platform, platformString) == 0) 
+        else if (launcherSignature  
+                && targetFile->entries[i].launcherSignature == *launcherSignature) 
         {
             isMatch = 1;
         }
