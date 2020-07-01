@@ -20,8 +20,6 @@
 
 // Alpha 0.5 
 //
-//      * rpcs3 launcher type
-//
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
 //          popping up in your lists..
