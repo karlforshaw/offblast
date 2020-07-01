@@ -20,6 +20,8 @@
 
 // Alpha 0.5 
 //
+//      * rpcs3 launcher type
+//
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
 //          popping up in your lists..
@@ -423,6 +425,7 @@ void importFromCemu(Launcher *theLauncher);
 void importFromSteam(Launcher *theLauncher);
 void importFromScummvm(Launcher *theLauncher);
 void importFromCustom(Launcher *theLauncher);
+void importFromRPCS3(Launcher *theLauncher);
 WindowInfo getOffblastWindowInfo();
 uint32_t activeWindowIsOffblast();
 uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature, 
@@ -732,6 +735,16 @@ int main(int argc, char** argv) {
             memcpy(&theLauncher->platform, 
                     "steam", strlen("steam"));
         }
+        else if (strcmp("rpcs3", theLauncher->type) == 0){
+            memcpy(&theLauncher->platform, 
+                    "playstation_3", strlen("playstation_3"));
+
+            json_object_object_get_ex(launcherNode, "cmd",
+                    &cmdStringNode);
+            theCommand = json_object_get_string(cmdStringNode);
+            assert(strlen(theCommand) < 512);
+            memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
+        }
         else if (strcmp("scummvm", theLauncher->type) == 0){
             memcpy(&theLauncher->platform, 
                     "pc", strlen("pc"));
@@ -972,6 +985,9 @@ int main(int argc, char** argv) {
         }
         else if (strcmp(theLauncher->type, "scummvm") == 0) {
             importFromScummvm(theLauncher);
+        }
+        else if (strcmp(theLauncher->type, "rpcs3") == 0) {
+            importFromRPCS3(theLauncher);
         }
         else if (strcmp(theLauncher->type, "custom") == 0||
                 strcmp(theLauncher->type, "retroarch") == 0) 
@@ -4526,6 +4542,132 @@ void importFromScummvm(Launcher *theLauncher) {
     free(lineBuffer);
     free(registryPath);
     free(currentId);
+    free(currentName);
+
+    if (list->numItems == 0) { 
+        printf("no items found\n");
+        freeRomList(list);
+        list = NULL;
+        return;
+    }
+
+    uint32_t rescrapeRequired = 0;
+    if (launcherContentsCacheUpdated(theLauncher->signature, romListContentSig(list))) {
+        printf("Launcher targets for %u have changed!\n", 
+                theLauncher->signature);
+
+        rescrapeRequired = 1;
+    }
+    else {
+        printf("Contents unchanged for: %u\n", theLauncher->signature);
+    }
+
+
+    if (rescrapeRequired) {
+
+        for (uint32_t j=0; j < list->numItems; j++) {
+
+            float matchScore = 0;
+            int32_t indexOfEntry = launchTargetIndexByNameMatch(
+                    offblast->launchTargetFile, 
+                    list->items[j].name, 
+                    theLauncher->platform,
+                    &matchScore);
+
+            printf("found by name at index %d\n", indexOfEntry);
+
+            if (indexOfEntry > -1 &&
+                    matchScore > offblast->launchTargetFile->entries[indexOfEntry].matchScore) 
+            {
+
+                LaunchTarget *theTarget = 
+                    &offblast->launchTargetFile->entries[indexOfEntry];
+
+                theTarget->launcherSignature = theLauncher->signature;
+
+                if (theTarget->path != NULL && strlen(theTarget->path)) {
+                    printf("%s already has a path, overwriting with %s\n",
+                            theTarget->name,
+                            list->items[j].path);
+
+                    memset(&theTarget->path, 0x00, PATH_MAX);
+                }
+
+                memcpy(&theTarget->path, 
+                        list->items[j].path,
+                        strlen(list->items[j].path));
+
+            }
+        } 
+    }
+
+    freeRomList(list);
+    list = NULL;
+}
+
+void importFromRPCS3(Launcher *theLauncher) {
+
+    char *homePath = getenv("HOME");
+    char *registryPath = NULL;
+    asprintf(&registryPath, "%s/.config/rpcs3/games.yml", homePath);
+
+    FILE *fp = fopen(registryPath, "r");
+    if (fp == NULL) {
+        perror("Couldn't open rpcs3 games directory\n");
+        return;
+    }
+
+    RomFoundList *list = newRomList();
+
+    char *lineBuffer = calloc(512, sizeof(char));
+    assert(lineBuffer);
+
+    char *currentPath = calloc(PATH_MAX, sizeof(char));
+    char *currentName = calloc(64, sizeof(char));
+    char *pathToRom = "PS3_GAME/USRDIR/EBOOT.BIN";
+
+    while(fgets(lineBuffer, 512, fp)) {
+
+        memset(currentPath, 0, PATH_MAX);
+
+        // Get the path
+        char *startP = strchr(lineBuffer, ' ') +1;
+        char *closePos = strchr(lineBuffer, '\n');
+        if (!closePos) {
+            printf("falling back\n");
+            closePos = strrchr(lineBuffer, '/')+1;
+;
+        }
+        assert(closePos);
+
+        assert(closePos-(lineBuffer+1) <= PATH_MAX);
+
+        memcpy(currentPath, startP, 
+                closePos-(startP));
+
+        char *appendChar = strrchr(currentPath, '/') +1;
+        assert(appendChar);
+        strncpy(appendChar, pathToRom, strlen(pathToRom));
+
+        // Get the name
+        startP = strchr(lineBuffer, '[') +1;
+        char *endP = strchr(lineBuffer, ']');
+        if (!endP || !startP) continue;
+
+        memset(currentName, 0, 64);
+        assert(endP-startP <= 64);
+        memcpy(currentName, startP, endP-startP);
+
+        printf("ps3 game: %s\n%s\n", currentName, currentPath);
+
+        pushToRomList(list, currentPath, currentName, NULL);
+    }
+
+    fclose(fp);
+
+    free(lineBuffer);
+    free(registryPath);
+    free(currentPath);
     free(currentName);
 
     if (list->numItems == 0) { 
