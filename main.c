@@ -1207,7 +1207,7 @@ int main(int argc, char** argv) {
     // Init Menu
     // Let's make enough room for say 20 menu items TODO
     uint32_t iItem = 0;
-    mainUi->menuItems = calloc(20, sizeof(MenuItem));
+    mainUi->menuItems = calloc(offblast->nLaunchers+5, sizeof(MenuItem));
     mainUi->menuItems[iItem].label = "Home";
     mainUi->menuItems[iItem++].callback = doHome;
     mainUi->numMenuItems++;
@@ -1354,6 +1354,8 @@ int main(int argc, char** argv) {
     stbi_write_png("debugtest.png", offblast->textBitmapWidth, offblast->textBitmapHeight, 1, debugAtlas, 0);
 
     free(debugAtlas);
+    free(fontContents);
+    fontContents = NULL;
     debugAtlas = NULL;
 
     offblast->player.jsIndex = -1;
@@ -2678,7 +2680,6 @@ void *downloadCover(char *coverArtPath, UiTile *tile) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
 
     uint32_t res = curl_easy_perform(curl);
-
     curl_easy_cleanup(curl);
     free(dynamicUrl);
 
@@ -4322,6 +4323,7 @@ uint32_t romListContentSig(RomFoundList *list) {
 
 void freeRomList(RomFoundList *list) {
     free(list->items);
+    list->items = NULL;
     free(list);
 }
 
@@ -4529,6 +4531,7 @@ void importFromScummvm(Launcher *theLauncher) {
     if (list->numItems == 0) { 
         printf("no items found\n");
         freeRomList(list);
+        list = NULL;
         return;
     }
 
@@ -4649,6 +4652,7 @@ void importFromSteam(Launcher *theLauncher) {
     if (list->numItems == 0) { 
         printf("no items found\n");
         freeRomList(list);
+        list = NULL;
         return;
     }
 
@@ -4692,14 +4696,14 @@ void importFromSteam(Launcher *theLauncher) {
 
 void importFromCustom(Launcher *theLauncher) {
 
-    RomFoundList *list = newRomList();
-
     // TODO NFS shares when unavailable just lock this up!
     DIR *dir = opendir(theLauncher->romPath);
     if (dir == NULL) {
         printf("Path %s failed to open\n", theLauncher->romPath);
         return;
     }
+
+    RomFoundList *list = newRomList();
 
     struct dirent *currentEntry;
     while ((currentEntry = readdir(dir)) != NULL) {
@@ -4814,6 +4818,7 @@ void importFromCustom(Launcher *theLauncher) {
 
     freeRomList(list);
     list = NULL;
+    return;
 }
 
 
