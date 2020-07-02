@@ -1,7 +1,6 @@
 # OffBlast
 An experimental game launcher written in C with SDL2. This is ALPHA software, please be patient.
-As of now, you can happily use this to launch games using Retroarch, Cemu, Dolphin, and Steam. I'm adding new platforms 
-all the time so keep checking back or open an issue.
+As of now, you can happily use this to launch games using Retroarch, Cemu, Dolphin, PCSX2, RPCS3, SCUMMVM, Steam, and set up custom launchers with shell scripts. I'm adding new platforms all the time so keep checking back or open an issue.
 
 [![offblast.png](https://i.postimg.cc/YjB0Rf4M/offblast.png)](https://postimg.cc/Lgvm6PBb)
 
