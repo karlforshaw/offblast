@@ -4,10 +4,6 @@
 #define MAX_PLATFORMS 50 
 #define OFFBLAST_MAX_SEARCH 64
 
-#define LOAD_STATE_COLD 0
-#define LOAD_STATE_LOADING 1
-#define LOAD_STATE_READY 2
-#define LOAD_STATE_COMPLETE 3
 
 #define OFFBLAST_TEXT_TITLE 1
 #define OFFBLAST_TEXT_INFO 2
@@ -20,7 +16,11 @@
 
 // Alpha 0.5 
 //
-//      testing
+//      - Download queue
+//          multiple downloader threads,
+//          multiple loader threads (based on how many cores),
+//          Make sure you clear the loading queue before changing the tileset
+//
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
 //          popping up in your lists..
@@ -52,7 +52,6 @@
 //  anything in the player section could be included in the launcher entries like
 //  %PLAYER_FOO%
 //
-//
 // TODO Hours played in info
 //
 // TODO steam support
@@ -60,6 +59,7 @@
 //
 // TODO List caches, I think when we generate lists we should cache
 //      them in files.. maybe?
+//
 // TODO Collections, this is more of an opengamedb ticket but It would be
 //      cool to feature collections from youtubers such as metal jesus.
 //
@@ -123,8 +123,12 @@ typedef struct Player {
     User *user;
 } Player;
 
+#define IMAGE_STATE_COLD 0
+#define IMAGE_STATE_LOADING 1
+#define IMAGE_STATE_READY 2
+#define IMAGE_STATE_COMPLETE 3
 typedef struct Image {
-    uint8_t loadState;
+    uint8_t state;
     GLuint textureHandle;
     uint32_t width;
     uint32_t height;
@@ -267,6 +271,43 @@ typedef struct LauncherContentsFile {
     LauncherContentsHash *entries;
 } LauncherContentsFile;
 
+#define DOWNLOAD_STATE_READY 0
+#define DOWNLOAD_STATE_COLD 1
+#define DOWNLOAD_QUEUE_LENGTH 33
+typedef struct DownloadItem {
+    char url[PATH_MAX];
+    uint64_t targetSignature;
+    uint32_t status;
+} DownloadItem;
+
+typedef struct DownloadQueue {
+    DownloadItem items[DOWNLOAD_QUEUE_LENGTH];
+} DownloadQueue;
+
+typedef struct DownloaderContext {
+    DownloadQueue queue;
+    pthread_mutex_t lock;
+} DownloaderContext;
+
+#define LOAD_STATE_FREE 0
+#define LOAD_STATE_LOADING 1
+#define LOAD_STATE_READY 2
+#define LOAD_QUEUE_LENGTH 33
+typedef struct LoadItem {
+    UiTile *tile;
+    uint32_t status;
+} LoadItem;
+
+typedef struct LoadQueue {
+    LoadItem items[LOAD_QUEUE_LENGTH];
+} LoadQueue;
+
+
+typedef struct LoaderContext {
+    LoadQueue queue;
+    pthread_mutex_t lock;
+} LoaderContext;
+
 typedef struct OffblastUi {
 
     uint32_t running;
@@ -352,6 +393,9 @@ typedef struct OffblastUi {
 
     uint32_t uiStopButtonHot;
 
+    DownloaderContext downloader;
+    LoaderContext imageLoader;
+
 } OffblastUi;
 
 typedef struct CurlFetch {
@@ -381,9 +425,7 @@ void rowNameFaded();
 uint32_t animationRunning();
 void animationTick(Animation *theAnimation);
 const char *platformString(char *key);
-void *downloadCover(char *coverArtUrl, UiTile *tile);
-void *loadCover(void *arg);
-char *getCoverPath(uint64_t targetSignature);
+char *getCoverPath(LaunchTarget *);
 GLint loadShaderFile(const char *path, GLenum shaderType);
 GLuint createShaderProgram(GLint vertShader, GLint fragShader);
 void launch();
@@ -432,6 +474,9 @@ uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature,
 void logMissingGame(char *missingGamePath);
 void calculateRowGeometry(UiRow *row);
 
+void *downloadMain(void *arg); 
+void *imageLoadMain(void *arg); 
+
 OffblastUi *offblast;
 
 void openPlayerSelect() {
@@ -454,7 +499,6 @@ void doHome() {
     offblast->mainUi.rowGeometryInvalid = 1;
     updateGameInfo();
 }
-
 
 
 int main(int argc, char** argv) {
@@ -1138,12 +1182,29 @@ int main(int argc, char** argv) {
     offblast->nUsers++;
     loadPlaytimeFile();
 
-    // XXX START SDL HERE
+
+    // CREATE WORKER THREADS
+    pthread_mutex_init(&offblast->downloader.lock, NULL);
+    pthread_mutex_init(&offblast->imageLoader.lock, NULL);
+
+    pthread_t downloadThread;
+    pthread_create(
+            &downloadThread, 
+            NULL, 
+            downloadMain, 
+            (void*)&offblast->downloader);
+
+
+    pthread_t imageLoadThread;
+    pthread_create(
+            &imageLoadThread, 
+            NULL, 
+            imageLoadMain, 
+            (void*)&offblast->imageLoader);
 
     
 
-
-
+    // § START SDL HERE
     if (SDL_Init(SDL_INIT_VIDEO |
                 SDL_INIT_JOYSTICK | 
                 SDL_INIT_GAMECONTROLLER) != 0) 
@@ -1395,7 +1456,7 @@ int main(int argc, char** argv) {
                     &playerSelectUi->images[i].textureHandle, 
                     imageData, w, h);
 
-            playerSelectUi->images[i].loadState = 1;
+            playerSelectUi->images[i].state = IMAGE_STATE_COMPLETE;
             playerSelectUi->images[i].width = w;
             playerSelectUi->images[i].height = h;
             
@@ -2110,6 +2171,11 @@ int main(int argc, char** argv) {
     SDL_DestroyWindow(window);
     SDL_Quit();
 
+    pthread_kill(downloadThread, SIGTERM);
+    pthread_kill(imageLoadThread, SIGTERM);
+    pthread_mutex_destroy(&offblast->downloader.lock);
+    pthread_mutex_destroy(&offblast->imageLoader.lock);
+
     if (offblast->shutdownFlag) {
         system("systemctl poweroff");
     }
@@ -2598,131 +2664,159 @@ const char *platformString(char *key) {
 }
 
 
-char *getCoverPath(uint64_t signature) {
+char *getCoverPath(LaunchTarget *target) {
 
+    char *coverArtPath;
     char *homePath = getenv("HOME");
     assert(homePath);
 
-    char *coverArtPath;
-    asprintf(&coverArtPath, "%s/.offblast/covers/%"PRIu64".jpg", homePath, signature); 
+    if (strcmp(target->platform, "steam") == 0) {
+        coverArtPath = calloc(PATH_MAX, sizeof(char));
+        asprintf(&coverArtPath, 
+                "%s/.steam/steam/appcache/librarycache/%s_library_600x900.jpg", 
+                homePath,
+                target->id);
+    }
+    else {
+        asprintf(&coverArtPath, "%s/.offblast/covers/%"PRIu64".jpg", homePath, 
+                target->targetSignature); 
+    }
 
     return coverArtPath;
 }
 
-void *loadCover(void *arg) {
+void *imageLoadMain(void *arg) {
+    LoaderContext *ctx = arg;
 
-    UiTile* tile = (UiTile *)arg;
-    tile->image.loadState = 
-        LOAD_STATE_LOADING;
+    while (1) {
+        pthread_mutex_lock(&ctx->lock);
 
-    char *coverArtPath;
+        for (uint32_t i=0; i < LOAD_QUEUE_LENGTH; ++i) {
+            if(ctx->queue.items[i].status == LOAD_STATE_LOADING) {
 
-    if (strcmp(tile->target->platform, "steam") == 0) {
-        coverArtPath = calloc(PATH_MAX, sizeof(char));
-        char *homePath = getenv("HOME");
-        asprintf(&coverArtPath, 
-                "%s/.steam/steam/appcache/librarycache/%s_library_600x900.jpg", 
-                homePath,
-                tile->target->id);
-    }
-    else 
-        coverArtPath = getCoverPath(tile->target->targetSignature); 
+                UiTile *tile = ctx->queue.items[i].tile;
+                char *coverPath = getCoverPath(tile->target);
+                int n;
 
-    int n;
-    stbi_set_flip_vertically_on_load(1);
-    tile->image.atlas = stbi_load(
-            coverArtPath,
-            (int*)&tile->image.width, (int*)&tile->image.height, 
-            &n, 4);
+                stbi_set_flip_vertically_on_load(1);
+                tile->image.atlas = stbi_load(
+                        coverPath,
+                        (int*)&tile->image.width, (int*)&tile->image.height, 
+                        &n, 4);
 
-    if(tile->image.atlas == NULL) {
+                free(coverPath);
 
-        printf("need to download %s\n", coverArtPath);
-
-        downloadCover(coverArtPath, tile);
-        tile->image.atlas = stbi_load(
-                coverArtPath,
-                (int*)&tile->image.width, (int*)&tile->image.height, 
-                &n, 4);
-
-        if (tile->image.atlas == NULL) {
-            printf("giving up on downloading cover\n");
-            free(coverArtPath);
-            return NULL;
+                if(tile->image.atlas == NULL) {
+                    printf("need to download %s\n", coverPath);
+                    continue;
+                }
+                else {
+                    ctx->queue.items[i].status = LOAD_STATE_FREE;
+                    tile->image.state= IMAGE_STATE_READY;
+                    break;
+                }
+            }
         }
 
+        pthread_mutex_unlock(&ctx->lock);
+        usleep(30);
     }
 
-    tile->image.loadState = LOAD_STATE_READY;
-
-    free(coverArtPath);
-
-    return NULL;
 }
 
-void *downloadCover(char *coverArtPath, UiTile *tile) {
+void *downloadMain(void *arg) {
+    DownloaderContext *ctx = arg;
 
-    CurlFetch fetch = {};
+    char *homePath = getenv("HOME");
+    assert(homePath);
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    CURL *curl = curl_easy_init();
-    if (!curl) {
-        printf("CURL init fail.\n");
-        return NULL;
-    }
-    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+    char *workingPath = calloc(PATH_MAX, sizeof(char));
+    char *workingUrl = calloc(PATH_MAX, sizeof(char));
 
-    char *url = NULL;
-    char *dynamicUrl = calloc(PATH_MAX, sizeof(char));
+    while (1) {
 
-    if (strcmp(tile->target->platform, "steam") == 0) {
-        asprintf(&dynamicUrl, 
-            "https://steamcdn-a.akamaihd.net/steam/apps/%s/library_600x900.jpg", 
-            tile->target->id);
+        for (uint32_t i=0; i < DOWNLOAD_QUEUE_LENGTH; ++i) {
+            pthread_mutex_lock(&ctx->lock);
+            if (ctx->queue.items[i].status == DOWNLOAD_STATE_COLD) {
+                
+                snprintf(workingPath, 
+                        PATH_MAX,
+                        "%s/.offblast/covers/%"PRIu64".jpg",
+                        homePath, 
+                        ctx->queue.items[i].targetSignature); 
 
-        url = dynamicUrl;
-    }
-    else {
-        url = (char *) tile->target->coverUrl;
-    }
+                snprintf(workingUrl, 
+                        PATH_MAX,
+                        "%s",
+                        ctx->queue.items[i].url); 
 
-    printf("Downloading Art for %s\n", 
-            tile->target->name);
+                pthread_mutex_unlock(&ctx->lock);
 
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+                CurlFetch fetch = {};
 
-    uint32_t res = curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
-    free(dynamicUrl);
+                curl_global_init(CURL_GLOBAL_DEFAULT);
+                CURL *curl = curl_easy_init();
+                if (!curl) {
+                    printf("CURL init fail.\n");
+                    return NULL;
+                }
+                //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+                curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
-    if (res != CURLE_OK) {
-        printf("%s\n", curl_easy_strerror(res));
-        return NULL;
-    } else {
+                curl_easy_setopt(curl, CURLOPT_URL, workingUrl);
 
-        int w, h, channels;
-        unsigned char *image = stbi_load_from_memory(fetch.data, fetch.size, &w, &h, &channels, 4);
+                curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
 
-        if (image == NULL) {
-            printf("Couldnt load the image from memory\n");
-            return NULL;
+                uint32_t res = curl_easy_perform(curl);
+                curl_easy_cleanup(curl);
+
+                if (res != CURLE_OK) {
+                    // TODO how do we notify that it's dead?
+                    printf("%s\n", curl_easy_strerror(res));
+                    continue;
+                } else {
+
+                    int w, h, channels;
+                    unsigned char *image = 
+                        stbi_load_from_memory(
+                                fetch.data, 
+                                fetch.size, &w, &h, &channels, 4);
+
+                    if (image == NULL) {
+                        // TODO dead link?
+                        printf("Couldnt load the image from memory\n");
+                        printf("%s\n", workingUrl);
+                        continue;
+                    }
+
+                    stbi_flip_vertically_on_write(1);
+                    if (!stbi_write_jpg(workingPath, w, h, 4, image, 100)) {
+                        free(image);
+                        printf("Couldnt save JPG");
+                    }
+                    else {
+                        free(image);
+                    }
+                }
+
+                free(fetch.data);
+
+                pthread_mutex_lock(&ctx->lock);
+                ctx->queue.items[i].status = DOWNLOAD_STATE_READY;
+                pthread_mutex_unlock(&ctx->lock);
+
+                break;
+            }
+            else {
+                pthread_mutex_unlock(&ctx->lock);
+            }
         }
 
-        stbi_flip_vertically_on_write(1);
-        if (!stbi_write_jpg(coverArtPath, w, h, 4, image, 100)) {
-            free(image);
-            printf("Couldnt save JPG");
-        }
-        else {
-            free(image);
-        }
+        usleep(30);
     }
 
-    free(fetch.data);
-    return NULL;
+    free(workingPath);
 }
 
 uint32_t powTwoFloor(uint32_t val) {
@@ -3620,17 +3714,66 @@ void loadTexture(UiTile *tile) {
     if (tile->image.textureHandle == 0 &&
             tile->target->coverUrl != NULL) 
     {
-        if (tile->image.loadState == LOAD_STATE_COLD) {
+        if (tile->image.state == IMAGE_STATE_COLD) {
 
-            // Start a loading thread
-            pthread_t theThread;
-            pthread_create(
-                    &theThread, 
-                    NULL, 
-                    loadCover, 
-                    (void*)tile);
+            char *coverArtPath = getCoverPath(tile->target); 
+            struct stat fileInfo;
+            if (lstat(coverArtPath, &fileInfo) == 0) {
+
+                pthread_mutex_lock(&offblast->downloader.lock);
+
+                for (uint32_t i=0; i < LOAD_QUEUE_LENGTH; ++i) {
+                    if (offblast->imageLoader.queue.items[i].status 
+                            == LOAD_STATE_FREE) 
+                    {
+                        offblast->imageLoader.queue.items[i].tile = tile;
+                        offblast->imageLoader.queue.items[i].status = 
+                            LOAD_STATE_LOADING;
+
+                        break;
+                    }
+                }
+
+                pthread_mutex_unlock(&offblast->downloader.lock);
+            }
+            else {
+                // ENQUEUE
+                pthread_mutex_lock(&offblast->downloader.lock);
+                for (uint32_t i=0; i < DOWNLOAD_QUEUE_LENGTH; ++i) {
+                    if (offblast->downloader.queue.items[i].status 
+                            == DOWNLOAD_STATE_READY) 
+                    {
+
+                        if (strcmp(tile->target->platform, "steam") == 0) {
+                            snprintf(
+                                    (char *) &offblast->downloader.queue.items[i].url,
+                                    PATH_MAX,
+                                    "https://steamcdn-a.akamaihd.net/steam/apps/%s/library_600x900.jpg", 
+                                    tile->target->id);
+                        }
+                        else {
+                            snprintf(
+                                    (char *) &offblast->downloader.queue.items[i].url,
+                                    PATH_MAX,
+                                    "%s", 
+                                    (char *) tile->target->coverUrl);
+                        }
+
+                        offblast->downloader.queue.items[i].targetSignature = 
+                            tile->target->targetSignature;
+
+                        offblast->downloader.queue.items[i].status = 
+                            DOWNLOAD_STATE_COLD;
+
+                        break;
+                    }
+                }
+                pthread_mutex_unlock(&offblast->downloader.lock);
+            }
+
+            free(coverArtPath);
         }
-        else if (tile->image.loadState == LOAD_STATE_READY) {
+        else if (tile->image.state == IMAGE_STATE_READY) {
 
             glGenTextures(1, &tile->image.textureHandle);
             imageToGlTexture(
@@ -3642,7 +3785,8 @@ void loadTexture(UiTile *tile) {
             glBindTexture(GL_TEXTURE_2D, 
                     tile->image.textureHandle);
 
-            tile->image.loadState = LOAD_STATE_COMPLETE;
+            // TODO mutex lock
+            tile->image.state = IMAGE_STATE_COMPLETE;
             free(tile->image.atlas);
             tile->image.atlas = NULL;
 
@@ -4088,6 +4232,7 @@ void updateResults(uint32_t *launcherSignature) {
         mainUi->searchRowset->rowCursor = mainUi->searchRowset->rows; 
     }
     else {
+        free(mainUi->searchRowset->rows[0].tiles);
         mainUi->searchRowset->numRows = 0;
         mainUi->activeRowset = mainUi->homeRowset;
     }
