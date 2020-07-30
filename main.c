@@ -17,8 +17,13 @@
 // Alpha 0.5 
 //
 //      - Download queue
+//          We need some way of communicating back that the link is dead.
+//          Instead of just constantly trying to download a junk url.
+//
 //          multiple downloader threads,
+//
 //          multiple loader threads (based on how many cores),
+//
 //          Make sure you clear the loading queue before changing the tileset
 //
 //      - consider importing everything on first load, this will mean if 
