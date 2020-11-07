@@ -17,14 +17,14 @@
 // Alpha 0.5 
 //
 //      - Download queue
-//          We need some way of communicating back that the link is dead.
+//
+//          * We need some way of communicating back that the link is dead.
 //          Instead of just constantly trying to download a junk url.
 //
 //          multiple downloader threads,
 //
 //          multiple loader threads (based on how many cores),
 //
-//          Make sure you clear the loading queue before changing the tileset
 //
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
@@ -2694,6 +2694,7 @@ void *imageLoadMain(void *arg) {
     LoaderContext *ctx = arg;
 
     while (1) {
+        // TODO only lock when we need to
         pthread_mutex_lock(&ctx->lock);
 
         for (uint32_t i=0; i < LOAD_QUEUE_LENGTH; ++i) {
@@ -2739,7 +2740,6 @@ void *downloadMain(void *arg) {
     char *workingUrl = calloc(PATH_MAX, sizeof(char));
 
     while (1) {
-
         for (uint32_t i=0; i < DOWNLOAD_QUEUE_LENGTH; ++i) {
             pthread_mutex_lock(&ctx->lock);
             if (ctx->queue.items[i].status == DOWNLOAD_STATE_COLD) {
@@ -3725,7 +3725,7 @@ void loadTexture(UiTile *tile) {
             struct stat fileInfo;
             if (lstat(coverArtPath, &fileInfo) == 0) {
 
-                pthread_mutex_lock(&offblast->downloader.lock);
+                pthread_mutex_lock(&offblast->imageLoader.lock);
 
                 for (uint32_t i=0; i < LOAD_QUEUE_LENGTH; ++i) {
                     if (offblast->imageLoader.queue.items[i].status 
@@ -3739,7 +3739,7 @@ void loadTexture(UiTile *tile) {
                     }
                 }
 
-                pthread_mutex_unlock(&offblast->downloader.lock);
+                pthread_mutex_unlock(&offblast->imageLoader.lock);
             }
             else {
                 // ENQUEUE
@@ -4084,13 +4084,15 @@ void updateHomeLists(){
 void updateResults(uint32_t *launcherSignature) {
 
     MainUi *mainUi = &offblast->mainUi;
+    /*
     if (!launcherSignature && !strlen(offblast->searchTerm)) {
         mainUi->searchRowset->numRows = 0;
         mainUi->activeRowset = mainUi->homeRowset;
     }
     else {
+    */
         mainUi->activeRowset = mainUi->searchRowset;
-    }
+    //}
 
     LaunchTargetFile* targetFile = offblast->launchTargetFile;
 
@@ -4153,7 +4155,16 @@ void updateResults(uint32_t *launcherSignature) {
 
     if (tileCount > 0) {
 
-        free(mainUi->searchRowset->rows[0].tiles);
+        // Clear load queue?
+        pthread_mutex_lock(&offblast->imageLoader.lock);
+        for (uint32_t i=0; i < LOAD_QUEUE_LENGTH; ++i) {
+            offblast->imageLoader.queue.items[i].status = LOAD_STATE_FREE; 
+        }
+        pthread_mutex_unlock(&offblast->imageLoader.lock);
+
+        // clear download queue?
+        if (mainUi->searchRowset->rows[0].tiles)
+            free(mainUi->searchRowset->rows[0].tiles);
 
         int32_t onRow = -1;
         uint32_t onTile = 0;
@@ -4238,8 +4249,9 @@ void updateResults(uint32_t *launcherSignature) {
     }
     else {
         free(mainUi->searchRowset->rows[0].tiles);
+        mainUi->searchRowset->rows[0].tiles = NULL;
         mainUi->searchRowset->numRows = 0;
-        mainUi->activeRowset = mainUi->homeRowset;
+        //mainUi->activeRowset = mainUi->homeRowset;
     }
 
     updateGameInfo();
