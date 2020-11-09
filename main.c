@@ -25,6 +25,12 @@
 //
 //          multiple loader threads (based on how many cores),
 //
+//      - Tile store, I would like to make it so that we don't have to lock
+//          the ui thread when loading an image into memory.. If we had
+//          a tilestore we could manage things a little better I think, only
+//          the loader thread would be allowed to write to it and we could use
+//          status on the stored tile to figure out whether we should load the 
+//          texture or not.
 //
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
@@ -41,10 +47,6 @@
 //
 //      - Deadzone checks
 //         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
-//
-//      BUGS
-//       - Image loading has a bug somewhere, if you mess around enough with 
-//          search, everything goes out of the window
 //
 //       - games with poor match scores should probably be logged to the missing
 //          games log, we're allowing bad matches to go through as long as the 
@@ -132,6 +134,7 @@ typedef struct Player {
 #define IMAGE_STATE_LOADING 1
 #define IMAGE_STATE_READY 2
 #define IMAGE_STATE_COMPLETE 3
+#define IMAGE_STATE_DEAD 4
 typedef struct Image {
     uint8_t state;
     GLuint textureHandle;
@@ -278,11 +281,13 @@ typedef struct LauncherContentsFile {
 
 #define DOWNLOAD_STATE_READY 0
 #define DOWNLOAD_STATE_COLD 1
+#define DOWNLOAD_STATE_DEAD 2
 #define DOWNLOAD_QUEUE_LENGTH 33
 typedef struct DownloadItem {
     char url[PATH_MAX];
     uint64_t targetSignature;
     uint32_t status;
+    UiTile *tile;
 } DownloadItem;
 
 typedef struct DownloadQueue {
@@ -1199,7 +1204,8 @@ int main(int argc, char** argv) {
             downloadMain, 
             (void*)&offblast->downloader);
 
-
+    // TODO create multiple of these depending on how many cores we have 
+    // available
     pthread_t imageLoadThread;
     pthread_create(
             &imageLoadThread, 
@@ -2694,11 +2700,12 @@ void *imageLoadMain(void *arg) {
     LoaderContext *ctx = arg;
 
     while (1) {
-        // TODO only lock when we need to
         pthread_mutex_lock(&ctx->lock);
 
         for (uint32_t i=0; i < LOAD_QUEUE_LENGTH; ++i) {
-            if(ctx->queue.items[i].status == LOAD_STATE_LOADING) {
+            if(ctx->queue.items[i].status == LOAD_STATE_LOADING 
+                    && ctx->queue.items[i].tile->target != NULL) 
+            {
 
                 UiTile *tile = ctx->queue.items[i].tile;
                 char *coverPath = getCoverPath(tile->target);
@@ -2717,6 +2724,9 @@ void *imageLoadMain(void *arg) {
                     continue;
                 }
                 else {
+                    // So there's a chance that the queue has changed since
+                    // we started loading.. we need to abandon if that's the
+                    // case
                     ctx->queue.items[i].status = LOAD_STATE_FREE;
                     tile->image.state= IMAGE_STATE_READY;
                     break;
@@ -2725,7 +2735,7 @@ void *imageLoadMain(void *arg) {
         }
 
         pthread_mutex_unlock(&ctx->lock);
-        usleep(30);
+        usleep(16666);
     }
 
 }
@@ -2741,8 +2751,12 @@ void *downloadMain(void *arg) {
 
     while (1) {
         for (uint32_t i=0; i < DOWNLOAD_QUEUE_LENGTH; ++i) {
+
             pthread_mutex_lock(&ctx->lock);
             if (ctx->queue.items[i].status == DOWNLOAD_STATE_COLD) {
+
+                UiTile * originalTile = ctx->queue.items[i].tile;
+                pthread_mutex_unlock(&ctx->lock);
                 
                 snprintf(workingPath, 
                         PATH_MAX,
@@ -2755,7 +2769,6 @@ void *downloadMain(void *arg) {
                         "%s",
                         ctx->queue.items[i].url); 
 
-                pthread_mutex_unlock(&ctx->lock);
 
                 CurlFetch fetch = {};
 
@@ -2777,9 +2790,25 @@ void *downloadMain(void *arg) {
                 curl_easy_cleanup(curl);
 
                 if (res != CURLE_OK) {
-                    // TODO how do we notify that it's dead?
-                    printf("%s\n", curl_easy_strerror(res));
-                    continue;
+
+                    pthread_mutex_lock(&ctx->lock);
+                    if(ctx->queue.items[i].tile->target != NULL 
+
+                        && ctx->queue.items[i].targetSignature
+                                == ctx->queue.items[i].tile->target->targetSignature 
+
+                        && ctx->queue.items[i].tile == originalTile) 
+                    {
+                        ctx->queue.items[i].tile->image.state 
+                            = IMAGE_STATE_DEAD;
+                    }
+                    ctx->queue.items[i].status = DOWNLOAD_STATE_READY;
+                    pthread_mutex_unlock(&ctx->lock);
+
+                    printf("Caught: %s\n", curl_easy_strerror(res));
+                    printf("%s\n", workingUrl);
+                    break;
+
                 } else {
 
                     int w, h, channels;
@@ -2789,7 +2818,20 @@ void *downloadMain(void *arg) {
                                 fetch.size, &w, &h, &channels, 4);
 
                     if (image == NULL) {
-                        // TODO dead link?
+                        pthread_mutex_lock(&ctx->lock);
+                        if(ctx->queue.items[i].tile->target != NULL 
+
+                                && ctx->queue.items[i].targetSignature
+                                == ctx->queue.items[i].tile->target->targetSignature 
+
+                                && ctx->queue.items[i].tile == originalTile) 
+                        {
+                            ctx->queue.items[i].tile->image.state 
+                                = IMAGE_STATE_DEAD;
+                        }
+                        ctx->queue.items[i].status = DOWNLOAD_STATE_READY;
+                        pthread_mutex_unlock(&ctx->lock);
+
                         printf("Couldnt load the image from memory\n");
                         printf("%s\n", workingUrl);
                         continue;
@@ -2797,8 +2839,22 @@ void *downloadMain(void *arg) {
 
                     stbi_flip_vertically_on_write(1);
                     if (!stbi_write_jpg(workingPath, w, h, 4, image, 100)) {
+                        pthread_mutex_lock(&ctx->lock);
+                        if(ctx->queue.items[i].tile->target != NULL 
+
+                                && ctx->queue.items[i].targetSignature
+                                == ctx->queue.items[i].tile->target->targetSignature 
+
+                                && ctx->queue.items[i].tile == originalTile) 
+                        {
+                            ctx->queue.items[i].tile->image.state 
+                                = IMAGE_STATE_DEAD;
+                        }
+                        ctx->queue.items[i].status = DOWNLOAD_STATE_READY;
+                        pthread_mutex_unlock(&ctx->lock);
                         free(image);
                         printf("Couldnt save JPG");
+                        continue;
                     }
                     else {
                         free(image);
@@ -2818,7 +2874,7 @@ void *downloadMain(void *arg) {
             }
         }
 
-        usleep(30);
+        usleep(16666);
     }
 
     free(workingPath);
@@ -3741,7 +3797,7 @@ void loadTexture(UiTile *tile) {
 
                 pthread_mutex_unlock(&offblast->imageLoader.lock);
             }
-            else {
+            else if (tile->image.state != IMAGE_STATE_DEAD) {
                 // ENQUEUE
                 pthread_mutex_lock(&offblast->downloader.lock);
                 for (uint32_t i=0; i < DOWNLOAD_QUEUE_LENGTH; ++i) {
@@ -3769,6 +3825,11 @@ void loadTexture(UiTile *tile) {
 
                         offblast->downloader.queue.items[i].status = 
                             DOWNLOAD_STATE_COLD;
+
+                        // TODO I don't like this, but we can't be continuously 
+                        // polling for dead links
+                        offblast->downloader.queue.items[i].tile = 
+                            tile;
 
                         break;
                     }
@@ -4155,12 +4216,16 @@ void updateResults(uint32_t *launcherSignature) {
 
     if (tileCount > 0) {
 
+        // TODO when we move to a tile store, hopefully we won't have to clear 
+        // queues or lock this.
+
         // Clear load queue?
         pthread_mutex_lock(&offblast->imageLoader.lock);
+        pthread_mutex_lock(&offblast->downloader.lock);
+
         for (uint32_t i=0; i < LOAD_QUEUE_LENGTH; ++i) {
             offblast->imageLoader.queue.items[i].status = LOAD_STATE_FREE; 
         }
-        pthread_mutex_unlock(&offblast->imageLoader.lock);
 
         // clear download queue?
         if (mainUi->searchRowset->rows[0].tiles)
@@ -4254,6 +4319,8 @@ void updateResults(uint32_t *launcherSignature) {
         //mainUi->activeRowset = mainUi->homeRowset;
     }
 
+    pthread_mutex_unlock(&offblast->imageLoader.lock);
+    pthread_mutex_unlock(&offblast->downloader.lock);
     updateGameInfo();
 }
 
