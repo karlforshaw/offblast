@@ -14,23 +14,25 @@
 #define WINDOW_MANAGER_I3 1
 #define WINDOW_MANAGER_GNOME 2
 
-// Alpha 0.5 
+#define IMAGE_STORE_SIZE 500
+
+// Alpha 0.6 
 //
-//      - Download queue
-//
-//          * We need some way of communicating back that the link is dead.
-//          Instead of just constantly trying to download a junk url.
-//
-//          multiple downloader threads,
-//
-//          multiple loader threads (based on how many cores),
-//
-//      - Tile store, I would like to make it so that we don't have to lock
+//      * Tile store, I would like to make it so that we don't have to lock
 //          the ui thread when loading an image into memory.. If we had
 //          a tilestore we could manage things a little better I think, only
 //          the loader thread would be allowed to write to it and we could use
 //          status on the stored tile to figure out whether we should load the 
 //          texture or not.
+//
+//          Lets have a think.. If we have a tile store that the main UI can 
+//          only read from, what does the main thread need to do?
+//          It needs to request a load, k
+//
+//      - Download queue
+//          multiple downloader threads,
+//          multiple loader threads (based on how many cores),
+//
 //
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
@@ -131,16 +133,25 @@ typedef struct Player {
 } Player;
 
 #define IMAGE_STATE_COLD 0
-#define IMAGE_STATE_LOADING 1
-#define IMAGE_STATE_READY 2
-#define IMAGE_STATE_COMPLETE 3
-#define IMAGE_STATE_DEAD 4
+#define IMAGE_STATE_QUEUED 1
+#define IMAGE_STATE_LOADING 2
+#define IMAGE_STATE_READY 3
+#define IMAGE_STATE_COMPLETE 4
+#define IMAGE_STATE_DEAD 5
+
 typedef struct Image {
+    uint64_t targetSignature;
     uint8_t state;
-    GLuint textureHandle;
     uint32_t width;
     uint32_t height;
+    GLuint textureHandle;
+
+    uint32_t lastUsedTick;
+    char path[PATH_MAX];
+    char url[PATH_MAX];
+
     unsigned char *atlas;
+    size_t atlasSize;
 } Image;
 
 typedef struct RomFound {
@@ -279,23 +290,8 @@ typedef struct LauncherContentsFile {
     LauncherContentsHash *entries;
 } LauncherContentsFile;
 
-#define DOWNLOAD_STATE_READY 0
-#define DOWNLOAD_STATE_COLD 1
-#define DOWNLOAD_STATE_DEAD 2
-#define DOWNLOAD_QUEUE_LENGTH 33
-typedef struct DownloadItem {
-    char url[PATH_MAX];
-    uint64_t targetSignature;
-    uint32_t status;
-    UiTile *tile;
-} DownloadItem;
-
-typedef struct DownloadQueue {
-    DownloadItem items[DOWNLOAD_QUEUE_LENGTH];
-} DownloadQueue;
-
 typedef struct DownloaderContext {
-    DownloadQueue queue;
+    Image *image;
     pthread_mutex_t lock;
 } DownloaderContext;
 
@@ -403,9 +399,9 @@ typedef struct OffblastUi {
 
     uint32_t uiStopButtonHot;
 
-    DownloaderContext downloader;
+    Image *imageStore;
+    pthread_mutex_t imageStoreLock;
     LoaderContext imageLoader;
-
 } OffblastUi;
 
 typedef struct CurlFetch {
@@ -436,6 +432,7 @@ uint32_t animationRunning();
 void animationTick(Animation *theAnimation);
 const char *platformString(char *key);
 char *getCoverPath(LaunchTarget *);
+char *getCoverUrl(LaunchTarget *);
 GLint loadShaderFile(const char *path, GLenum shaderType);
 GLuint createShaderProgram(GLint vertShader, GLint fragShader);
 void launch();
@@ -466,7 +463,7 @@ void renderGradient(float x, float y, float w, float h,
 float getWidthForScaledImage(float scaledHeight, Image *image);
 void renderImage(float x, float y, float w, float h, Image* image,
         float desaturation, float alpha);
-void loadTexture(UiTile *tile);
+//void loadTexture(UiTile *tile); XXX
 void pressSearch();
 void loadPlaytimeFile();
 Window getActiveWindowRaw();
@@ -483,6 +480,7 @@ uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature,
         uint32_t newContentsHash);
 void logMissingGame(char *missingGamePath);
 void calculateRowGeometry(UiRow *row);
+Image *requestImageForTarget(LaunchTarget *target);
 
 void *downloadMain(void *arg); 
 void *imageLoadMain(void *arg); 
@@ -1191,28 +1189,6 @@ int main(int argc, char** argv) {
     memcpy(&pUser->avatarPath, "guest-512.jpg", strlen("guest-512.jpg"));
     offblast->nUsers++;
     loadPlaytimeFile();
-
-
-    // CREATE WORKER THREADS
-    pthread_mutex_init(&offblast->downloader.lock, NULL);
-    pthread_mutex_init(&offblast->imageLoader.lock, NULL);
-
-    pthread_t downloadThread;
-    pthread_create(
-            &downloadThread, 
-            NULL, 
-            downloadMain, 
-            (void*)&offblast->downloader);
-
-    // TODO create multiple of these depending on how many cores we have 
-    // available
-    pthread_t imageLoadThread;
-    pthread_create(
-            &imageLoadThread, 
-            NULL, 
-            imageLoadMain, 
-            (void*)&offblast->imageLoader);
-
     
 
     // § START SDL HERE
@@ -1223,6 +1199,29 @@ int main(int argc, char** argv) {
         printf("SDL initialization Failed, exiting..\n");
         return 1;
     }
+
+
+    // CREATE IMAGE STORE
+    pthread_mutex_init(&offblast->imageStoreLock, NULL);
+    offblast->imageStore = calloc(IMAGE_STORE_SIZE, sizeof(Image));
+    for (uint32_t i = 0; i < IMAGE_STORE_SIZE; ++i) {
+        offblast->imageStore[i].lastUsedTick = SDL_GetTicks();
+    }
+    assert(offblast->imageStore);
+
+
+    // CREATE WORKER THREADS
+    pthread_mutex_init(&offblast->imageLoader.lock, NULL);
+
+
+    // TODO create multiple of these depending on how many cores we have 
+    // available
+    pthread_t imageLoadThread;
+    pthread_create(
+            &imageLoadThread, 
+            NULL, 
+            imageLoadMain, 
+            (void*)offblast);
 
 
     // Let's create the window
@@ -1808,13 +1807,18 @@ int main(int argc, char** argv) {
                             < (offblast->winWidth*1.2)) 
                     {
 
+                        /*
                         if (theTile->image.textureHandle == 0) 
                         {
-                            loadTexture(theTile);
+                            //loadTexture(theTile);
+                            requestImageForTarget(theTile->target);
                             imageToShow = missingImage;
                         }
                         else 
                             imageToShow = &theTile->image;
+                        */
+                        // TODO do we need image to show now?
+                        imageToShow = requestImageForTarget(theTile->target);
 
                         desaturate = 0.2;
                         alpha = 1.0;
@@ -2182,10 +2186,9 @@ int main(int argc, char** argv) {
     SDL_DestroyWindow(window);
     SDL_Quit();
 
-    pthread_kill(downloadThread, SIGTERM);
     pthread_kill(imageLoadThread, SIGTERM);
-    pthread_mutex_destroy(&offblast->downloader.lock);
     pthread_mutex_destroy(&offblast->imageLoader.lock);
+    pthread_mutex_destroy(&offblast->imageStoreLock);
 
     if (offblast->shutdownFlag) {
         system("systemctl poweroff");
@@ -2682,7 +2685,6 @@ char *getCoverPath(LaunchTarget *target) {
     assert(homePath);
 
     if (strcmp(target->platform, "steam") == 0) {
-        coverArtPath = calloc(PATH_MAX, sizeof(char));
         asprintf(&coverArtPath, 
                 "%s/.steam/steam/appcache/librarycache/%s_library_600x900.jpg", 
                 homePath,
@@ -2696,48 +2698,101 @@ char *getCoverPath(LaunchTarget *target) {
     return coverArtPath;
 }
 
+char *getCoverUrl(LaunchTarget *target) {
+
+    char *coverArtUrl;
+
+    if (strcmp(target->platform, "steam") == 0) {
+        asprintf(&coverArtUrl, 
+                "https://steamcdn-a.akamaihd.net/steam/apps/%s/library_600x900.jpg", 
+                target->id);
+    }
+    else {
+        asprintf(&coverArtUrl, "%s", (char *) target->coverUrl);
+    }
+
+    return coverArtUrl;
+}
+
 void *imageLoadMain(void *arg) {
-    LoaderContext *ctx = arg;
+    OffblastUi *offblast = arg;
 
     while (1) {
-        pthread_mutex_lock(&ctx->lock);
 
-        for (uint32_t i=0; i < LOAD_QUEUE_LENGTH; ++i) {
-            if(ctx->queue.items[i].status == LOAD_STATE_LOADING 
-                    && ctx->queue.items[i].tile->target != NULL) 
+        pthread_mutex_lock(&offblast->imageStoreLock);
+        int32_t index = -1;
+
+        for (uint32_t i = 0; i < IMAGE_STORE_SIZE; ++i) {
+            if (offblast->imageStore[i].targetSignature > 0
+                    && offblast->imageStore[i].state == IMAGE_STATE_QUEUED) 
             {
+                printf("found something to load\n");
+                offblast->imageStore[i].state = IMAGE_STATE_LOADING;
+                index = i;
+                break;
 
-                UiTile *tile = ctx->queue.items[i].tile;
-                char *coverPath = getCoverPath(tile->target);
-                int n;
-
-                stbi_set_flip_vertically_on_load(1);
-                tile->image.atlas = stbi_load(
-                        coverPath,
-                        (int*)&tile->image.width, (int*)&tile->image.height, 
-                        &n, 4);
-
-                free(coverPath);
-
-                if(tile->image.atlas == NULL) {
-                    printf("need to download %s\n", coverPath);
-                    continue;
-                }
-                else {
-                    // So there's a chance that the queue has changed since
-                    // we started loading.. we need to abandon if that's the
-                    // case
-                    ctx->queue.items[i].status = LOAD_STATE_FREE;
-                    tile->image.state= IMAGE_STATE_READY;
-                    break;
-                }
             }
         }
 
-        pthread_mutex_unlock(&ctx->lock);
+        pthread_mutex_unlock(&offblast->imageStoreLock);
+
+
+        if (index > -1) {
+            pthread_mutex_lock(&offblast->imageStoreLock);
+            char *path = calloc(PATH_MAX, sizeof(char));
+            memcpy(path, offblast->imageStore[index].path, PATH_MAX);
+            pthread_mutex_unlock(&offblast->imageStoreLock);
+
+            int n, w, h;
+            unsigned char *atlas;
+
+            stbi_set_flip_vertically_on_load(1);
+            atlas = stbi_load(path, &w, &h, &n, 4);
+
+            free(path);
+
+            if(atlas == NULL) {
+
+                printf("need to download %d\n", index);
+                // TODO fire off a child thread, this thread should reset
+                // the status of the image to COLD again after it's downloaded
+                // so that it gets picked up by another thread
+                DownloaderContext *dctx = malloc(sizeof(DownloaderContext));
+                dctx->image = &offblast->imageStore[index];
+                dctx->lock = offblast->imageStoreLock;
+
+                pthread_t downloadThread;
+                pthread_create(
+                        &downloadThread, 
+                        NULL, 
+                        downloadMain, 
+                        (void*)dctx);
+                continue;
+            }
+            else {
+                pthread_mutex_lock(&offblast->imageStoreLock);
+
+                size_t atlasSize = w * h * 4;
+
+                offblast->imageStore[index].atlas = calloc(1, atlasSize);
+                memcpy(offblast->imageStore[index].atlas, atlas, atlasSize);
+                stbi_image_free(atlas);
+
+                offblast->imageStore[index].width = w;
+                offblast->imageStore[index].height = h;
+                offblast->imageStore[index].atlasSize = atlasSize;
+                offblast->imageStore[index].state = IMAGE_STATE_READY;
+                printf("loaded %"PRIu64"\n", 
+                        offblast->imageStore[index].targetSignature);
+
+                pthread_mutex_unlock(&offblast->imageStoreLock);
+            }
+        }
+
         usleep(16666);
     }
 
+    return NULL;
 }
 
 void *downloadMain(void *arg) {
@@ -2748,136 +2803,94 @@ void *downloadMain(void *arg) {
 
     char *workingPath = calloc(PATH_MAX, sizeof(char));
     char *workingUrl = calloc(PATH_MAX, sizeof(char));
-
-    while (1) {
-        for (uint32_t i=0; i < DOWNLOAD_QUEUE_LENGTH; ++i) {
-
-            pthread_mutex_lock(&ctx->lock);
-            if (ctx->queue.items[i].status == DOWNLOAD_STATE_COLD) {
-
-                UiTile * originalTile = ctx->queue.items[i].tile;
-                pthread_mutex_unlock(&ctx->lock);
                 
-                snprintf(workingPath, 
-                        PATH_MAX,
-                        "%s/.offblast/covers/%"PRIu64".jpg",
-                        homePath, 
-                        ctx->queue.items[i].targetSignature); 
+    snprintf(workingPath, 
+            PATH_MAX,
+            "%s/.offblast/covers/%"PRIu64".jpg",
+            homePath, 
+            ctx->image->targetSignature); 
 
-                snprintf(workingUrl, 
-                        PATH_MAX,
-                        "%s",
-                        ctx->queue.items[i].url); 
+    snprintf(workingUrl, 
+            PATH_MAX,
+            "%s",
+            ctx->image->url); 
 
 
-                CurlFetch fetch = {};
+    CurlFetch fetch = {};
 
-                curl_global_init(CURL_GLOBAL_DEFAULT);
-                CURL *curl = curl_easy_init();
-                if (!curl) {
-                    printf("CURL init fail.\n");
-                    return NULL;
-                }
-                //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-                curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        printf("CURL init fail.\n");
+        free(ctx);
+        return NULL;
+    }
+    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
-                curl_easy_setopt(curl, CURLOPT_URL, workingUrl);
+    curl_easy_setopt(curl, CURLOPT_URL, workingUrl);
 
-                curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
-                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
 
-                uint32_t res = curl_easy_perform(curl);
-                curl_easy_cleanup(curl);
+    uint32_t res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
 
-                if (res != CURLE_OK) {
+    if (res != CURLE_OK) {
 
-                    pthread_mutex_lock(&ctx->lock);
-                    if(ctx->queue.items[i].tile->target != NULL 
+        pthread_mutex_lock(&ctx->lock);
+        ctx->image->state = IMAGE_STATE_DEAD;
+        pthread_mutex_unlock(&ctx->lock);
 
-                        && ctx->queue.items[i].targetSignature
-                                == ctx->queue.items[i].tile->target->targetSignature 
+        printf("Caught: %s\n", curl_easy_strerror(res));
+        printf("%s\n", workingUrl);
+        free(ctx);
+        return NULL;
 
-                        && ctx->queue.items[i].tile == originalTile) 
-                    {
-                        ctx->queue.items[i].tile->image.state 
-                            = IMAGE_STATE_DEAD;
-                    }
-                    ctx->queue.items[i].status = DOWNLOAD_STATE_READY;
-                    pthread_mutex_unlock(&ctx->lock);
+    } else {
+        int w, h, channels;
+        unsigned char *image = 
+            stbi_load_from_memory(
+                    fetch.data, 
+                    fetch.size, &w, &h, &channels, 4);
 
-                    printf("Caught: %s\n", curl_easy_strerror(res));
-                    printf("%s\n", workingUrl);
-                    break;
+        if (image == NULL) {
+            pthread_mutex_lock(&ctx->lock);
+            ctx->image->state = IMAGE_STATE_DEAD;
+            pthread_mutex_unlock(&ctx->lock);
 
-                } else {
-
-                    int w, h, channels;
-                    unsigned char *image = 
-                        stbi_load_from_memory(
-                                fetch.data, 
-                                fetch.size, &w, &h, &channels, 4);
-
-                    if (image == NULL) {
-                        pthread_mutex_lock(&ctx->lock);
-                        if(ctx->queue.items[i].tile->target != NULL 
-
-                                && ctx->queue.items[i].targetSignature
-                                == ctx->queue.items[i].tile->target->targetSignature 
-
-                                && ctx->queue.items[i].tile == originalTile) 
-                        {
-                            ctx->queue.items[i].tile->image.state 
-                                = IMAGE_STATE_DEAD;
-                        }
-                        ctx->queue.items[i].status = DOWNLOAD_STATE_READY;
-                        pthread_mutex_unlock(&ctx->lock);
-
-                        printf("Couldnt load the image from memory\n");
-                        printf("%s\n", workingUrl);
-                        continue;
-                    }
-
-                    stbi_flip_vertically_on_write(1);
-                    if (!stbi_write_jpg(workingPath, w, h, 4, image, 100)) {
-                        pthread_mutex_lock(&ctx->lock);
-                        if(ctx->queue.items[i].tile->target != NULL 
-
-                                && ctx->queue.items[i].targetSignature
-                                == ctx->queue.items[i].tile->target->targetSignature 
-
-                                && ctx->queue.items[i].tile == originalTile) 
-                        {
-                            ctx->queue.items[i].tile->image.state 
-                                = IMAGE_STATE_DEAD;
-                        }
-                        ctx->queue.items[i].status = DOWNLOAD_STATE_READY;
-                        pthread_mutex_unlock(&ctx->lock);
-                        free(image);
-                        printf("Couldnt save JPG");
-                        continue;
-                    }
-                    else {
-                        free(image);
-                    }
-                }
-
-                free(fetch.data);
-
-                pthread_mutex_lock(&ctx->lock);
-                ctx->queue.items[i].status = DOWNLOAD_STATE_READY;
-                pthread_mutex_unlock(&ctx->lock);
-
-                break;
-            }
-            else {
-                pthread_mutex_unlock(&ctx->lock);
-            }
+            printf("Couldnt load the image from memory\n");
+            printf("%s\n", workingUrl);
+            free(ctx);
+            return NULL;
         }
 
-        usleep(16666);
+        stbi_flip_vertically_on_write(1);
+        if (!stbi_write_jpg(workingPath, w, h, 4, image, 100)) {
+
+            pthread_mutex_lock(&ctx->lock);
+            ctx->image->state = IMAGE_STATE_DEAD;
+            pthread_mutex_unlock(&ctx->lock);
+
+            free(image);
+            printf("Couldnt save JPG");
+            free(ctx);
+            return NULL;
+        }
+        else {
+            free(image);
+        }
     }
 
+    free(fetch.data);
     free(workingPath);
+
+    pthread_mutex_lock(&ctx->lock);
+    sleep(1);
+    ctx->image->state = IMAGE_STATE_QUEUED;
+    pthread_mutex_unlock(&ctx->lock);
+
+    return NULL;
 }
 
 uint32_t powTwoFloor(uint32_t val) {
@@ -3769,6 +3782,7 @@ void renderImage(float x, float y, float w, float h, Image* image,
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
+/* XXX REMOVE
 void loadTexture(UiTile *tile) {
 
     // Generate the texture 
@@ -3860,6 +3874,7 @@ void loadTexture(UiTile *tile) {
         }
     }
 }
+*/
 
 void updateHomeLists(){
 
@@ -4216,18 +4231,6 @@ void updateResults(uint32_t *launcherSignature) {
 
     if (tileCount > 0) {
 
-        // TODO when we move to a tile store, hopefully we won't have to clear 
-        // queues or lock this.
-
-        // Clear load queue?
-        pthread_mutex_lock(&offblast->imageLoader.lock);
-        pthread_mutex_lock(&offblast->downloader.lock);
-
-        for (uint32_t i=0; i < LOAD_QUEUE_LENGTH; ++i) {
-            offblast->imageLoader.queue.items[i].status = LOAD_STATE_FREE; 
-        }
-
-        // clear download queue?
         if (mainUi->searchRowset->rows[0].tiles)
             free(mainUi->searchRowset->rows[0].tiles);
 
@@ -4319,8 +4322,6 @@ void updateResults(uint32_t *launcherSignature) {
         //mainUi->activeRowset = mainUi->homeRowset;
     }
 
-    pthread_mutex_unlock(&offblast->imageLoader.lock);
-    pthread_mutex_unlock(&offblast->downloader.lock);
     updateGameInfo();
 }
 
@@ -5265,11 +5266,121 @@ void calculateRowGeometry(UiRow *row) {
             theWidth = missingImageWidth;
         }
         else {
+            // TODO this is now invalid
+            Image *theImage = requestImageForTarget(theTile->target);
             theWidth = getWidthForScaledImage(
                     offblast->mainUi.boxHeight,
-                    &theTile->image);
+                    theImage);
         }
 
         xAdvance += (theWidth + offblast->mainUi.boxPad);
     }
+}
+
+Image *requestImageForTarget(LaunchTarget *target) {
+
+    uint64_t targetSignature = target->targetSignature;
+    char *path = getCoverPath(target);
+    char *url = getCoverUrl(target);
+
+    int32_t foundAtIndex = -1;
+    int32_t oldestFreeIndex = -1;
+    uint32_t oldestFreeTick = 0;
+
+    uint32_t tickNow = SDL_GetTicks();
+
+    Image *returnImage;
+
+    pthread_mutex_lock(&offblast->imageStoreLock);
+
+    for (uint32_t i=0; i < IMAGE_STORE_SIZE; ++i) {
+
+        if (offblast->imageStore[i].targetSignature == targetSignature)
+        {
+            offblast->imageStore[i].lastUsedTick = tickNow;
+            foundAtIndex = i;
+        }
+        else {
+            uint32_t isAvailable = 
+                    offblast->imageStore[i].state == IMAGE_STATE_COLD
+                    || offblast->imageStore[i].state == IMAGE_STATE_DEAD
+                    || offblast->imageStore[i].state == IMAGE_STATE_COMPLETE;
+
+            if (isAvailable) {
+
+                //printf("slot %d available\n", i);
+
+                if (oldestFreeTick == 0 
+                    || offblast->imageStore[i].lastUsedTick <= oldestFreeTick) 
+                {
+                    oldestFreeTick = offblast->imageStore[i].lastUsedTick;
+                    oldestFreeIndex = i;
+                }
+
+            }
+            else {
+                //printf("slot %d loading\n", i);
+            }
+        }
+    }
+
+    if (foundAtIndex > -1) {
+
+        if (offblast->imageStore[foundAtIndex].state == IMAGE_STATE_READY) {
+
+            glGenTextures(1, &offblast->imageStore[foundAtIndex].textureHandle);
+            imageToGlTexture(
+                    &offblast->imageStore[foundAtIndex].textureHandle,
+                    offblast->imageStore[foundAtIndex].atlas, 
+                    offblast->imageStore[foundAtIndex].width,
+                    offblast->imageStore[foundAtIndex].height);
+
+            // XXX is this necessary?
+            /*
+            glBindTexture(GL_TEXTURE_2D, 
+                    offblast->imageStore[foundAtIndex].textureHandle);
+                    */ 
+
+            // TODO mutex lock
+            offblast->imageStore[foundAtIndex].state = IMAGE_STATE_COMPLETE;
+            free(offblast->imageStore[foundAtIndex].atlas);
+            offblast->imageStore[foundAtIndex].atlas = NULL;
+            offblast->mainUi.rowGeometryInvalid = 1;
+        }
+
+        // At this point it should be complete
+        if (offblast->imageStore[foundAtIndex].state == IMAGE_STATE_COMPLETE) {
+            returnImage = &offblast->imageStore[foundAtIndex];
+        }
+        else {
+            // TODO consider a loading image if the state is different
+            returnImage = &offblast->missingCoverImage;
+        }
+
+    }
+    else {
+
+        if (oldestFreeIndex != -1) {
+
+            offblast->imageStore[oldestFreeIndex].state = IMAGE_STATE_QUEUED;
+            offblast->imageStore[oldestFreeIndex].targetSignature = targetSignature;
+            offblast->imageStore[oldestFreeIndex].lastUsedTick = tickNow;
+            strncpy(offblast->imageStore[oldestFreeIndex].path, path, PATH_MAX);
+            strncpy(offblast->imageStore[oldestFreeIndex].url, url, PATH_MAX);
+
+            if (offblast->imageStore[oldestFreeIndex].textureHandle) {
+                glDeleteTextures(1, 
+                        &offblast->imageStore[oldestFreeIndex].textureHandle);
+            }
+            offblast->imageStore[oldestFreeIndex].textureHandle = 0;
+            printf("%"PRIu64" queued in slot %d\n", targetSignature, oldestFreeIndex);
+        }
+
+        returnImage = &offblast->missingCoverImage;
+    }
+
+    pthread_mutex_unlock(&offblast->imageStoreLock);
+
+
+    return returnImage;
 }
