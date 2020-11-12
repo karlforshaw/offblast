@@ -18,31 +18,13 @@
 
 // Alpha 0.6 
 //
-//      * Tile store, I would like to make it so that we don't have to lock
-//          the ui thread when loading an image into memory.. If we had
-//          a tilestore we could manage things a little better I think, only
-//          the loader thread would be allowed to write to it and we could use
-//          status on the stored tile to figure out whether we should load the 
-//          texture or not.
-//
-//          Lets have a think.. If we have a tile store that the main UI can 
-//          only read from, what does the main thread need to do?
-//          It needs to request a load, k
-//
-//      - Download queue
-//          multiple downloader threads,
-//          multiple loader threads (based on how many cores),
-//
+//      - Tile store, I would like to make it so that we don't have to lock
+//          Almost there, I have a bug where the loader queue seems to freak
+//          out when you start searching..
 //
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
 //          popping up in your lists..
-//
-//      -. watch out for vram! glDeleteTextures
-//          We could move to a tile store object which has a fixed array of
-//          tiles (enough to fill 1.5 screens on both sides) each tile has a 
-//          last on screen tick and when we need to load new textures we evict
-//          the oldest before loading the new texture
 //
 //      - better aniations that support incremental jumps if you input a command
 //          during a running animation
@@ -168,7 +150,6 @@ typedef struct RomFoundList {
 
 typedef struct UiTile{
     struct LaunchTarget *target;
-    Image image;
     struct UiTile *next; 
     struct UiTile *previous; 
     int32_t baseX;
@@ -1216,12 +1197,27 @@ int main(int argc, char** argv) {
 
     // TODO create multiple of these depending on how many cores we have 
     // available
-    pthread_t imageLoadThread;
-    pthread_create(
-            &imageLoadThread, 
-            NULL, 
-            imageLoadMain, 
-            (void*)offblast);
+    unsigned int eax=11,ebx=0,ecx=1,edx=0;
+    asm volatile("cpuid"
+            : "=a" (eax),
+            "=b" (ebx),
+            "=c" (ecx),
+            "=d" (edx)
+            : "0" (eax), "2" (ecx)
+            : );
+
+    printf("THREADS: %d\n", ebx);
+
+    uint32_t totalLoaderThreads = ebx-1;
+    pthread_t imageLoadThreads[totalLoaderThreads];
+
+    for (uint32_t i = 0; i < totalLoaderThreads; ++i) {
+        pthread_create(
+                &imageLoadThreads[i], 
+                NULL, 
+                imageLoadMain, 
+                (void*)offblast);
+    }
 
 
     // Let's create the window
@@ -1765,19 +1761,13 @@ int main(int argc, char** argv) {
                     yBase += change;
                 }
 
-                Image *missingImage = &offblast->missingCoverImage;
-                uint32_t missingImageWidth = getWidthForScaledImage(
-                        offblast->mainUi.boxHeight,
-                        missingImage);
-
                 while (yBase < offblast->winHeight) {
 
                     int32_t displacement = 0;
                     UiTile *theTile = rowToRender->tileCursor;
+                    Image* cursorImage = requestImageForTarget(theTile->target);
 
-                    uint32_t theWidth = missingImageWidth;
-                    if (theTile->image.width > 0 ) 
-                        theWidth = theTile->image.width;
+                    uint32_t theWidth = cursorImage->width;
 
                     Image *imageToShow;
 
@@ -2103,14 +2093,8 @@ int main(int argc, char** argv) {
 
             UiTile *theTile = 
                 offblast->mainUi.activeRowset->rowCursor->tileCursor;
-            Image *imageToShow;
+            Image *imageToShow = requestImageForTarget(theTile->target);
 
-            if (theTile->image.textureHandle == 0) {
-                imageToShow = &offblast->missingCoverImage;
-            }
-            else {
-                imageToShow = &theTile->image;
-            }
 
             double xPos = offblast->winWidth / 2 - getWidthForScaledImage(
                     mainUi->boxHeight,
@@ -2186,7 +2170,9 @@ int main(int argc, char** argv) {
     SDL_DestroyWindow(window);
     SDL_Quit();
 
-    pthread_kill(imageLoadThread, SIGTERM);
+    for (uint32_t i = 0; i < totalLoaderThreads; ++i) {
+        pthread_kill(imageLoadThreads[i], SIGTERM);
+    }
     pthread_mutex_destroy(&offblast->imageLoader.lock);
     pthread_mutex_destroy(&offblast->imageStoreLock);
 
@@ -4173,7 +4159,7 @@ void updateResults(uint32_t *launcherSignature) {
     LaunchTargetFile* targetFile = offblast->launchTargetFile;
 
     // TODO let's assume 250 results for now XXX
-    UiTile *tiles = calloc(250, sizeof(UiTile));
+    UiTile *tiles = calloc(IMAGE_STORE_SIZE, sizeof(UiTile));
     assert(tiles);
 
     uint32_t tileCount = 0;
@@ -5252,26 +5238,15 @@ void calculateRowGeometry(UiRow *row) {
     uint32_t theWidth = 0;
     uint32_t xAdvance = 0;
 
-    Image *missingImage = &offblast->missingCoverImage;
-    uint32_t missingImageWidth = getWidthForScaledImage(
-            offblast->mainUi.boxHeight,
-            missingImage);
-
     for(uint8_t i = 0; i < row->length; ++i) {
 
         theTile = &row->tiles[i];
         theTile->baseX = xAdvance;
+        Image *theImage = requestImageForTarget(theTile->target);
 
-        if (theTile->image.textureHandle == 0) {
-            theWidth = missingImageWidth;
-        }
-        else {
-            // TODO this is now invalid
-            Image *theImage = requestImageForTarget(theTile->target);
-            theWidth = getWidthForScaledImage(
-                    offblast->mainUi.boxHeight,
-                    theImage);
-        }
+        theWidth = getWidthForScaledImage(
+                offblast->mainUi.boxHeight,
+                theImage);
 
         xAdvance += (theWidth + offblast->mainUi.boxPad);
     }
@@ -5335,20 +5310,13 @@ Image *requestImageForTarget(LaunchTarget *target) {
                     offblast->imageStore[foundAtIndex].width,
                     offblast->imageStore[foundAtIndex].height);
 
-            // XXX is this necessary?
-            /*
-            glBindTexture(GL_TEXTURE_2D, 
-                    offblast->imageStore[foundAtIndex].textureHandle);
-                    */ 
-
-            // TODO mutex lock
             offblast->imageStore[foundAtIndex].state = IMAGE_STATE_COMPLETE;
             free(offblast->imageStore[foundAtIndex].atlas);
             offblast->imageStore[foundAtIndex].atlas = NULL;
             offblast->mainUi.rowGeometryInvalid = 1;
         }
 
-        // At this point it should be complete
+
         if (offblast->imageStore[foundAtIndex].state == IMAGE_STATE_COMPLETE) {
             returnImage = &offblast->imageStore[foundAtIndex];
         }
