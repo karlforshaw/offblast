@@ -65,3 +65,9 @@ yup that was it, had to pass the pointer to the lock instead
 
 alright so that seems a lot more stable.. We're still getting stuck with things in downloaded when using search.. not sure why..
 
+OK so some progress made.
+
+The bug is no longer as bad. What seems to happen now is that the queue can't get processed because the things that are waiting to be cleared aren't on screen, when you go up and down the queue starts to move again..
+We might need to get smarter about what we queue up..
+The other issue is things still getting stuck in the download queue, when using search.
+
