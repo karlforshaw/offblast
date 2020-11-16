@@ -18,9 +18,13 @@
 
 // Alpha 0.6 
 //
-//      - Tile store, I would like to make it so that we don't have to lock
-//          Almost there, I have a bug where the loader queue seems to freak
-//          out when you start searching..
+//      - Tile store, this is very, very close.
+//          * Images getting stuck in download state when searching.
+//
+//      - NO Results.
+//          At the minute we're doing a lot of stuff under the assumption
+//          that the active rowset has entries. We need to fix this and
+//          Show something on screen that say's no results found.
 //
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
@@ -2673,11 +2677,18 @@ char *getCoverPath(LaunchTarget *target) {
                 "%s/.steam/steam/appcache/librarycache/%s_library_600x900.jpg", 
                 homePath,
                 target->id);
+
+        if (access(coverArtPath, F_OK) == -1) {
+            //printf("No file on disk: %s\n", coverArtPath);
+        }
+        else 
+            return coverArtPath;
+
     }
-    else {
-        asprintf(&coverArtPath, "%s/.offblast/covers/%"PRIu64".jpg", homePath, 
-                target->targetSignature); 
-    }
+
+    // Default
+    asprintf(&coverArtPath, "%s/.offblast/covers/%"PRIu64".jpg", homePath, 
+            target->targetSignature); 
 
     return coverArtPath;
 }
@@ -2802,6 +2813,8 @@ void *downloadMain(void *arg) {
             PATH_MAX,
             "%s",
             ctx->image->url); 
+
+    printf("Downloading %s\n", workingUrl);
 
 
     CurlFetch fetch = {};
@@ -3362,6 +3375,11 @@ void updateInfoText() {
 
     char *infoString;
     LaunchTarget *target = offblast->mainUi.activeRowset->movingToTarget;
+
+    if (target == NULL) {
+        printf("Update info text called with no target\n");
+        return;
+    }
 
     asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
             target->date, 
@@ -4228,6 +4246,7 @@ void updateResults(uint32_t *launcherSignature) {
         mainUi->searchRowset->movingToRow = firstRow;
         mainUi->searchRowset->movingToTarget = tiles[0].target;
         mainUi->searchRowset->rowCursor = mainUi->searchRowset->rows; 
+        updateGameInfo();
         mainUi->rowGeometryInvalid = 1; 
     }
     else {
@@ -4237,7 +4256,6 @@ void updateResults(uint32_t *launcherSignature) {
         //mainUi->activeRowset = mainUi->homeRowset;
     }
 
-    updateGameInfo();
 }
 
 
@@ -5184,8 +5202,8 @@ void calculateRowGeometry(UiRow *row) {
 Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
 
     uint64_t targetSignature = target->targetSignature;
-    char *path = getCoverPath(target);
-    char *url = getCoverUrl(target);
+    char *path;
+    char *url;
 
     int32_t foundAtIndex = -1;
     int32_t oldestFreeIndex = -1;
@@ -5270,7 +5288,8 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
         }
     }
 
-    printf("\t%d av\t%d lo\t%d rd\t%d Q\t%d dl\n", availableSlots, inLoading, inReady, inQueued, inDownloading);
+    // § DEBUG - Dump out the queue status
+    //printf("\t%d av\t%d lo\t%d rd\t%d Q\t%d dl\n", availableSlots, inLoading, inReady, inQueued, inDownloading);
 
     if (foundAtIndex > -1) {
 
@@ -5288,6 +5307,9 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
     else {
 
         if (oldestFreeIndex != -1 && affectQueue) {
+
+            path = getCoverPath(target);
+            url = getCoverUrl(target);
 
             offblast->imageStore[oldestFreeIndex].state = IMAGE_STATE_QUEUED;
             offblast->imageStore[oldestFreeIndex].targetSignature = targetSignature;

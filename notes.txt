@@ -82,8 +82,23 @@ Also, when scrolling up, we tend to see more loading happening. Perhaps we need 
 
 We've still got some troubles..
 
-* When using the search functionality, we're still getting some images stuck in a downloading state.
 * Occasionally, you'll download an image but it doesn't get loaded.
-~ DONE Row Geometry is getting smashed regularly
 * We're segfaulting when looking at nintendo DS games
+~ DONE When using the search functionality, we're still getting some images stuck in a downloading state.
+~ DONE Row Geometry is getting smashed regularly
+    If a rowset is empty, we still try and operate on it, we need to stop doing this
 ~ DONE We're not queueing up images out of bounds on the row above the screen
+
+Yup, consistently stuck after the third letter of search when I do 'son'.
+i'll jump into the debugger and see what I can see.
+
+Right, so it looks like they aren't actually getting stuck, it's more like the image that we're downloading isn't able to be opened. let's dig a little deeper by checking if we're actually getting an image, or a html page.
+
+Alright so it looks like certain images, once we've downloaded them, can't be loaded for some reason, and then they end up just getting downloaded over and over.
+Let's add some print outs to see why they can't be loaded.
+
+Interestingly, all these problem files are from the steam cdn.
+
+AH HA!
+This actually has nothing to do with the loader and everything to do with the fact that we're looking in our local steam cache for the image, we should be checking there first and if it's not there falling back to the one we've downloaded.
+Fixed ^^
