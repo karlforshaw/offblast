@@ -18,9 +18,6 @@
 
 // Alpha 0.6 
 //
-//      - bug, sometimes on inital download we don't see the image that's been
-//          downloaded until we restart the app
-//
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
 //          popping up in your lists..
@@ -28,8 +25,12 @@
 //      - better aniations that support incremental jumps if you input a command
 //          during a running animation
 //
+//
 //      - Deadzone checks
 //         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
+//
+//      - analogue control scheme, people don't wanna click click click
+//
 //
 //       - games with poor match scores should probably be logged to the missing
 //          games log, we're allowing bad matches to go through as long as the 
