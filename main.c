@@ -16,9 +16,13 @@
 
 #define IMAGE_STORE_SIZE 500
 
-// Alpha 0.6 
+// Version 0.6.1
 //
-//      - consider importing everything on first load, this will mean if 
+//      For this release I want to work on quality of life improvements,
+//      initial setup and config checking are important.
+//      I would also like to improve the control scheme somewhat.
+//
+//      - try importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
 //          popping up in your lists..
 //
@@ -3377,12 +3381,14 @@ void changeRowset(UiRowset *rowset) {
 }
 
 void pressCancel() {
-    if (offblast->mainUi.showSearch) {
-        offblast->mainUi.showSearch = 0;
-    }
-    else if (offblast->mainUi.activeRowset == offblast->mainUi.searchRowset) {
-        //offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
-        changeRowset(offblast->mainUi.homeRowset);
+    if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
+        if (offblast->mainUi.showSearch) {
+            offblast->mainUi.showSearch = 0;
+        }
+        else if (offblast->mainUi.activeRowset == offblast->mainUi.searchRowset) {
+            //offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
+            changeRowset(offblast->mainUi.homeRowset);
+        }
     }
 }
 
