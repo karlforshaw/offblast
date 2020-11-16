@@ -18,15 +18,6 @@
 
 // Alpha 0.6 
 //
-//      - NO Results.
-//          At the minute we're doing a lot of stuff under the assumption
-//          that the active rowset has entries. We need to fix this and
-//          Show something on screen that say's no results found.
-//
-//          * sort out the control scheme for search, it makes no sense
-//          - fix invalid memory bugs when we're trying to operate on 
-//              an empty rowset
-//
 //      - bug, sometimes on inital download we don't see the image that's been
 //          downloaded until we restart the app
 //
@@ -470,6 +461,7 @@ uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature,
 void logMissingGame(char *missingGamePath);
 void calculateRowGeometry(UiRow *row);
 Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue);
+void changeRowset(UiRowset *rowset);
 
 void *downloadMain(void *arg); 
 void *imageLoadMain(void *arg); 
@@ -487,14 +479,13 @@ void shutdownMachine() {
     offblast->running = 0;
 };
 void doSearch() {
-    offblast->mainUi.activeRowset = offblast->mainUi.searchRowset;
+    changeRowset(offblast->mainUi.searchRowset);
     offblast->mainUi.rowGeometryInvalid = 1;
     offblast->mainUi.showSearch = 1;
 }
 void doHome() {
-    offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
+    changeRowset(offblast->mainUi.homeRowset);
     offblast->mainUi.rowGeometryInvalid = 1;
-    updateGameInfo();
 }
 
 
@@ -3278,8 +3269,8 @@ void pressSearch(int32_t joystickIndex) {
 
     if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {}
     else if (offblast->mainUi.showSearch) {
-        offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
-        offblast->mainUi.showSearch = 0;
+        //offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
+        //offblast->mainUi.showSearch = 0;
     }
     else if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
         offblast->mainUi.showMenu = 0;
@@ -3379,13 +3370,23 @@ void pressConfirm(int32_t joystickIndex) {
     }
 }
 
+void changeRowset(UiRowset *rowset) {
+    offblast->mainUi.activeRowset = rowset;
+    updateGameInfo();
+}
+
 void pressCancel() {
     if (offblast->mainUi.showSearch) {
         offblast->mainUi.showSearch = 0;
     }
+    else if (offblast->mainUi.activeRowset == offblast->mainUi.searchRowset) {
+        //offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
+        changeRowset(offblast->mainUi.homeRowset);
+    }
 }
 
 void updateInfoText() {
+    if (!offblast->mainUi.activeRowset->numRows) return;
 
     if (offblast->mainUi.infoText != NULL) {
         free(offblast->mainUi.infoText);
@@ -3408,6 +3409,8 @@ void updateInfoText() {
 }
 
 void updateDescriptionText() {
+    if (!offblast->mainUi.activeRowset->numRows) return;
+
     OffblastBlob *descriptionBlob = 
     (OffblastBlob*) &offblast->descriptionFile->memory[
        offblast->mainUi.activeRowset->movingToTarget->descriptionOffset];
@@ -4110,19 +4113,11 @@ void updateHomeLists(){
 void updateResults(uint32_t *launcherSignature) {
 
     MainUi *mainUi = &offblast->mainUi;
-    /*
-    if (!launcherSignature && !strlen(offblast->searchTerm)) {
-        mainUi->searchRowset->numRows = 0;
-        mainUi->activeRowset = mainUi->homeRowset;
-    }
-    else {
-    */
-        mainUi->activeRowset = mainUi->searchRowset;
-    //}
+
+    changeRowset(mainUi->searchRowset);
 
     LaunchTargetFile* targetFile = offblast->launchTargetFile;
 
-    // TODO let's assume 250 results for now XXX
     UiTile *tiles = calloc(IMAGE_STORE_SIZE, sizeof(UiTile));
     assert(tiles);
 
@@ -4132,6 +4127,7 @@ void updateResults(uint32_t *launcherSignature) {
 
         uint32_t isMatch = 0;
         if (!launcherSignature
+                && strlen(offblast->searchTerm)
                 && strcasestr(targetFile->entries[i].name, offblast->searchTerm)) 
         {
             isMatch = 1;
