@@ -1759,7 +1759,7 @@ int main(int argc, char** argv) {
                     yBase += change;
                 }
 
-                while (yBase < offblast->winHeight) {
+                while (yBase < offblast->winHeight + mainUi->boxHeight) {
 
                     int32_t displacement = 0;
                     UiTile *theTile = rowToRender->tileCursor;

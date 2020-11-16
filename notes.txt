@@ -78,3 +78,11 @@ No, we're telling it not to update the last used.
 
 Success, This seems to be working much better now.. the only issue is the occasional fuck up where the row geometry is completely bollocked. Need to find a way to replicate this.
 
+Also, when scrolling up, we tend to see more loading happening. Perhaps we need to increase the bounds upon which we actually queue. or shift them one row up.
+
+We've still got some troubles..
+
+* When using the search functionality, we're still getting some images stuck in a downloading state.
+* Row Geometry is getting smashed regularly
+* We're not queueing up images out of bounds on the row above the screen
+* We're segfaulting when looking at nintendo DS games
