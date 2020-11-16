@@ -71,3 +71,10 @@ The bug is no longer as bad. What seems to happen now is that the queue can't ge
 We might need to get smarter about what we queue up..
 The other issue is things still getting stuck in the download queue, when using search.
 
+Ok let's start getting smarter about what we queue up, i'm almost sure that the problem is happening because things are getting queued up that aren't even likely to be on screen. which means it's calculate row geometry that's causing the issue. 
+
+No it's not, we're explicitly telilng it not to queue.. So let's make sure we're obeying that flag.
+No, we're telling it not to update the last used.
+
+Success, This seems to be working much better now.. the only issue is the occasional fuck up where the row geometry is completely bollocked. Need to find a way to replicate this.
+

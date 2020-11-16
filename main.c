@@ -461,7 +461,7 @@ uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature,
         uint32_t newContentsHash);
 void logMissingGame(char *missingGamePath);
 void calculateRowGeometry(UiRow *row);
-Image *requestImageForTarget(LaunchTarget *target, uint32_t updateLastUsed);
+Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue);
 
 void *downloadMain(void *arg); 
 void *imageLoadMain(void *arg); 
@@ -5274,7 +5274,7 @@ void calculateRowGeometry(UiRow *row) {
     }
 }
 
-Image *requestImageForTarget(LaunchTarget *target, uint32_t updateLastUsed) {
+Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
 
     uint64_t targetSignature = target->targetSignature;
     char *path = getCoverPath(target);
@@ -5318,7 +5318,7 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t updateLastUsed) {
         // Search for the target
         if (offblast->imageStore[i].targetSignature == targetSignature)
         {
-            if (updateLastUsed) 
+            if (affectQueue) 
                 offblast->imageStore[i].lastUsedTick = tickNow;
 
             foundAtIndex = i;
@@ -5351,7 +5351,7 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t updateLastUsed) {
                 if (oldestFreeTick == 0 
                     || offblast->imageStore[i].lastUsedTick <= oldestFreeTick) 
                 {
-                    if (updateLastUsed)
+                    if (affectQueue)
                         oldestFreeTick = offblast->imageStore[i].lastUsedTick;
                     oldestFreeIndex = i;
                 }
@@ -5380,12 +5380,11 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t updateLastUsed) {
     }
     else {
 
-        if (oldestFreeIndex != -1) {
+        if (oldestFreeIndex != -1 && affectQueue) {
 
             offblast->imageStore[oldestFreeIndex].state = IMAGE_STATE_QUEUED;
             offblast->imageStore[oldestFreeIndex].targetSignature = targetSignature;
-            if (updateLastUsed)
-                offblast->imageStore[oldestFreeIndex].lastUsedTick = tickNow;
+            offblast->imageStore[oldestFreeIndex].lastUsedTick = tickNow;
             strncpy(offblast->imageStore[oldestFreeIndex].path, path, PATH_MAX);
             strncpy(offblast->imageStore[oldestFreeIndex].url, url, PATH_MAX);
 
