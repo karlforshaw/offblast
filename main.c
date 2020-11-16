@@ -18,13 +18,13 @@
 
 // Alpha 0.6 
 //
-//      - Tile store, this is very, very close.
-//          * Images getting stuck in download state when searching.
-//
 //      - NO Results.
 //          At the minute we're doing a lot of stuff under the assumption
 //          that the active rowset has entries. We need to fix this and
 //          Show something on screen that say's no results found.
+//
+//      - bug, sometimes on inital download we don't see the image that's been
+//          downloaded until we restart the app
 //
 //      - consider importing everything on first load, this will mean if 
 //          you have a shared playtime file you won't get unknown games
