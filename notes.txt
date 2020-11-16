@@ -83,6 +83,6 @@ Also, when scrolling up, we tend to see more loading happening. Perhaps we need 
 We've still got some troubles..
 
 * When using the search functionality, we're still getting some images stuck in a downloading state.
-* Row Geometry is getting smashed regularly
-* We're not queueing up images out of bounds on the row above the screen
+~ DONE Row Geometry is getting smashed regularly
 * We're segfaulting when looking at nintendo DS games
+~ DONE We're not queueing up images out of bounds on the row above the screen

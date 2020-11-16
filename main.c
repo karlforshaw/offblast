@@ -4322,6 +4322,7 @@ void updateResults(uint32_t *launcherSignature) {
         mainUi->searchRowset->movingToRow = firstRow;
         mainUi->searchRowset->movingToTarget = tiles[0].target;
         mainUi->searchRowset->rowCursor = mainUi->searchRowset->rows; 
+        mainUi->rowGeometryInvalid = 1; 
     }
     else {
         free(mainUi->searchRowset->rows[0].tiles);
