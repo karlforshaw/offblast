@@ -23,6 +23,10 @@
 //          that the active rowset has entries. We need to fix this and
 //          Show something on screen that say's no results found.
 //
+//          * sort out the control scheme for search, it makes no sense
+//          - fix invalid memory bugs when we're trying to operate on 
+//              an empty rowset
+//
 //      - bug, sometimes on inital download we don't see the image that's been
 //          downloaded until we restart the app
 //
@@ -1728,7 +1732,16 @@ int main(int argc, char** argv) {
 
             // § Blocks
             if (mainUi->activeRowset->numRows == 0) {
-                //printf("norows!\n");
+                char *noGameText = "whoops, no games found.";
+
+                uint32_t centerOfText = getTextLineWidth(noGameText,
+                        offblast->titleCharData);
+
+                renderText(offblast, 
+                        offblast->winWidth / 2 - centerOfText / 2, 
+                        2 * (offblast->winHeight / 3 
+                            - offblast->titlePointSize / 2),
+                        OFFBLAST_TEXT_TITLE, 1, 0, noGameText);
             }
             else {
 
@@ -2303,7 +2316,8 @@ void changeColumn(uint32_t direction)
             else {
                 if (direction == 0) {
 
-                    if (ui->activeRowset->rowCursor->tileCursor->previous 
+                    if (ui->activeRowset->numRows
+                        && ui->activeRowset->rowCursor->tileCursor->previous 
                             != NULL) 
                     {
                         ui->activeRowset->movingToTarget = 
@@ -2318,7 +2332,8 @@ void changeColumn(uint32_t direction)
 
                 }
                 else {
-                    if (ui->activeRowset->rowCursor->tileCursor->next != NULL) 
+                    if (ui->activeRowset->numRows
+                        && ui->activeRowset->rowCursor->tileCursor->next != NULL) 
                     {
                         ui->activeRowset->movingToTarget 
                             = ui->activeRowset->rowCursor->tileCursor->next->target;
@@ -2387,6 +2402,9 @@ void changeRow(uint32_t direction)
                     ui->menuCursor--;
             }
             else {
+
+                if (!ui->activeRowset->numRows) return;
+
                 ui->verticalAnimation->startTick = SDL_GetTicks();
                 ui->verticalAnimation->direction = direction;
                 ui->verticalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
@@ -2431,7 +2449,7 @@ void jumpScreen(uint32_t direction)
         {
 
             // TODO This is broken
-            if (!ui->showMenu) {
+            if (!ui->showMenu && ui->activeRowset->numRows) {
                 if (direction == 0) {
                         ui->activeRowset->movingToTarget = 
                             ui->activeRowset->rowCursor->tiles[0].target;
