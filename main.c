@@ -404,6 +404,7 @@ char *getCsvField(char *line, int fieldNo);
 double goldenRatioLarge(double in, uint32_t exponent);
 float goldenRatioLargef(float in, uint32_t exponent);
 void horizontalMoveDone();
+void playerSelectMoveDone(void *arg);
 void verticalMoveDone();
 void infoFaded();
 void rowNameFaded();
@@ -2099,7 +2100,22 @@ int main(int argc, char** argv) {
             for (uint32_t i = 0; i < offblast->nUsers; ++i) {
 
                 Image *image = &playerSelectUi->images[i];
-                float alpha = (i == playerSelectUi->cursor) ? 1.0 : 0.7;
+
+                float alpha = 0.7;
+                if (i == playerSelectUi->cursor) {
+
+                    alpha = 1.0;
+                    if (mainUi->horizontalAnimation->animating == 1) {
+                        double change = easeInOutCirc(
+                                (double)SDL_GetTicks() - 
+                                mainUi->horizontalAnimation->startTick,
+                                0.0,
+                                1.0,
+                                (double)mainUi->horizontalAnimation->durationMs);
+
+                        alpha -= change * 0.3;
+                    }
+                }
 
                 renderImage(
                         xStart + playerSelectUi->xOffsetForAvatar[i],  
@@ -2410,19 +2426,17 @@ void changeColumn(uint32_t direction)
     }
     else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
 
-        if (offblast->nUsers > 1) {
+        if (offblast->nUsers > 1 && animationRunning() == 0) {
+            ui->horizontalAnimation->animating = 1;
+            ui->horizontalAnimation->startTick = SDL_GetTicks();
+            ui->horizontalAnimation->direction = direction;
+            ui->horizontalAnimation->durationMs = NAVIGATION_MOVE_DURATION;
+            ui->horizontalAnimation->callback = &playerSelectMoveDone;
 
-            if (direction) {
-                offblast->playerSelectUi.cursor++;
-                if (offblast->playerSelectUi.cursor >= offblast->nUsers)
-                    offblast->playerSelectUi.cursor = 0;
-            }
-            else {
-                if (offblast->playerSelectUi.cursor == 0)
-                    offblast->playerSelectUi.cursor = offblast->nUsers - 1;
-                else 
-                    offblast->playerSelectUi.cursor--;
-            }
+            int32_t *directionArg = malloc(sizeof(int));
+            *directionArg = direction;
+            ui->horizontalAnimation->callbackArgs = directionArg;
+
         }
     }
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {
@@ -2560,6 +2574,24 @@ void horizontalMoveDone() {
             ui->activeRowset->rowCursor->movingToTile;
 }
 
+void playerSelectMoveDone(void *arg) {
+    if (!arg) { printf("player select has no direction arg\n"); return; }
+
+    int32_t *direction = (int*) arg;
+
+    if (*direction) {
+        offblast->playerSelectUi.cursor++;
+        if (offblast->playerSelectUi.cursor >= offblast->nUsers)
+            offblast->playerSelectUi.cursor = 0;
+    }
+    else {
+        if (offblast->playerSelectUi.cursor == 0)
+            offblast->playerSelectUi.cursor = offblast->nUsers - 1;
+        else 
+            offblast->playerSelectUi.cursor--;
+    }
+}
+
 void verticalMoveDone() {
     MainUi *ui = &offblast->mainUi;
         ui->activeRowset->rowCursor = ui->activeRowset->movingToRow;
@@ -2633,7 +2665,12 @@ void animationTick(Animation *theAnimation) {
                 theAnimation->startTick + theAnimation->durationMs) 
         {
             theAnimation->animating = 0;
-            theAnimation->callback();
+            theAnimation->callback(theAnimation->callbackArgs);
+
+            if (theAnimation->callbackArgs != NULL) {
+                free(theAnimation->callbackArgs);
+                theAnimation->callbackArgs = NULL;
+            }
         }
 }
 
