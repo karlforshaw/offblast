@@ -1738,25 +1738,24 @@ int main(int argc, char** argv) {
             // then how do you pair that with animation durations?
             // If theres no animation in place then there should still be a 
             // move lock, but how do you pair it up?
-            printf("JOY X:\t%d\n", offblast->joyX);
             if (offblast->joyX > 0 
-                    && offblast->joyX / 32768.0f > 0.75f) 
+                    && offblast->joyX / (double) INT16_MAX > 0.75f) 
             {
                 changeColumn(1);
             }
             else if (offblast->joyX < 0 && 
-                    offblast->joyX / 32768.0f < -0.75f) 
+                    offblast->joyX / (double) INT16_MAX < -0.75f) 
             {
                 changeColumn(0);
             }
 
             if (offblast->joyY > 0 
-                    && offblast->joyY / 32768.0f > 0.75f) 
+                    && offblast->joyY / (double) INT16_MAX > 0.75f) 
             {
                 changeRow(1);
             }
             else if (offblast->joyY < 0 && 
-                    offblast->joyY / 32768.0f < -0.75f) 
+                    offblast->joyY / (double) INT16_MAX < -0.75f) 
             {
                 changeRow(0);
             }
