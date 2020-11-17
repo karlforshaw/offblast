@@ -22,19 +22,13 @@
 //      initial setup and config checking are important.
 //      I would also like to improve the control scheme somewhat.
 //
-//      - try importing everything on first load, this will mean if 
-//          you have a shared playtime file you won't get unknown games
-//          popping up in your lists..
-//
 //      - better aniations that support incremental jumps if you input a command
 //          during a running animation
 //
-//
-//      - Deadzone checks
+//      * Deadzone checks
 //         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
 //
 //      - analogue control scheme, people don't wanna click click click
-//
 //
 //       - games with poor match scores should probably be logged to the missing
 //          games log, we're allowing bad matches to go through as long as the 
@@ -657,10 +651,7 @@ int main(int argc, char** argv) {
 #endif 
 
 
-    // TODO XXX
-    // Ok so I want us to just load everything in the games db in on first load
-    // Let's list everything in the open game db directory that has a csv extension
-    // and scrape it.
+    // § Scrape the opengamedb
     struct dirent *openGameDbEntry;
     DIR *openGameDbDir = opendir(openGameDbPath);
     if (openGameDbDir == NULL) {
@@ -1616,8 +1607,9 @@ int main(int argc, char** argv) {
             else if (event.type == SDL_CONTROLLERAXISMOTION) {
 
                 // TODO only if it's the player ones controller?
-                if (event.jaxis.axis == SDL_CONTROLLER_AXIS_LEFTX)
+                if (event.jaxis.axis == SDL_CONTROLLER_AXIS_LEFTX) {
                     offblast->joyX = event.jaxis.value;
+                }
                 else if (event.jaxis.axis == SDL_CONTROLLER_AXIS_LEFTY)
                     offblast->joyY = event.jaxis.value * -1;
 
@@ -1737,8 +1729,38 @@ int main(int argc, char** argv) {
                 // SDL_KEYMOD
                 // TODO how to use modifier keys? for jump left and jump right?
             }
-
         }
+
+
+            // Handle Joypad movement
+            // I'm in two minds about how we should do this, I think there 
+            // should be some kind of move cooldown, that might be cool but
+            // then how do you pair that with animation durations?
+            // If theres no animation in place then there should still be a 
+            // move lock, but how do you pair it up?
+            printf("JOY X:\t%d\n", offblast->joyX);
+            if (offblast->joyX > 0 
+                    && offblast->joyX / 32768.0f > 0.75f) 
+            {
+                changeColumn(1);
+            }
+            else if (offblast->joyX < 0 && 
+                    offblast->joyX / 32768.0f < -0.75f) 
+            {
+                changeColumn(0);
+            }
+
+            if (offblast->joyY > 0 
+                    && offblast->joyY / 32768.0f > 0.75f) 
+            {
+                changeRow(1);
+            }
+            else if (offblast->joyY < 0 && 
+                    offblast->joyY / 32768.0f < -0.75f) 
+            {
+                changeRow(0);
+            }
+
 
         // § Player Detection
         // TODO should we do this on every loop?
@@ -2393,17 +2415,15 @@ void changeColumn(uint32_t direction)
 
             if (direction) {
                 offblast->playerSelectUi.cursor++;
+                if (offblast->playerSelectUi.cursor >= offblast->nUsers)
+                    offblast->playerSelectUi.cursor = 0;
             }
             else {
-                offblast->playerSelectUi.cursor--;
+                if (offblast->playerSelectUi.cursor == 0)
+                    offblast->playerSelectUi.cursor = offblast->nUsers - 1;
+                else 
+                    offblast->playerSelectUi.cursor--;
             }
-
-            if (offblast->playerSelectUi.cursor >= offblast->nUsers)
-                offblast->playerSelectUi.cursor = offblast->nUsers - 1;
-
-            // TODO bugged out, ends up at 5
-            if (offblast->playerSelectUi.cursor < 0)
-                offblast->playerSelectUi.cursor = 0;
         }
     }
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {
