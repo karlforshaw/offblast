@@ -21,9 +21,11 @@
 //      For this release I want to work on quality of life improvements,
 //      initial setup and config checking are important.
 //
-//      - read ahead to load the tile out of bounds on the right by one or two
-//
 //      - Config file checking and errors
+//
+// TODO 
+//      - Rescrape! Would be cool if we could tell the app that the gamedb has 
+//          been updated and get it to 'rescrape' info for a specific platform.
 //
 // TODO 
 //      - games with poor match scores should probably be logged to the missing
@@ -1872,7 +1874,7 @@ int main(int argc, char** argv) {
                     }
 
                     while ((int32_t) theTile->baseX - displacement 
-                            < (offblast->winWidth*1.2)) 
+                            < (offblast->winWidth*1.3)) 
                     {
 
                         /*
