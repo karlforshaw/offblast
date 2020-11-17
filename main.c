@@ -20,19 +20,25 @@
 //
 //      For this release I want to work on quality of life improvements,
 //      initial setup and config checking are important.
-//      I would also like to improve the control scheme somewhat.
 //
-//      - better aniations that support incremental jumps if you input a command
-//          during a running animation
+//      - read ahead to load the tile out of bounds on the right by one or two
 //
-//      * Deadzone checks
-//         http://www.lazyfoo.net/tutorials/SDL/19_gamepads_and_joysticks/index.php
+//      - Config file checking and errors
 //
-//      - analogue control scheme, people don't wanna click click click
-//
-//       - games with poor match scores should probably be logged to the missing
+// TODO 
+//      - games with poor match scores should probably be logged to the missing
 //          games log, we're allowing bad matches to go through as long as the 
 //          proper game isn't present
+//
+// TODO
+//      - animation system improvements:
+//          Don't even know where to start with this, a function that queues
+//          animations instead of repeating code so often would be a good start.
+//          Need to have a proper think about the input modes and the system
+//          in general.
+//
+//      - Some concept of acceleration that will effect the speed of running 
+//          animations based on how long the button has been held
 //
 // TODO 
 //      - OpenGameDb, auto download/update? Evict Assets and update.
@@ -241,6 +247,8 @@ typedef struct MainUi {
     Animation *verticalAnimation;
     Animation *infoAnimation;
     Animation *rowNameAnimation;
+    Animation *menuAnimation;
+    Animation *menuNavigateAnimation;
 
     GLuint imageVbo;
 
@@ -404,7 +412,10 @@ char *getCsvField(char *line, int fieldNo);
 double goldenRatioLarge(double in, uint32_t exponent);
 float goldenRatioLargef(float in, uint32_t exponent);
 void horizontalMoveDone();
+void toggleKillButton();
 void playerSelectMoveDone(void *arg);
+void menuToggleDone(void *arg);
+void menuNavigationDone(void *arg);
 void verticalMoveDone();
 void infoFaded();
 void rowNameFaded();
@@ -1307,6 +1318,8 @@ int main(int argc, char** argv) {
     mainUi->verticalAnimation = calloc(1, sizeof(Animation));
     mainUi->infoAnimation = calloc(1, sizeof(Animation));
     mainUi->rowNameAnimation = calloc(1, sizeof(Animation));
+    mainUi->menuAnimation = calloc(1, sizeof(Animation));
+    mainUi->menuNavigateAnimation = calloc(1, sizeof(Animation));
 
     mainUi->showMenu = 0;
     mainUi->showSearch = 0;
@@ -1978,8 +1991,26 @@ int main(int argc, char** argv) {
 
             // § Render Menu
             if (mainUi->showMenu) {
+
+                float xOffset = 0;
+                if (mainUi->menuAnimation->animating == 1) {
+
+                    double change = easeInOutCirc(
+                            (double)SDL_GetTicks() - 
+                            mainUi->menuAnimation->startTick,
+                            0.0,
+                            1.0,
+                            (double)mainUi->menuAnimation->durationMs);
+
+                    if (mainUi->menuAnimation->direction == 0) {
+                        change = 1.0 - change;
+                    }
+
+                    xOffset = change * (0 - offblast->winWidth * 0.16);
+                }
+
                 Color menuColor = {0.0, 0.0, 0.0, 0.85};
-                renderGradient(0, 0, 
+                renderGradient(xOffset, 0, 
                         offblast->winWidth * 0.16, offblast->winHeight, 
                         0,
                         menuColor, menuColor);
@@ -1992,7 +2023,7 @@ int main(int argc, char** argv) {
 
                         if (mi == mainUi->menuCursor) itemTransparency = 1.0f;
 
-                        renderText(offblast, offblast->winWidth * 0.016, 
+                        renderText(offblast, xOffset + offblast->winWidth * 0.016, 
                                 offblast->winHeight - 133 - yOffset, 
                                 OFFBLAST_TEXT_INFO, itemTransparency, 0, 
                                 mainUi->menuItems[mi].label);
@@ -2228,10 +2259,13 @@ int main(int argc, char** argv) {
         free(fpsString);
 
 
+        // XXX yuk
         animationTick(mainUi->horizontalAnimation);
         animationTick(mainUi->verticalAnimation);
         animationTick(mainUi->infoAnimation);
         animationTick(mainUi->rowNameAnimation);
+        animationTick(mainUi->menuAnimation);
+        animationTick(mainUi->menuNavigateAnimation);
 
     
         SDL_GL_SwapWindow(window);
@@ -2372,9 +2406,23 @@ void changeColumn(uint32_t direction)
         if (animationRunning() == 0)
         {
 
+            if (ui->showSearch) return;
+
             if (ui->showMenu) {
                 if (direction == 1) {
-                    ui->showMenu = 0;
+
+                    // TODO create a function for this
+                    ui->menuAnimation->startTick = SDL_GetTicks();
+                    ui->menuAnimation->direction = direction;
+                    ui->menuAnimation->durationMs = NAVIGATION_MOVE_DURATION;
+                    ui->menuAnimation->animating = 1;
+                    ui->menuAnimation->callback = &menuToggleDone;
+
+                    uint32_t *callbackArg = malloc(sizeof(uint32_t));
+                    *callbackArg = 0;
+                    ui->menuAnimation->callbackArgs = callbackArg;
+                    return;
+
                 }
             }
             else {
@@ -2390,7 +2438,17 @@ void changeColumn(uint32_t direction)
                             = ui->activeRowset->rowCursor->tileCursor->previous;
                     }
                     else {
+                        // TODO create a function for this
                         ui->showMenu = 1;
+                        ui->menuAnimation->startTick = SDL_GetTicks();
+                        ui->menuAnimation->direction = direction;
+                        ui->menuAnimation->durationMs = NAVIGATION_MOVE_DURATION/2;
+                        ui->menuAnimation->animating = 1;
+                        ui->menuAnimation->callback = &menuToggleDone;
+
+                        uint32_t *callbackArg = malloc(sizeof(uint32_t));
+                        *callbackArg = 1;
+                        ui->menuAnimation->callbackArgs = callbackArg;
                         return;
                     }
 
@@ -2441,7 +2499,14 @@ void changeColumn(uint32_t direction)
     }
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {
         if(activeWindowIsOffblast()) {
-            offblast->uiStopButtonHot = !offblast->uiStopButtonHot;
+
+            ui->horizontalAnimation->startTick = SDL_GetTicks();
+            ui->horizontalAnimation->direction = direction;
+            ui->horizontalAnimation->durationMs = NAVIGATION_MOVE_DURATION/3;
+            ui->horizontalAnimation->animating = 1;
+            ui->horizontalAnimation->callback = &toggleKillButton;
+
+            return;
         }
     }
 }
@@ -2450,16 +2515,31 @@ void changeRow(uint32_t direction)
 {
     MainUi *ui = &offblast->mainUi;
 
+    if (ui->showSearch) return;
+
     if (animationRunning() == 0)
     {
         if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
 
             if (ui->showMenu) {
 
-                if (direction == 0 && ui->menuCursor < ui->numMenuItems-1)
-                    ui->menuCursor++;
-                else if (direction == 1 && ui->menuCursor != 0)
-                    ui->menuCursor--;
+                if (direction == 0 && ui->menuCursor == ui->numMenuItems-1)
+                    return;
+
+                else if (direction == 1 && ui->menuCursor == 0)
+                    return;
+
+                ui->menuNavigateAnimation->startTick = SDL_GetTicks();
+                ui->menuNavigateAnimation->direction = direction;
+                ui->menuNavigateAnimation->durationMs = 
+                    NAVIGATION_MOVE_DURATION / 2;
+                ui->menuNavigateAnimation->animating = 1;
+                ui->menuNavigateAnimation->callback = &menuNavigationDone;
+
+                uint32_t *callbackArg = malloc(sizeof(uint32_t));
+                *callbackArg = direction;
+                ui->menuNavigateAnimation->callbackArgs = callbackArg;
+                return;
             }
             else {
 
@@ -2503,6 +2583,8 @@ void changeRow(uint32_t direction)
 void jumpScreen(uint32_t direction) 
 {
     MainUi *ui = &offblast->mainUi;
+
+    if (ui->showSearch) return;
 
     if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
         if (animationRunning() == 0)
@@ -2568,6 +2650,10 @@ float goldenRatioLargef(float in, uint32_t exponent) {
     }
 }
 
+void toggleKillButton() {
+    offblast->uiStopButtonHot = !offblast->uiStopButtonHot;
+}
+
 void horizontalMoveDone() {
     MainUi *ui = &offblast->mainUi;
         ui->activeRowset->rowCursor->tileCursor = 
@@ -2590,6 +2676,20 @@ void playerSelectMoveDone(void *arg) {
         else 
             offblast->playerSelectUi.cursor--;
     }
+}
+
+void menuToggleDone(void *arg) {
+    uint32_t *showIt = (uint32_t*) arg;
+    offblast->mainUi.showMenu = *showIt;
+}
+
+void menuNavigationDone(void *arg) {
+    uint32_t *direction = (uint32_t*) arg;
+    
+    if (*direction == 0)
+        offblast->mainUi.menuCursor++;
+    else 
+        offblast->mainUi.menuCursor--;
 }
 
 void verticalMoveDone() {
@@ -2654,6 +2754,12 @@ uint32_t animationRunning() {
         result++;
     }
     else if (ui->infoAnimation->animating != 0) {
+        result++;
+    }
+    else if (ui->menuAnimation->animating != 0) {
+        result++;
+    }
+    else if (ui->menuNavigateAnimation->animating != 0) {
         result++;
     }
 
@@ -2847,7 +2953,7 @@ void *imageLoadMain(void *arg) {
 
             if(atlas == NULL) {
 
-                printf("need to download %d\n", index);
+                //printf("need to download %d\n", index);
 
                 pthread_mutex_lock(&offblast->imageStoreLock);
 
@@ -2901,7 +3007,7 @@ void *downloadMain(void *arg) {
     char *workingPath = calloc(PATH_MAX, sizeof(char));
     char *workingUrl = calloc(PATH_MAX, sizeof(char));
 
-    printf("Download started %d\n", SDL_GetTicks());
+    //printf("Download started %d\n", SDL_GetTicks());
                 
     snprintf(workingPath, 
             PATH_MAX,
@@ -2914,7 +3020,7 @@ void *downloadMain(void *arg) {
             "%s",
             ctx->image->url); 
 
-    printf("Downloading %s\n", workingUrl);
+    //printf("Downloading %s\n", workingUrl);
 
 
     CurlFetch fetch = {};
