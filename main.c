@@ -448,7 +448,6 @@ void renderGradient(float x, float y, float w, float h,
 float getWidthForScaledImage(float scaledHeight, Image *image);
 void renderImage(float x, float y, float w, float h, Image* image,
         float desaturation, float alpha);
-//void loadTexture(UiTile *tile); XXX
 void pressSearch();
 void loadPlaytimeFile();
 Window getActiveWindowRaw();
@@ -657,6 +656,236 @@ int main(int argc, char** argv) {
     } // XXX DEBUG ONLY CODE
 #endif 
 
+
+    // TODO XXX
+    // Ok so I want us to just load everything in the games db in on first load
+    // Let's list everything in the open game db directory that has a csv extension
+    // and scrape it.
+    struct dirent *openGameDbEntry;
+    DIR *openGameDbDir = opendir(openGameDbPath);
+    if (openGameDbDir == NULL) {
+        printf("Path %s failed to open\n", openGameDbPath);
+        return 1;
+    }
+
+    while ((openGameDbEntry = readdir(openGameDbDir)) != NULL) {
+        if (openGameDbEntry->d_name[0] == '.') continue;
+        if (strcmp(openGameDbEntry->d_name, ".") == 0) continue;
+        if (strcmp(openGameDbEntry->d_name, "..") == 0) continue;
+        char *ext = strrchr((char*)openGameDbEntry->d_name, '.');
+        if (ext == NULL) continue;
+
+        if (strcmp(ext, ".csv") == 0) {
+            printf("Importing game data from %s\n", openGameDbEntry->d_name);
+        }
+        else {
+            continue;
+        }
+
+        char *fileNameSplit = strtok(openGameDbEntry->d_name, ".");
+        uint32_t platformScraped = 0;
+        for (uint32_t i=0; i < launchTargetFile->nEntries; ++i) {
+            if (strcmp(launchTargetFile->entries[i].platform, 
+                        &fileNameSplit[0]) == 0) 
+            {
+                printf("%s already scraped.\n", &fileNameSplit[0]);
+                platformScraped = 1;
+                break;
+            }
+        }
+
+        if (!platformScraped) {
+
+            printf("Pulling data in from the opengamedb.\n");
+            char *openGameDbPlatformPath;
+            asprintf(&openGameDbPlatformPath, "%s/%s.csv", 
+                    openGameDbPath, 
+                    openGameDbEntry->d_name);
+            printf("Looking for file %s\n", openGameDbPlatformPath);
+
+            FILE *openGameDbFile = fopen(openGameDbPlatformPath, "r");
+            if (openGameDbFile == NULL) {
+                printf("looks like theres no opengamedb for the platform\n");
+                free(openGameDbPlatformPath);
+                break;
+            }
+            free(openGameDbPlatformPath);
+            openGameDbPlatformPath = NULL;
+
+            char *csvLine = NULL;
+            size_t csvLineLength = 0;
+            size_t csvBytesRead = 0;
+            uint32_t onRow = 0;
+
+
+            while ((csvBytesRead = getline(
+                            &csvLine, &csvLineLength, openGameDbFile)) != -1) 
+            {
+                if (onRow > 0) {
+
+                    char *gameName = getCsvField(csvLine, 1);
+                    char *gameSeed;
+
+                    asprintf(&gameSeed, "%s_%s", 
+                            &fileNameSplit[0], gameName);
+
+                    uint64_t targetSignature = 0;
+                    lmmh_x64_128(gameSeed, strlen(gameSeed), 33, 
+                            (uint64_t*)&targetSignature);
+
+                    int32_t indexOfEntry = launchTargetIndexByTargetSignature(
+                            launchTargetFile, targetSignature);
+
+                    if (indexOfEntry == -1) {
+
+                        void *pLaunchTargetMemory = growDbFileIfNecessary(
+                                    &launchTargetDb, 
+                                    sizeof(LaunchTarget),
+                                    OFFBLAST_DB_TYPE_FIXED);
+
+                        if(pLaunchTargetMemory == NULL) {
+                            printf("Couldn't expand the db file to accomodate"
+                                    " all the targets\n");
+                            return 1;
+                        }
+                        else {
+                            launchTargetFile = 
+                                (LaunchTargetFile*) pLaunchTargetMemory; 
+                            offblast->launchTargetFile = launchTargetFile;
+                        }
+
+                        char *gameDate = getCsvField(csvLine, 2);
+                        char *scoreString = getCsvField(csvLine, 3);
+                        char *metaScoreString = getCsvField(csvLine, 4);
+                        char *description = getCsvField(csvLine, 6);
+                        char *coverArtUrl = getCsvField(csvLine, 7);
+                        char *gameId = getCsvField(csvLine, 8);
+
+                        printf("\n--\nAdding: \n%s\n%" PRIu64 "\n%s\n%s\ng: %s\n\nm: %s\n%s\n", 
+                                gameSeed, 
+                                targetSignature, 
+                                gameName, 
+                                gameDate,
+                                scoreString, metaScoreString, gameId);
+
+                        LaunchTarget *newEntry = 
+                            &launchTargetFile->entries[launchTargetFile->nEntries];
+                        printf("writing new game to %p\n", newEntry);
+
+                        newEntry->targetSignature = targetSignature;
+
+                        memcpy(&newEntry->name, 
+                                gameName, 
+                                strlen(gameName));
+
+                        memcpy(&newEntry->platform, 
+                                &fileNameSplit[0],
+                                strlen(&fileNameSplit[0]));
+
+                        memcpy(&newEntry->coverUrl, 
+                                coverArtUrl,
+                                strlen(coverArtUrl));
+
+                        memcpy(&newEntry->id, 
+                                gameId,
+                                strlen(gameId));
+
+                        // TODO harden
+                        if (strlen(gameDate) == 10) {
+                            memcpy(&newEntry->date, gameDate, 10);
+                        }
+                        if (strlen(gameDate) == 4 && strtod(gameDate, NULL)) {
+                            memcpy(&newEntry->date, gameDate, 4);
+                        }
+                        else {
+                            printf("INVALID DATE FORMAT\n");
+                        }
+
+                        float score = -1;
+                        if (strlen(scoreString) != 0) {
+                            score = atof(scoreString) * 2 * 10;
+                        }
+                        if (strlen(metaScoreString) != 0) {
+                            if (score == -1) {
+                                score = atof(metaScoreString);
+                            }
+                            else {
+                                score = (score + atof(metaScoreString)) / 2;
+                            }
+                        }
+
+
+                        void *pDescriptionFile = growDbFileIfNecessary(
+                                    &descriptionDb, 
+                                    sizeof(OffblastBlob) 
+                                        + strlen(description),
+                                    OFFBLAST_DB_TYPE_BLOB); 
+
+                        if(pDescriptionFile == NULL) {
+                            printf("Couldn't expand the description file to "
+                                    "accomodate all the descriptions\n");
+                            return 1;
+                        }
+                        else { 
+                            offblast->descriptionFile = 
+                                (OffblastBlobFile*) pDescriptionFile;
+                        }
+
+                        printf("description file just after cursor is now %lu\n", 
+                                offblast->descriptionFile->cursor);
+
+                        OffblastBlob *newDescription = (OffblastBlob*) 
+                            &offblast->descriptionFile->memory[
+                                offblast->descriptionFile->cursor];
+
+                        newDescription->targetSignature = targetSignature;
+                        newDescription->length = strlen(description);
+
+                        memcpy(&newDescription->content, description, 
+                                strlen(description));
+                        *(newDescription->content + strlen(description)) = '\0';
+
+                        newEntry->descriptionOffset = 
+                            offblast->descriptionFile->cursor;
+                        
+                        offblast->descriptionFile->cursor += 
+                            sizeof(OffblastBlob) + strlen(description) + 1;
+
+                        printf("description file cursor is now %lu\n", 
+                                offblast->descriptionFile->cursor);
+
+                        newEntry->ranking = (uint32_t)round(score);
+
+                        launchTargetFile->nEntries++;
+
+                        free(gameDate);
+                        free(scoreString);
+                        free(metaScoreString);
+                        free(description);
+                        free(coverArtUrl);
+                        free(gameId);
+
+                    }
+                    else {
+                        printf("%d index found, We already have %"PRIu64":%s\n", 
+                                indexOfEntry,
+                                targetSignature, 
+                                gameSeed);
+                    }
+
+                    free(gameSeed);
+                    free(gameName);
+                }
+
+                onRow++;
+            }
+            free(csvLine);
+            fclose(openGameDbFile);
+        }
+    }
+
+
+
     offblast->platforms = calloc(MAX_PLATFORMS, 256 * sizeof(char));
 
     uint32_t nConfigLaunchers = json_object_array_length(configLaunchers);
@@ -814,204 +1043,6 @@ int main(int argc, char** argv) {
             }
         }
 
-        uint32_t platformScraped = 0;
-        for (uint32_t i=0; i < launchTargetFile->nEntries; ++i) {
-            if (strcmp(launchTargetFile->entries[i].platform, 
-                        theLauncher->platform) == 0) 
-            {
-                printf("%s already scraped.\n", theLauncher->platform);
-                platformScraped = 1;
-                break;
-            }
-        }
-
-
-        if (!platformScraped) {
-
-            printf("Pulling data in from the opengamedb.\n");
-            char *openGameDbPlatformPath;
-            asprintf(&openGameDbPlatformPath, "%s/%s.csv", openGameDbPath, 
-                    theLauncher->platform);
-            printf("Looking for file %s\n", openGameDbPlatformPath);
-
-            FILE *openGameDbFile = fopen(openGameDbPlatformPath, "r");
-            if (openGameDbFile == NULL) {
-                printf("looks like theres no opengamedb for the platform\n");
-                free(openGameDbPlatformPath);
-                break;
-            }
-            free(openGameDbPlatformPath);
-            openGameDbPlatformPath = NULL;
-
-            char *csvLine = NULL;
-            size_t csvLineLength = 0;
-            size_t csvBytesRead = 0;
-            uint32_t onRow = 0;
-
-            while ((csvBytesRead = getline(
-                            &csvLine, &csvLineLength, openGameDbFile)) != -1) 
-            {
-                if (onRow > 0) {
-
-                    char *gameName = getCsvField(csvLine, 1);
-                    char *gameSeed;
-
-                    asprintf(&gameSeed, "%s_%s", 
-                            theLauncher->platform, gameName);
-
-                    uint64_t targetSignature = 0;
-                    lmmh_x64_128(gameSeed, strlen(gameSeed), 33, 
-                            (uint64_t*)&targetSignature);
-
-                    int32_t indexOfEntry = launchTargetIndexByTargetSignature(
-                            launchTargetFile, targetSignature);
-
-                    if (indexOfEntry == -1) {
-
-                        void *pLaunchTargetMemory = growDbFileIfNecessary(
-                                    &launchTargetDb, 
-                                    sizeof(LaunchTarget),
-                                    OFFBLAST_DB_TYPE_FIXED);
-
-                        if(pLaunchTargetMemory == NULL) {
-                            printf("Couldn't expand the db file to accomodate"
-                                    " all the targets\n");
-                            return 1;
-                        }
-                        else {
-                            launchTargetFile = 
-                                (LaunchTargetFile*) pLaunchTargetMemory; 
-                            offblast->launchTargetFile = launchTargetFile;
-                        }
-
-                        char *gameDate = getCsvField(csvLine, 2);
-                        char *scoreString = getCsvField(csvLine, 3);
-                        char *metaScoreString = getCsvField(csvLine, 4);
-                        char *description = getCsvField(csvLine, 6);
-                        char *coverArtUrl = getCsvField(csvLine, 7);
-                        char *gameId = getCsvField(csvLine, 8);
-
-                        printf("\n--\nAdding: \n%s\n%" PRIu64 "\n%s\n%s\ng: %s\n\nm: %s\n%s\n", 
-                                gameSeed, 
-                                targetSignature, 
-                                gameName, 
-                                gameDate,
-                                scoreString, metaScoreString, gameId);
-
-                        LaunchTarget *newEntry = 
-                            &launchTargetFile->entries[launchTargetFile->nEntries];
-                        printf("writing new game to %p\n", newEntry);
-
-                        newEntry->targetSignature = targetSignature;
-
-                        memcpy(&newEntry->name, 
-                                gameName, 
-                                strlen(gameName));
-
-                        memcpy(&newEntry->platform, 
-                                theLauncher->platform,
-                                strlen(theLauncher->platform));
-
-                        memcpy(&newEntry->coverUrl, 
-                                coverArtUrl,
-                                strlen(coverArtUrl));
-
-                        memcpy(&newEntry->id, 
-                                gameId,
-                                strlen(gameId));
-
-                        // TODO harden
-                        if (strlen(gameDate) == 10) {
-                            memcpy(&newEntry->date, gameDate, 10);
-                        }
-                        if (strlen(gameDate) == 4 && strtod(gameDate, NULL)) {
-                            memcpy(&newEntry->date, gameDate, 4);
-                        }
-                        else {
-                            printf("INVALID DATE FORMAT\n");
-                        }
-
-                        float score = -1;
-                        if (strlen(scoreString) != 0) {
-                            score = atof(scoreString) * 2 * 10;
-                        }
-                        if (strlen(metaScoreString) != 0) {
-                            if (score == -1) {
-                                score = atof(metaScoreString);
-                            }
-                            else {
-                                score = (score + atof(metaScoreString)) / 2;
-                            }
-                        }
-
-
-                        void *pDescriptionFile = growDbFileIfNecessary(
-                                    &descriptionDb, 
-                                    sizeof(OffblastBlob) 
-                                        + strlen(description),
-                                    OFFBLAST_DB_TYPE_BLOB); 
-
-                        if(pDescriptionFile == NULL) {
-                            printf("Couldn't expand the description file to "
-                                    "accomodate all the descriptions\n");
-                            return 1;
-                        }
-                        else { 
-                            offblast->descriptionFile = 
-                                (OffblastBlobFile*) pDescriptionFile;
-                        }
-
-                        printf("description file just after cursor is now %lu\n", 
-                                offblast->descriptionFile->cursor);
-
-                        OffblastBlob *newDescription = (OffblastBlob*) 
-                            &offblast->descriptionFile->memory[
-                                offblast->descriptionFile->cursor];
-
-                        newDescription->targetSignature = targetSignature;
-                        newDescription->length = strlen(description);
-
-                        memcpy(&newDescription->content, description, 
-                                strlen(description));
-                        *(newDescription->content + strlen(description)) = '\0';
-
-                        newEntry->descriptionOffset = 
-                            offblast->descriptionFile->cursor;
-                        
-                        offblast->descriptionFile->cursor += 
-                            sizeof(OffblastBlob) + strlen(description) + 1;
-
-                        printf("description file cursor is now %lu\n", 
-                                offblast->descriptionFile->cursor);
-
-                        newEntry->ranking = (uint32_t)round(score);
-
-                        launchTargetFile->nEntries++;
-
-                        free(gameDate);
-                        free(scoreString);
-                        free(metaScoreString);
-                        free(description);
-                        free(coverArtUrl);
-                        free(gameId);
-
-                    }
-                    else {
-                        printf("%d index found, We already have %"PRIu64":%s\n", 
-                                indexOfEntry,
-                                targetSignature, 
-                                gameSeed);
-                    }
-
-                    free(gameSeed);
-                    free(gameName);
-                }
-
-                onRow++;
-            }
-            free(csvLine);
-            fclose(openGameDbFile);
-        }
 
         if (strcmp(theLauncher->type, "cemu") == 0) {
             importFromCemu(theLauncher);
@@ -2735,7 +2766,6 @@ void *imageLoadMain(void *arg) {
             if (offblast->imageStore[i].targetSignature > 0
                     && offblast->imageStore[i].state == IMAGE_STATE_QUEUED) 
             {
-                printf("found something to load\n");
                 offblast->imageStore[i].state = IMAGE_STATE_LOADING;
                 index = i;
                 break;
@@ -2793,8 +2823,8 @@ void *imageLoadMain(void *arg) {
                 offblast->imageStore[index].height = h;
                 offblast->imageStore[index].atlasSize = atlasSize;
                 offblast->imageStore[index].state = IMAGE_STATE_READY;
-                printf("loaded %"PRIu64"\n", 
-                        offblast->imageStore[index].targetSignature);
+                //printf("loaded %"PRIu64"\n", 
+                //        offblast->imageStore[index].targetSignature);
 
                 pthread_mutex_unlock(&offblast->imageStoreLock);
             }
@@ -3363,7 +3393,7 @@ void pressConfirm(int32_t joystickIndex) {
                 offblast->mainUi.menuItems[offblast->mainUi.menuCursor].callbackArgs;
 
             if (callback == NULL) 
-                printf("menu null backback!\n");
+                printf("menu null callback!\n");
             else {
                 offblast->mainUi.showMenu = 0;
                 callback(callbackArgs);
@@ -4841,7 +4871,7 @@ void importFromRPCS3(Launcher *theLauncher) {
         assert(endP-startP <= 64);
         memcpy(currentName, startP, endP-startP);
 
-        printf("ps3 game: %s\n%s\n", currentName, currentPath);
+        //printf("ps3 game: %s\n%s\n", currentName, currentPath);
 
         pushToRomList(list, currentPath, currentName, NULL);
     }
@@ -4959,7 +4989,7 @@ void importFromSteam(Launcher *theLauncher) {
                 if (strstr(lineBuffer, "Installed") 
                         && strstr(lineBuffer, "1")) 
                 {
-                    printf("New steam game %s\n", currentId);
+                    //printf("New steam game %s\n", currentId);
                     pushToRomList(list, NULL, NULL, currentId);
                 }
             }
@@ -5033,6 +5063,7 @@ void importFromCustom(Launcher *theLauncher) {
     struct dirent *currentEntry;
     while ((currentEntry = readdir(dir)) != NULL) {
 
+        if (currentEntry->d_name[0] == '.') continue;
         if (strcmp(currentEntry->d_name, ".") == 0) continue;
         if (strcmp(currentEntry->d_name, "..") == 0) continue;
 
