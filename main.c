@@ -18,11 +18,6 @@
 
 // Version 0.6.1
 //
-//      For this release I want to work on quality of life improvements,
-//      initial setup and config checking are important.
-//
-//      - Config file checking and errors
-//
 // TODO 
 //      - Rescrape! Would be cool if we could tell the app that the gamedb has 
 //          been updated and get it to 'rescrape' info for a specific platform.
@@ -404,7 +399,7 @@ typedef struct WindowInfo {
 } WindowInfo;
 
 
-
+void condPrintConfigError(void *object, const char *message);
 uint32_t megabytes(uint32_t n);
 uint32_t powTwoFloor(uint32_t val);
 uint32_t needsReRender(SDL_Window *window);
@@ -564,17 +559,17 @@ int main(int argc, char** argv) {
             configText,
             configSize);
 
-    assert(configObj);
+    condPrintConfigError(configObj, "Your config file isn't valid JSON.");
 
     json_object *configLaunchers = NULL;
     json_object_object_get_ex(configObj, "launchers", &configLaunchers);
-    assert(configLaunchers);
+    condPrintConfigError(configLaunchers, "Your launcher specification is invalid.");
 
     json_object *configForOpenGameDb;
     json_object_object_get_ex(configObj, "opengamedb", 
             &configForOpenGameDb);
 
-    assert(configForOpenGameDb);
+    condPrintConfigError(configForOpenGameDb, "Open game DB parameter invalid.");
     const char *openGameDbPath = 
         json_object_get_string(configForOpenGameDb);
 
@@ -933,7 +928,10 @@ int main(int argc, char** argv) {
         json_object_object_get_ex(launcherNode, "type",
                 &typeStringNode);
         theType = json_object_get_string(typeStringNode);
-        assert(strlen(theType) < 256);
+        if (strlen(theType) >= 256) {
+            condPrintConfigError(NULL, 
+                    "One of your launcher types has too many characters");
+        }
         memcpy(&theLauncher->type, theType, strlen(theType));
 
         json_object_object_get_ex(launcherNode, "name",
@@ -941,7 +939,10 @@ int main(int argc, char** argv) {
 
         if (nameStringNode) {
             theName= json_object_get_string(nameStringNode);
-            assert(strlen(theName) < 64);
+            if (strlen(theName) >= 64) {
+                condPrintConfigError(NULL, 
+                        "One of your launcher names is too long.");
+            }
             memcpy(&theLauncher->name, theName, strlen(theName));
         }
 
@@ -960,14 +961,20 @@ int main(int argc, char** argv) {
             json_object_object_get_ex(launcherNode, "platform",
                     &platformStringNode);
             thePlatform = json_object_get_string(platformStringNode);
-            assert(strlen(thePlatform) < 256);
+            if (strlen(thePlatform) >= 256) {
+                condPrintConfigError(NULL, 
+                        "Your cemu platform string is too long.");
+            }
             memcpy(&theLauncher->platform, 
                     thePlatform, strlen(thePlatform));
 
             json_object_object_get_ex(launcherNode, "cmd",
                     &cmdStringNode);
             theCommand = json_object_get_string(cmdStringNode);
-            assert(strlen(theCommand) < 512);
+            if (strlen(theCommand) >= 512) {
+                condPrintConfigError(NULL, 
+                        "Your cemu command string is too long.");
+            }
             memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
 
         }
@@ -983,21 +990,30 @@ int main(int argc, char** argv) {
             json_object_object_get_ex(launcherNode, "extension",
                     &extensionStringNode);
             theExtension = json_object_get_string(extensionStringNode);
-            assert(strlen(theExtension) < 32);
+            if (strlen(theExtension) >= 32) {
+                condPrintConfigError(NULL, 
+                        "One of your custom launchers has too many extensions");
+            }
             memcpy(&theLauncher->extension, 
                     theExtension, strlen(theExtension));
 
             json_object_object_get_ex(launcherNode, "platform",
                     &platformStringNode);
             thePlatform = json_object_get_string(platformStringNode);
-            assert(strlen(thePlatform) < 256);
+            if (strlen(thePlatform) >= 256) {
+                condPrintConfigError(NULL, 
+                        "One of your custom launchers' platform strings is too long.");
+            }
             memcpy(&theLauncher->platform, 
                     thePlatform, strlen(thePlatform));
 
             json_object_object_get_ex(launcherNode, "cmd",
                     &cmdStringNode);
             theCommand = json_object_get_string(cmdStringNode);
-            assert(strlen(theCommand) < 512);
+            if (strlen(theCommand) >= 512) {
+                condPrintConfigError(NULL, 
+                        "One of your custom launchers' command strings is too long.");
+            }
             memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
 
         }
@@ -1012,7 +1028,10 @@ int main(int argc, char** argv) {
             json_object_object_get_ex(launcherNode, "cmd",
                     &cmdStringNode);
             theCommand = json_object_get_string(cmdStringNode);
-            assert(strlen(theCommand) < 512);
+            if (strlen(theCommand) >= 512) {
+                condPrintConfigError(NULL, 
+                        "Your RPCS3 command string is too long.");
+            }
             memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
         }
         else if (strcmp("scummvm", theLauncher->type) == 0){
@@ -1111,8 +1130,12 @@ int main(int argc, char** argv) {
 
     json_object *usersObject = NULL;
     json_object_object_get_ex(configObj, "users", &usersObject);
+
     offblast->nUsers = json_object_array_length(usersObject);
-    assert(offblast->nUsers);
+    if (!offblast->nUsers) {
+        condPrintConfigError(NULL, "You have no users defined in your config.");
+    }
+
     offblast->users = calloc(offblast->nUsers + 1, sizeof(User));
 
     uint32_t iUser;
@@ -5548,4 +5571,12 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
 
 
     return returnImage;
+}
+
+void condPrintConfigError(void *object, const char *message) {
+    if (object == NULL) {
+        printf("Offblast Config Error:\n%s\n", message);
+        printf("Please refer to the example config to see where you might be going wrong.\n");
+        exit(1);
+    }
 }
