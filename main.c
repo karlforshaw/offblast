@@ -16,18 +16,10 @@
 
 #define IMAGE_STORE_SIZE 500
 
-// Version 0.6.1
+// Version 0.6.2 ===============================================================
 //
-// TODO 
-//      - Rescrape! Would be cool if we could tell the app that the gamedb has 
-//          been updated and get it to 'rescrape' info for a specific platform.
+//      - CSV corruption checking.
 //
-// TODO 
-//      - games with poor match scores should probably be logged to the missing
-//          games log, we're allowing bad matches to go through as long as the 
-//          proper game isn't present
-//
-// TODO
 //      - animation system improvements:
 //          Don't even know where to start with this, a function that queues
 //          animations instead of repeating code so often would be a good start.
@@ -37,24 +29,42 @@
 //      - Some concept of acceleration that will effect the speed of running 
 //          animations based on how long the button has been held
 //
+//      - games with poor match scores should probably be logged to the missing
+//          games log, we're allowing bad matches to go through as long as the 
+//          proper game isn't present
+// 
+//      - Hours played in info
+//
+// Roadmap =====================================================================
+//
 // TODO 
 //      - OpenGameDb, auto download/update? Evict Assets and update.
 //
-// TODO Better config slugs, I'd love to have player specific slugs so that
-//  anything in the player section could be included in the launcher entries like
-//  %PLAYER_FOO%
+//      - Rescrape! Would be cool if we could tell the app that the gamedb has 
+//          been updated and get it to 'rescrape' info for a specific platform.
 //
-// TODO Hours played in info
+//      - Chek if the opengamedb is out of date and attempt to rectify, would
+//          be good if offblast could attempt to download the opengamedb if
+//          no config entry is in place for it.
 //
-// TODO steam support
-//  When a game is removed offblast still thinks it's playable
+// TODO 
+//      - Better config slugs, I'd love to have player specific slugs so that
+//          anything in the player section could be included in the launcher 
+//          entries like %PLAYER_FOO%
 //
-// TODO List caches, I think when we generate lists we should cache
-//      them in files.. maybe?
+// TODO 
+//      - steam support: When a game is removed offblast still thinks it's 
+//          playable
 //
-// TODO Collections, this is more of an opengamedb ticket but It would be
-//      cool to feature collections from youtubers such as metal jesus.
+// TODO 
+//      - List caches, I think when we generate lists we should cache
+//          them in files.. maybe?
 //
+// TODO 
+//      - Collections, this is more of an opengamedb ticket but It would be
+//          cool to feature collections from youtubers such as metal jesus.
+//
+// =============================================================================
 
 #include <stdio.h>
 #include <signal.h>
@@ -3490,6 +3500,7 @@ void launch() {
 void pressSearch(int32_t joystickIndex) {
 
     if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {}
+    else if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {}
     else if (offblast->mainUi.showSearch) {
         //offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;
         //offblast->mainUi.showSearch = 0;
