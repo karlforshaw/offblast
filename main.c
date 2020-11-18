@@ -35,6 +35,8 @@
 // 
 //      - Hours played in info
 //
+//      - Search keyboard input
+//
 // Roadmap =====================================================================
 //
 // TODO 
