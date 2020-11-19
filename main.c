@@ -1471,7 +1471,7 @@ int main(int argc, char** argv) {
             offblast->textBitmapWidth, offblast->textBitmapHeight, 
             0, GL_RED, GL_UNSIGNED_BYTE, titleAtlas); 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    stbi_write_png("titletest.png", offblast->textBitmapWidth, offblast->textBitmapHeight, 1, titleAtlas, 0);
+    //stbi_write_png("titletest.png", offblast->textBitmapWidth, offblast->textBitmapHeight, 1, titleAtlas, 0);
 
     free(titleAtlas);
     titleAtlas = NULL;
@@ -1490,7 +1490,7 @@ int main(int argc, char** argv) {
             offblast->textBitmapWidth, offblast->textBitmapHeight, 
             0, GL_RED, GL_UNSIGNED_BYTE, infoAtlas); 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    stbi_write_png("infotest.png", offblast->textBitmapWidth, offblast->textBitmapHeight, 1, infoAtlas, 0);
+    //stbi_write_png("infotest.png", offblast->textBitmapWidth, offblast->textBitmapHeight, 1, infoAtlas, 0);
 
     free(infoAtlas);
     infoAtlas = NULL;
@@ -1508,7 +1508,7 @@ int main(int argc, char** argv) {
             offblast->textBitmapWidth, offblast->textBitmapHeight, 
             0, GL_RED, GL_UNSIGNED_BYTE, debugAtlas); 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    stbi_write_png("debugtest.png", offblast->textBitmapWidth, offblast->textBitmapHeight, 1, debugAtlas, 0);
+    //stbi_write_png("debugtest.png", offblast->textBitmapWidth, offblast->textBitmapHeight, 1, debugAtlas, 0);
 
     free(debugAtlas);
     free(fontContents);
