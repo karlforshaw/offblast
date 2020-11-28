@@ -1267,21 +1267,9 @@ int main(int argc, char** argv) {
 
 
     // CREATE WORKER THREADS
-
-    // TODO create multiple of these depending on how many cores we have 
-    // available
-    unsigned int eax=11,ebx=0,ecx=1,edx=0;
-    asm volatile("cpuid"
-            : "=a" (eax),
-            "=b" (ebx),
-            "=c" (ecx),
-            "=d" (edx)
-            : "0" (eax), "2" (ecx)
-            : );
-
-    printf("THREADS: %d\n", ebx);
-
-    uint32_t totalLoaderThreads = ebx-1;
+    uint32_t totalLoaderThreads = sysconf(_SC_NPROCESSORS_CONF);
+    printf("THREADS: %d\n", totalLoaderThreads);
+    --totalLoaderThreads;
     pthread_t imageLoadThreads[totalLoaderThreads];
 
     for (uint32_t i = 0; i < totalLoaderThreads; ++i) {
