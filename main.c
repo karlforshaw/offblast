@@ -18,6 +18,11 @@
 
 // Version 0.6.2 ===============================================================
 //
+//      BUGS
+//      - When you press right at the end of a row it shows the menu
+//      - Whats with the row geometry smashing? try searching for 'mick'
+//
+//      FEATURES
 //      - CSV corruption checking.
 //
 //      - animation system improvements:
@@ -40,6 +45,7 @@
 // Roadmap =====================================================================
 //
 // TODO 
+//      - RPC (Discord Rich Presence)
 //      - OpenGameDb, auto download/update? Evict Assets and update.
 //
 //      - Rescrape! Would be cool if we could tell the app that the gamedb has 
@@ -3596,6 +3602,7 @@ void pressConfirm(int32_t joystickIndex) {
 void changeRowset(UiRowset *rowset) {
     offblast->mainUi.activeRowset = rowset;
     updateGameInfo();
+    offblast->mainUi.rowGeometryInvalid = 1; 
 }
 
 void pressCancel() {
