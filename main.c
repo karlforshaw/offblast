@@ -120,6 +120,7 @@ typedef struct User {
     char email[512];
     char avatarPath[PATH_MAX];
     char cemuAccount[32];
+    char yuzuIndex[32];
     char retroarchConfig[PATH_MAX];
     char savePath[PATH_MAX];
     char dolphinCardPath[PATH_MAX];
@@ -1164,6 +1165,7 @@ int main(int argc, char** argv) {
         json_object *workingEmailNode = NULL;
         json_object *workingAvatarPathNode = NULL;
         json_object *workingCemuAccountNode = NULL;
+        json_object *workingYuzuIndexNode= NULL;
         json_object *workingRetroarchConfigNode = NULL;
         json_object *workingSavePathNode = NULL;
         json_object *workingDolphinCardPathNode = NULL;
@@ -1172,6 +1174,7 @@ int main(int argc, char** argv) {
         const char *theEmail = NULL;
         const char *theAvatarPath= NULL;
         const char *theCemuAccount = NULL;
+        const char *theYuzuIndex = NULL;
         const char *theRetroarchConfig = NULL;
         const char *theSavePath = NULL;
         const char *theDolphinCardPath = NULL;
@@ -1185,6 +1188,8 @@ int main(int argc, char** argv) {
                 &workingAvatarPathNode);
         json_object_object_get_ex(workingUserNode, "cemu_account",
                 &workingCemuAccountNode);
+        json_object_object_get_ex(workingUserNode, "yuzu_user_index",
+                &workingYuzuIndexNode);
         json_object_object_get_ex(workingUserNode, "retroarch_config",
                 &workingRetroarchConfigNode);
         json_object_object_get_ex(workingUserNode, "save_path",
@@ -1213,6 +1218,13 @@ int main(int argc, char** argv) {
             if (strlen(theCemuAccount) < 32) 
                 memcpy(&pUser->cemuAccount, 
                         theCemuAccount, strlen(theCemuAccount));
+        }
+
+        if (workingYuzuIndexNode) {
+            theYuzuIndex = json_object_get_string(workingYuzuIndexNode);
+            if (strlen(theYuzuIndex) < 32) 
+                memcpy(&pUser->yuzuIndex, 
+                        theYuzuIndex, strlen(theYuzuIndex));
         }
 
         if (workingRetroarchConfigNode) {
@@ -3362,6 +3374,26 @@ void launch() {
                     replaceIter++;
                     if (replaceIter >= replaceLimit) {
                         printf("dolphin path iter exceeded, breaking\n");
+                        break;
+                    }
+                }
+            }
+
+            if (strlen(theUser->yuzuIndex) != 0) {
+                replaceIter = 0; replaceLimit = 8;
+
+                while ((p = strstr(launchString, "%YUZU_USER_INDEX%"))) {
+
+                    memmove(
+                            p + strlen(theUser->yuzuIndex), 
+                            p + strlen("%YUZU_USER_INDEX%"),
+                            strlen(p));
+
+                    memcpy(p, theUser->yuzuIndex, strlen(theUser->yuzuIndex));
+
+                    replaceIter++;
+                    if (replaceIter >= replaceLimit) {
+                        printf("yuzu index iter exceeded, breaking\n");
                         break;
                     }
                 }
