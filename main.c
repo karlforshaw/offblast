@@ -2899,6 +2899,9 @@ const char *platformString(char *key) {
     else if (strcmp(key, "steam") == 0) {
         return "Steam";
     }
+    else if (strcmp(key, "nintendo_switch") == 0) {
+        return "Switch";
+    }
 
     return "Unknown Platform";
 }
