@@ -3357,6 +3357,22 @@ void launch() {
                         break;
                     }
                 }
+
+                while ((p = strstr(launchString, "%SAVE_PATH_NOQUOTE%"))) {
+
+                    memmove(
+                            p + strlen(theUser->savePath), 
+                            p + strlen("%SAVE_PATH_NOQUOTE%"),
+                            strlen(p));
+
+                    memcpy(p, theUser->savePath, strlen(theUser->savePath));
+
+                    replaceIter++;
+                    if (replaceIter >= replaceLimit) {
+                        printf("save path iter exceeded, breaking\n");
+                        break;
+                    }
+                }
             }
 
             if (strlen(theUser->dolphinCardPath) != 0) {
