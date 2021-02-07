@@ -121,6 +121,7 @@ typedef struct User {
     char avatarPath[PATH_MAX];
     char cemuAccount[32];
     char yuzuIndex[32];
+    char rpcs3Account[32];
     char retroarchConfig[PATH_MAX];
     char savePath[PATH_MAX];
     char dolphinCardPath[PATH_MAX];
@@ -1165,6 +1166,7 @@ int main(int argc, char** argv) {
         json_object *workingEmailNode = NULL;
         json_object *workingAvatarPathNode = NULL;
         json_object *workingCemuAccountNode = NULL;
+        json_object *workingRPCS3AccountNode = NULL;
         json_object *workingYuzuIndexNode= NULL;
         json_object *workingRetroarchConfigNode = NULL;
         json_object *workingSavePathNode = NULL;
@@ -1174,6 +1176,7 @@ int main(int argc, char** argv) {
         const char *theEmail = NULL;
         const char *theAvatarPath= NULL;
         const char *theCemuAccount = NULL;
+        const char *theRPCS3Account = NULL;
         const char *theYuzuIndex = NULL;
         const char *theRetroarchConfig = NULL;
         const char *theSavePath = NULL;
@@ -1188,6 +1191,8 @@ int main(int argc, char** argv) {
                 &workingAvatarPathNode);
         json_object_object_get_ex(workingUserNode, "cemu_account",
                 &workingCemuAccountNode);
+        json_object_object_get_ex(workingUserNode, "rpcs3_account",
+                &workingRPCS3AccountNode);
         json_object_object_get_ex(workingUserNode, "yuzu_user_index",
                 &workingYuzuIndexNode);
         json_object_object_get_ex(workingUserNode, "retroarch_config",
@@ -1225,6 +1230,13 @@ int main(int argc, char** argv) {
             if (strlen(theYuzuIndex) < 32) 
                 memcpy(&pUser->yuzuIndex, 
                         theYuzuIndex, strlen(theYuzuIndex));
+        }
+
+        if (workingRPCS3AccountNode) {
+            theRPCS3Account = json_object_get_string(workingRPCS3AccountNode);
+            if (strlen(theRPCS3Account) < 32) 
+                memcpy(&pUser->rpcs3Account, 
+                        theRPCS3Account, strlen(theRPCS3Account));
         }
 
         if (workingRetroarchConfigNode) {
@@ -3390,6 +3402,26 @@ void launch() {
                     replaceIter++;
                     if (replaceIter >= replaceLimit) {
                         printf("dolphin path iter exceeded, breaking\n");
+                        break;
+                    }
+                }
+            }
+
+            if (strlen(theUser->rpcs3Account) != 0) {
+                replaceIter = 0; replaceLimit = 8;
+
+                while ((p = strstr(launchString, "%RPCS3_ACCOUNT%"))) {
+
+                    memmove(
+                            p + strlen(theUser->rpcs3Account), 
+                            p + strlen("%RPCS3_ACCOUNT%"),
+                            strlen(p));
+
+                    memcpy(p, theUser->rpcs3Account, strlen(theUser->rpcs3Account));
+
+                    replaceIter++;
+                    if (replaceIter >= replaceLimit) {
+                        printf("rpcs3 index iter exceeded, breaking\n");
                         break;
                     }
                 }
