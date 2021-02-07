@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Offblast
+Comment=Netflix inspired game launcher.
+Path=/home/karl/work/offblast
+Exec=startoffblast.sh
+Icon=/home/karl/work/offblast/offblast.png
+Terminal=false
+Categories=Games;
