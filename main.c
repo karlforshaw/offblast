@@ -2339,14 +2339,15 @@ int main(int argc, char** argv) {
     SDL_DestroyWindow(window);
     SDL_Quit();
 
+    if (offblast->shutdownFlag) {
+        execl("systemctl poweroff");
+    }
+
     for (uint32_t i = 0; i < totalLoaderThreads; ++i) {
         pthread_kill(imageLoadThreads[i], SIGTERM);
     }
     pthread_mutex_destroy(&offblast->imageStoreLock);
 
-    if (offblast->shutdownFlag) {
-        system("systemctl poweroff");
-    }
 
     return 0;
 }
