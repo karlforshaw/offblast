@@ -2340,7 +2340,8 @@ int main(int argc, char** argv) {
     SDL_Quit();
 
     if (offblast->shutdownFlag) {
-        execl("systemctl poweroff");
+        printf("Shutting down machine\n");
+        system("systemctl poweroff");
     }
 
     for (uint32_t i = 0; i < totalLoaderThreads; ++i) {
