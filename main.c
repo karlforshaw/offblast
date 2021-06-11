@@ -2856,6 +2856,9 @@ const char *platformString(char *key) {
     else if (strcmp(key, "atari_8-bit_family") == 0) {
         return "Atari 8-Bit Family";
     }
+    else if (strcmp(key, "saturn") == 0) {
+        return "Sega Saturn";
+    }
     else if (strcmp(key, "dreamcast") == 0) {
         return "Sega Dreamcast";
     }
