@@ -2889,6 +2889,9 @@ const char *platformString(char *key) {
     else if (strcmp(key, "nintendo_ds") == 0) {
         return "Nintendo DS";
     }
+    else if (strcmp(key, "nintendo_3ds") == 0) {
+        return "Nintendo 3DS";
+    }
     else if (strcmp(key, "nintendo_entertainment_system") == 0) {
         return "NES";
     }
