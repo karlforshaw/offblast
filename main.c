@@ -968,6 +968,16 @@ int main(int argc, char** argv) {
 
         if (strcmp("cemu", theLauncher->type) == 0) {
 
+            //printf("CEM doing it\n");
+            json_object_object_get_ex(
+                    launcherNode,
+                    "rom_path",
+                    &romPathStringNode);
+            theRomPath = json_object_get_string(romPathStringNode);
+            //printf("CEM Rompath %s\n", theRomPath);
+            memcpy(&theLauncher->romPath, theRomPath, strlen(theRomPath));
+            //printf("CEM done it\n");
+
             json_object_object_get_ex(
                     launcherNode, 
                     "cemu_path",
@@ -4842,87 +4852,78 @@ void freeRomList(RomFoundList *list) {
     free(list);
 }
 
+// This no longer works, we should be recursively searching for RPX files instead
 // These functions need to find a list of games
 // create the fields needed to update the internal game db
 void importFromCemu(Launcher *theLauncher) {
 
+
+    // TODO NFS shares when unavailable just lock this up!
+    DIR *dir = opendir(theLauncher->romPath);
+    DIR *rpxDir = NULL;
+    if (dir == NULL) {
+        printf("Path %s failed to open\n", theLauncher->romPath);
+        return;
+    }
+
     RomFoundList *list = newRomList();
 
-    char *cemuSettingsFilePath;
-    asprintf(&cemuSettingsFilePath, "%ssettings.xml", 
-            theLauncher->cemuPath);
-    printf("reading from settings file %s\n", cemuSettingsFilePath);
+    // It's just the same as custom but we're opening /vol/code/*.rpx as the path,
+    // and the name is the directory name
+    struct dirent *currentEntry;
+    struct dirent *rpxEntry;
 
-    xmlDoc *settingsDoc = NULL;
+    char *rpxPath = calloc(1, PATH_MAX);
 
-    xmlXPathContextPtr xpathCtx; 
-    xmlXPathObjectPtr xpathObj; 
+    while ((currentEntry = readdir(dir)) != NULL) {
 
-    settingsDoc = xmlParseFile(cemuSettingsFilePath);
-    assert(settingsDoc);
-    xpathCtx = xmlXPathNewContext(settingsDoc);
+        if (currentEntry->d_name[0] == '.') continue;
+        if (strcmp(currentEntry->d_name, ".") == 0) continue;
+        if (strcmp(currentEntry->d_name, "..") == 0) continue;
 
-    xpathObj = xmlXPathEvalExpression(
-            (xmlChar *)"//GameCache/Entry", 
-            xpathCtx);
+        char *ext = strrchr((char*)currentEntry->d_name, '.');
+        if (ext == NULL) {
+            //printf("CEM Directory: %s\n", currentEntry->d_name);
 
-    if(xpathObj == NULL) {
-        fprintf(stderr,"Error: unable to evaluate xpath expression\n");
-        xmlXPathFreeContext(xpathCtx); 
-        xmlFreeDoc(settingsDoc); 
-        exit(1);
-    }
-    else {
-        xmlNodeSet *entries = xpathObj->nodesetval;
-        int size = (entries) ? entries->nodeNr : 0;
-        int nodei;
+            memset(rpxPath, 0x0, PATH_MAX);
+            sprintf(rpxPath, "%s/%s/vol/code",
+                    theLauncher->romPath,
+                    currentEntry->d_name);
+            rpxDir = opendir(rpxPath);
 
-        for(nodei = size - 1; nodei >= 0; nodei--) {
+            if (rpxDir == NULL) {
+                //printf("CEM Path %s failed to open\n", rpxPath);
+                continue;
+            }
 
-            RomFound currentFind = {};
+            while ((rpxEntry = readdir(rpxDir)) != NULL) {
+                if (rpxEntry->d_name[0] == '.') continue;
+                if (strcmp(rpxEntry->d_name, ".") == 0) continue;
+                if (strcmp(rpxEntry->d_name, "..") == 0) continue;
 
-            assert(entries->nodeTab[nodei]);
+                //printf("CEM %s\n", rpxEntry->d_name);
 
-            xmlNode *properties 
-                = entries->nodeTab[nodei]->children;
+                char *ext = strrchr((char*)rpxEntry->d_name, '.');
+                if (ext == NULL) continue;
 
-            for(xmlNode *child = properties; child; child = child->next) 
-            {
+                if (strcmp(ext, ".rpx") == 0) {
+                    char *fullPath = NULL;
+                    asprintf(&fullPath, "%s/%s", 
+                            rpxPath, rpxEntry->d_name);
 
-                if (strcmp((char *)child->name, "name") == 0) {
-                    if (strlen((char *)child->children->content) > 
-                            OFFBLAST_NAME_MAX) 
-                    {
-                        printf("Warning: name is longer than 255: %s", 
-                                child->children->content);
-                        continue;
-                    }
-
-                    memcpy(&currentFind.name, child->children->content,
-                            strlen((char*)child->children->content));
-                }
-                else if (strcmp((char *)child->name, "path") == 0) {
-                    if (strlen((char *)child->children->content) > 
-                            OFFBLAST_NAME_MAX) 
-                    {
-                        printf("Warning: path is longer than 255: %s", 
-                                child->children->content);
-                        continue;
-                    }
-
-                    memcpy(&currentFind.path, child->children->content,
-                            strlen((char*)child->children->content));
+                    //printf("CEM ADDING: %s\t %s\n", fullPath, currentEntry->d_name);
+                    pushToRomList(list, fullPath, currentEntry->d_name, NULL);
+                    free(fullPath);
                 }
             }
 
-            pushToRomList(list, (char *)&currentFind.path, 
-                    (char *)&currentFind.name, NULL);
-        }
+            closedir(rpxDir);
 
+        }
     }
 
-    xmlXPathFreeContext(xpathCtx); 
-    xmlFreeDoc(settingsDoc); 
+    free(rpxPath);
+    closedir(dir);
 
     if (list->numItems == 0) { 
         printf("no items found\n");
