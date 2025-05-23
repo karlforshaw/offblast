@@ -1,9 +1,14 @@
 #version 330
 
-in vec4 outColor;
+in vec2 uv;
 out vec4 outputColor;
+
+uniform vec4 gradientColorStart;
+uniform vec4 gradientColorEnd;
+uniform int gradientHorizontal;
 
 void main()
 {
-    outputColor = outColor;
+    float t = gradientHorizontal == 1 ? uv.x : uv.y;
+    outputColor = mix(gradientColorStart, gradientColorEnd, t);
 }
