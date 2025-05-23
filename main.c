@@ -2317,11 +2317,10 @@ int main(int argc, char** argv) {
         }
 
         uint32_t frameTime = SDL_GetTicks() - lastTick;
-        char *fpsString;
-        asprintf(&fpsString, "frame time: %u", frameTime);
-        renderText(offblast, 15, 15, OFFBLAST_TEXT_DEBUG, 1.0, 0, 
+        char fpsString[32];
+        snprintf(fpsString, sizeof(fpsString), "frame time: %u", frameTime);
+        renderText(offblast, 15, 15, OFFBLAST_TEXT_DEBUG, 1.0, 0,
                fpsString);
-        free(fpsString);
 
 
         // XXX yuk
