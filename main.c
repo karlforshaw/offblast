@@ -3233,6 +3233,7 @@ void *downloadMain(void *arg) {
 
     free(fetch.data);
     free(workingPath);
+    free(workingUrl);
 
     sleep(1);
     pthread_mutex_lock(ctx->lock);
@@ -5646,8 +5647,8 @@ void calculateRowGeometry(UiRow *row) {
 Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
 
     uint64_t targetSignature = target->targetSignature;
-    char *path;
-    char *url;
+    char *path = NULL;
+    char *url = NULL;
 
     int32_t foundAtIndex = -1;
     int32_t oldestFreeIndex = -1;
@@ -5772,6 +5773,11 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
     }
 
     pthread_mutex_unlock(&offblast->imageStoreLock);
+
+    if (path)
+        free(path);
+    if (url)
+        free(url);
 
 
     return returnImage;
