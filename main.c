@@ -158,6 +158,18 @@ typedef struct Image {
     size_t atlasSize;
 } Image;
 
+typedef struct ImageMapNode {
+    uint64_t key;
+    uint32_t index;
+    struct ImageMapNode *next;
+} ImageMapNode;
+
+#define IMAGE_MAP_BUCKETS 1024
+
+typedef struct ImageMap {
+    ImageMapNode *buckets[IMAGE_MAP_BUCKETS];
+} ImageMap;
+
 typedef struct RomFound {
     char path[256];
     char name[OFFBLAST_NAME_MAX];
@@ -416,6 +428,7 @@ typedef struct OffblastUi {
     uint32_t uiStopButtonHot;
 
     Image *imageStore;
+    ImageMap imageMap;
     pthread_mutex_t imageStoreLock;
 } OffblastUi;
 
@@ -499,6 +512,10 @@ uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature,
 void logMissingGame(char *missingGamePath);
 void calculateRowGeometry(UiRow *row);
 Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue);
+void imageMapInit(ImageMap *map);
+int32_t imageMapGet(ImageMap *map, uint64_t key);
+void imageMapInsert(ImageMap *map, uint64_t key, uint32_t index);
+void imageMapRemove(ImageMap *map, uint64_t key);
 void changeRowset(UiRowset *rowset);
 
 void *downloadMain(void *arg); 
@@ -1315,6 +1332,7 @@ int main(int argc, char** argv) {
         offblast->imageStore[i].lastUsedTick = SDL_GetTicks();
     }
     assert(offblast->imageStore);
+    imageMapInit(&offblast->imageMap);
 
 
     // CREATE WORKER THREADS
@@ -3231,6 +3249,67 @@ uint32_t powTwoFloor(uint32_t val) {
         pow *= 2;
 
     return pow;
+}
+
+void imageMapInit(ImageMap *map) {
+    for (uint32_t i = 0; i < IMAGE_MAP_BUCKETS; ++i) {
+        map->buckets[i] = NULL;
+    }
+}
+
+static uint32_t imageMapHash(uint64_t key) {
+    key ^= key >> 33;
+    key *= 0xff51afd7ed558ccdULL;
+    key ^= key >> 33;
+    key *= 0xc4ceb9fe1a85ec53ULL;
+    key ^= key >> 33;
+    return (uint32_t)(key % IMAGE_MAP_BUCKETS);
+}
+
+int32_t imageMapGet(ImageMap *map, uint64_t key) {
+    uint32_t bucket = imageMapHash(key);
+    ImageMapNode *node = map->buckets[bucket];
+    while (node) {
+        if (node->key == key)
+            return node->index;
+        node = node->next;
+    }
+    return -1;
+}
+
+void imageMapInsert(ImageMap *map, uint64_t key, uint32_t index) {
+    uint32_t bucket = imageMapHash(key);
+    ImageMapNode *node = map->buckets[bucket];
+    while (node) {
+        if (node->key == key) {
+            node->index = index;
+            return;
+        }
+        node = node->next;
+    }
+    node = malloc(sizeof(ImageMapNode));
+    node->key = key;
+    node->index = index;
+    node->next = map->buckets[bucket];
+    map->buckets[bucket] = node;
+}
+
+void imageMapRemove(ImageMap *map, uint64_t key) {
+    uint32_t bucket = imageMapHash(key);
+    ImageMapNode *node = map->buckets[bucket];
+    ImageMapNode *prev = NULL;
+    while (node) {
+        if (node->key == key) {
+            if (prev)
+                prev->next = node->next;
+            else
+                map->buckets[bucket] = node->next;
+            free(node);
+            return;
+        }
+        prev = node;
+        node = node->next;
+    }
 }
 
 void imageToGlTexture(GLuint *textureHandle, unsigned char *pixelData, 
@@ -5605,16 +5684,8 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
             offblast->mainUi.rowGeometryInvalid = 1;
         }
 
-        // Search for the target
-        if (offblast->imageStore[i].targetSignature == targetSignature)
         {
-            if (affectQueue) 
-                offblast->imageStore[i].lastUsedTick = tickNow;
-
-            foundAtIndex = i;
-        }
-        else {
-            uint32_t isAvailable = 
+            uint32_t isAvailable =
                     offblast->imageStore[i].state == IMAGE_STATE_COLD
                     || offblast->imageStore[i].state == IMAGE_STATE_DEAD
                     || offblast->imageStore[i].state == IMAGE_STATE_COMPLETE;
@@ -5653,12 +5724,15 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
         }
     }
 
+    foundAtIndex = imageMapGet(&offblast->imageMap, targetSignature);
+
     // § DEBUG - Dump out the queue status
     //printf("\t%d av\t%d lo\t%d rd\t%d Q\t%d dl\n", availableSlots, inLoading, inReady, inQueued, inDownloading);
 
     if (foundAtIndex > -1) {
 
-
+        if (affectQueue)
+            offblast->imageStore[foundAtIndex].lastUsedTick = tickNow;
 
         if (offblast->imageStore[foundAtIndex].state == IMAGE_STATE_COMPLETE) {
             returnImage = &offblast->imageStore[foundAtIndex];
@@ -5676,6 +5750,9 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
             path = getCoverPath(target);
             url = getCoverUrl(target);
 
+            imageMapRemove(&offblast->imageMap,
+                    offblast->imageStore[oldestFreeIndex].targetSignature);
+
             offblast->imageStore[oldestFreeIndex].state = IMAGE_STATE_QUEUED;
             offblast->imageStore[oldestFreeIndex].targetSignature = targetSignature;
             offblast->imageStore[oldestFreeIndex].lastUsedTick = tickNow;
@@ -5687,6 +5764,7 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
                         &offblast->imageStore[oldestFreeIndex].textureHandle);
             }
             offblast->imageStore[oldestFreeIndex].textureHandle = 0;
+            imageMapInsert(&offblast->imageMap, targetSignature, oldestFreeIndex);
             //printf("%"PRIu64" queued in slot %d\n", targetSignature, oldestFreeIndex);
         }
 
