@@ -278,10 +278,13 @@ typedef struct MainUi {
     uint32_t rowGeometryInvalid;
 
     char *titleText;
+    uint32_t titleTextWidth;
     char *infoText;
+    uint32_t infoTextWidth;
     char *descriptionText;
 
     char *rowNameText;
+    uint32_t rowNameTextWidth;
 
 } MainUi ;
 
@@ -2253,11 +2256,9 @@ int main(int argc, char** argv) {
 
             yOffset -= 100;
 
-            char *titleText = 
-                offblast->mainUi.activeRowset->rowCursor->tileCursor->target->name;
+            char *titleText = offblast->mainUi.titleText;
 
-            uint32_t nameWidth = 
-                getTextLineWidth(titleText, offblast->infoCharData);
+            uint32_t nameWidth = offblast->mainUi.titleTextWidth;
 
             renderText(offblast, 
                     offblast->winWidth / 2 - nameWidth/ 2, 
@@ -2765,12 +2766,20 @@ void verticalMoveDone() {
 }
 
 void updateGameInfo() {
-        offblast->mainUi.titleText = 
+        offblast->mainUi.titleText =
             offblast->mainUi.activeRowset->movingToTarget->name;
+        offblast->mainUi.titleTextWidth =
+            getTextLineWidth(offblast->mainUi.titleText,
+                            offblast->titleCharData);
+
         updateInfoText();
         updateDescriptionText();
-        offblast->mainUi.rowNameText 
-            = offblast->mainUi.activeRowset->movingToRow->name;
+
+        offblast->mainUi.rowNameText =
+            offblast->mainUi.activeRowset->movingToRow->name;
+        offblast->mainUi.rowNameTextWidth =
+            getTextLineWidth(offblast->mainUi.rowNameText,
+                            offblast->infoCharData);
 }
 
 void infoFaded() {
@@ -3733,12 +3742,14 @@ void updateInfoText() {
         return;
     }
 
-    asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
-            target->date, 
+    asprintf(&infoString, "%.4s  |  %s  |  %u%%",
+            target->date,
             platformString(target->platform),
             target->ranking);
 
     offblast->mainUi.infoText = infoString;
+    offblast->mainUi.infoTextWidth =
+        getTextLineWidth(infoString, offblast->infoCharData);
 }
 
 void updateDescriptionText() {
@@ -4437,10 +4448,16 @@ void updateHomeLists(){
 
     // Initialize the text to render
     offblast->mainUi.titleText = mainUi->homeRowset->movingToTarget->name;
+    offblast->mainUi.titleTextWidth =
+        getTextLineWidth(offblast->mainUi.titleText,
+                        offblast->titleCharData);
     updateInfoText();
     updateDescriptionText();
     offblast->mainUi.rowNameText
         = mainUi->homeRowset->movingToRow->name;
+    offblast->mainUi.rowNameTextWidth =
+        getTextLineWidth(offblast->mainUi.rowNameText,
+                        offblast->infoCharData);
     offblast->mainUi.rowGeometryInvalid = 1;
 }
 
