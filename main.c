@@ -4439,8 +4439,9 @@ void updateHomeLists(){
     offblast->mainUi.titleText = mainUi->homeRowset->movingToTarget->name;
     updateInfoText();
     updateDescriptionText();
-    offblast->mainUi.rowNameText 
+    offblast->mainUi.rowNameText
         = mainUi->homeRowset->movingToRow->name;
+    offblast->mainUi.rowGeometryInvalid = 1;
 }
 
 void updateResults(uint32_t *launcherSignature) {
