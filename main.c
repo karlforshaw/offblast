@@ -348,6 +348,9 @@ typedef struct OffblastUi {
     double infoPointSize;
     double debugPointSize;
 
+    double headerTextY;
+    double textBlockY;
+
     GLuint titleTextTexture;
     GLuint infoTextTexture;
     GLuint debugTextTexture;
@@ -2029,10 +2032,7 @@ int main(int argc, char** argv) {
                     rowNameAlpha = change;
                 }
 
-                // TODO calculate elsewhere
-                float pixelY = 
-                    offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
-                    - offblast->titlePointSize;
+                float pixelY = offblast->textBlockY - offblast->titlePointSize;
 
                 renderText(offblast, offblast->winMargin, pixelY, 
                         OFFBLAST_TEXT_TITLE, alpha, 0, mainUi->titleText);
@@ -2182,10 +2182,9 @@ int main(int argc, char** argv) {
             uint32_t titleWidth = getTextLineWidth(titleText, 
                     offblast->titleCharData);
 
-            renderText(offblast, 
-                    offblast->winWidth / 2 - titleWidth / 2, 
-                    offblast->winHeight - 
-                        goldenRatioLarge(offblast->winHeight, 3), 
+            renderText(offblast,
+                    offblast->winWidth / 2 - titleWidth / 2,
+                    offblast->headerTextY,
                     OFFBLAST_TEXT_TITLE, 1.0, 0,
                     titleText);
 
@@ -2235,8 +2234,7 @@ int main(int argc, char** argv) {
         }
         else if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {
 
-            double yOffset = offblast->winHeight - 
-                        goldenRatioLarge(offblast->winHeight, 3);
+            double yOffset = offblast->headerTextY;
 
             char *headerText = "Now playing";
             if (offblast->loadingFlag)
@@ -2457,6 +2455,11 @@ uint32_t needsReRender(SDL_Window *window)
         offblast->debugPointSize = goldenRatioLarge(offblast->winWidth, 9);
         offblast->titlePointSize = goldenRatioLarge(offblast->winWidth, 7);
         offblast->infoPointSize = goldenRatioLarge(offblast->winWidth, 9);
+
+        offblast->headerTextY =
+            offblast->winHeight - goldenRatioLarge(offblast->winHeight, 3);
+        offblast->textBlockY =
+            offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5);
 
         updated = 1;
     }
