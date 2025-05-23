@@ -1669,11 +1669,6 @@ int main(int argc, char** argv) {
     // § Main loop
     while (offblast->running) {
 
-        if (needsReRender(window) == 1) {
-            printf("Window size changed, sizes updated.\n");
-            mainUi->rowGeometryInvalid = 1;
-        }
-
         SDL_Event event;
 
         while (SDL_PollEvent(&event)) {
@@ -1686,6 +1681,12 @@ int main(int argc, char** argv) {
                 switch (event.window.event) {
                     case SDL_WINDOWEVENT_FOCUS_LOST:
                         offblast->loadingFlag = 0;
+                        break;
+                    case SDL_WINDOWEVENT_RESIZED:
+                        if (needsReRender(window) == 1) {
+                            printf("Window size changed, sizes updated.\n");
+                            mainUi->rowGeometryInvalid = 1;
+                        }
                         break;
                 }
             }
