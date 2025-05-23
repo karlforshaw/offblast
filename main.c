@@ -376,8 +376,13 @@ typedef struct OffblastUi {
 
     GLuint gradientProgram;
     GLuint gradientVbo;
-    GLint gradientColorStartUniform; 
-    GLint gradientColorEndUniform; 
+    GLint gradientColorStartUniform;
+    GLint gradientColorEndUniform;
+    GLint gradientPosUniform;
+    GLint gradientSizeUniform;
+    GLint gradientHorizontalUniform;
+    float gradientLastW;
+    float gradientLastH;
 
     GLuint textProgram;
     GLint textAlphaUni;
@@ -1636,9 +1641,21 @@ int main(int argc, char** argv) {
             GL_FRAGMENT_SHADER);
     assert(gradientVertShader);
     assert(gradientFragShader);
-    offblast->gradientProgram = createShaderProgram(gradientVertShader, 
+    offblast->gradientProgram = createShaderProgram(gradientVertShader,
             gradientFragShader);
     assert(offblast->gradientProgram);
+    offblast->gradientColorStartUniform = glGetUniformLocation(
+            offblast->gradientProgram, "gradientColorStart");
+    offblast->gradientColorEndUniform = glGetUniformLocation(
+            offblast->gradientProgram, "gradientColorEnd");
+    offblast->gradientPosUniform = glGetUniformLocation(
+            offblast->gradientProgram, "gradientPos");
+    offblast->gradientSizeUniform = glGetUniformLocation(
+            offblast->gradientProgram, "gradientSize");
+    offblast->gradientHorizontalUniform = glGetUniformLocation(
+            offblast->gradientProgram, "gradientHorizontal");
+    offblast->gradientLastW = -1.0f;
+    offblast->gradientLastH = -1.0f;
 
 
     offblast->running = 1;
@@ -4063,62 +4080,50 @@ void resizeQuad(float x, float y, float w, float h, Quad *quad) {
     quad->vertices[5].y = bottom;
 }
 
-void renderGradient(float x, float y, float w, float h, 
-        uint32_t horizontal, Color colorStart, Color colorEnd) 
+void renderGradient(float x, float y, float w, float h,
+        uint32_t horizontal, Color colorStart, Color colorEnd)
 {
-
-    Quad quad = {};
-    initQuad(&quad);
-    resizeQuad(x, y, w, h, &quad);
-
-    if (horizontal) {
-        quad.vertices[0].color = colorStart;
-        quad.vertices[1].color = colorStart;
-        quad.vertices[2].color = colorEnd;
-        quad.vertices[3].color = colorEnd;
-        quad.vertices[4].color = colorEnd;
-        quad.vertices[5].color = colorStart;
-    }
-    else {
-        quad.vertices[0].color = colorStart;
-        quad.vertices[1].color = colorEnd;
-        quad.vertices[2].color = colorEnd;
-        quad.vertices[3].color = colorEnd;
-        quad.vertices[4].color = colorStart;
-        quad.vertices[5].color = colorStart;
-    }
-
-    // TODO if the h and w haven't changed we don't actually
-    // need to rebuffer the vertex data, we could just use a uniform
-    // for the vertex shader?
-
     if (!offblast->gradientVbo) {
+        Vertex verts[6] = {};
+        verts[0].x = 0.0f; verts[0].y = 0.0f;
+        verts[1].x = 0.0f; verts[1].y = 1.0f;
+        verts[2].x = 1.0f; verts[2].y = 1.0f;
+        verts[3].x = 1.0f; verts[3].y = 1.0f;
+        verts[4].x = 1.0f; verts[4].y = 0.0f;
+        verts[5].x = 0.0f; verts[5].y = 0.0f;
+
         glGenBuffers(1, &offblast->gradientVbo);
         glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(Quad), 
-                &quad, GL_STREAM_DRAW);
-    }
-    else {
+        glBufferData(GL_ARRAY_BUFFER, sizeof(verts),
+                verts, GL_STATIC_DRAW);
+    } else {
         glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(Quad), 
-                &quad);
     }
 
-    glUniform4f(offblast->gradientColorStartUniform, 
+    float ndcX = -1.0f + (2.0f/offblast->winWidth * x);
+    float ndcY = -1.0f + (2.0f/offblast->winHeight * y);
+    float ndcW = 2.0f/offblast->winWidth * w;
+    float ndcH = 2.0f/offblast->winHeight * h;
+
+    if (w != offblast->gradientLastW || h != offblast->gradientLastH) {
+        glUniform2f(offblast->gradientSizeUniform, ndcW, ndcH);
+        offblast->gradientLastW = w;
+        offblast->gradientLastH = h;
+    }
+
+    glUniform2f(offblast->gradientPosUniform, ndcX, ndcY);
+    glUniform4f(offblast->gradientColorStartUniform,
             colorStart.r, colorStart.g, colorStart.b, colorStart.a);
-    glUniform4f(offblast->gradientColorEndUniform, 
+    glUniform4f(offblast->gradientColorEndUniform,
             colorEnd.r, colorEnd.g, colorEnd.b, colorEnd.a);
+    glUniform1i(offblast->gradientHorizontalUniform, horizontal);
 
     glUseProgram(offblast->gradientProgram);
     glBindBuffer(GL_ARRAY_BUFFER, offblast->gradientVbo);
 
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
             sizeof(Vertex), 0);
-
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 
-            sizeof(Vertex), (void*)(6*sizeof(float)));
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }

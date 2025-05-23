@@ -1,12 +1,15 @@
 #version 330
 
-layout(location = 0) in vec4 position;
-layout(location = 1) in vec4 color;
+layout(location = 0) in vec2 position;
 
-out vec4 outColor;
+out vec2 uv;
+
+uniform vec2 gradientPos;
+uniform vec2 gradientSize;
 
 void main()
 {
-    gl_Position = position;
-    outColor = color;
+    uv = position;
+    vec2 scaled = gradientPos + position * gradientSize;
+    gl_Position = vec4(scaled, 0.0, 1.0);
 }
