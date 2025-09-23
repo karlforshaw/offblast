@@ -920,13 +920,12 @@ int main(int argc, char** argv) {
 
         json_object *launcherNode= NULL;
         launcherNode = json_object_array_get_idx(configLaunchers, i);
-        const char *rawJson = json_object_to_json_string(launcherNode);
+
+        // Create a stable signature using only type + platform
+        // This allows config changes without orphaning games
         uint32_t configLauncherSignature = 0;
-        lmmh_x86_32(rawJson, strlen(rawJson), 33, &configLauncherSignature);
-        configLauncherSignatures[i] = configLauncherSignature;
 
         Launcher *theLauncher = &offblast->launchers[offblast->nLaunchers++];
-        theLauncher->signature = configLauncherSignature;
 
         // Generic Properties
         json_object *typeStringNode = NULL;
@@ -1113,6 +1112,16 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        // Calculate launcher signature from type + platform only
+        // This creates a stable identifier that survives config changes
+        char signatureInput[512];
+        snprintf(signatureInput, sizeof(signatureInput), "%s:%s",
+                theLauncher->type, theLauncher->platform);
+        lmmh_x86_32(signatureInput, strlen(signatureInput), 33, &configLauncherSignature);
+        theLauncher->signature = configLauncherSignature;
+        configLauncherSignatures[i] = configLauncherSignature;
+        printf("Launcher signature for %s:%s = %u\n",
+                theLauncher->type, theLauncher->platform, configLauncherSignature);
 
 
         // TODO maybe we should also do a platform cleanup too?
