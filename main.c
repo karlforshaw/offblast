@@ -684,7 +684,9 @@ int main(int argc, char** argv) {
     struct dirent *openGameDbEntry;
     DIR *openGameDbDir = opendir(openGameDbPath);
     if (openGameDbDir == NULL) {
-        printf("Path %s failed to open\n", openGameDbPath);
+        printf("ERROR: Cannot access OpenGameDB directory: '%s'\n", openGameDbPath);
+        printf("       Please check that the 'opengamedb' path in config.json is correct\n");
+        printf("       You can download OpenGameDB from: https://github.com/karlforshaw/opengamedb\n");
         return 1;
     }
 
@@ -968,44 +970,62 @@ int main(int argc, char** argv) {
 
         if (strcmp("cemu", theLauncher->type) == 0) {
 
-            //printf("CEM doing it\n");
+            // Cemu needs both rom_path (for finding games) and cemu_path (for launching)
             json_object_object_get_ex(
                     launcherNode,
                     "rom_path",
                     &romPathStringNode);
             theRomPath = json_object_get_string(romPathStringNode);
-            //printf("CEM Rompath %s\n", theRomPath);
-            memcpy(&theLauncher->romPath, theRomPath, strlen(theRomPath));
-            //printf("CEM done it\n");
+            if (theRomPath != NULL) {
+                memcpy(&theLauncher->romPath, theRomPath, strlen(theRomPath));
+            } else {
+                printf("WARNING: Cemu launcher at index %d has no 'rom_path' configured\n", i);
+                printf("         Please set rom_path to your unpacked Wii U games directory\n");
+            }
 
             json_object_object_get_ex(
-                    launcherNode, 
+                    launcherNode,
                     "cemu_path",
                     &cemuPathStringNode);
 
             theCemuPath = json_object_get_string(cemuPathStringNode);
-            memcpy(&theLauncher->cemuPath, 
-                    theCemuPath, 
-                    strlen(theCemuPath));
+            if (theCemuPath != NULL) {
+                memcpy(&theLauncher->cemuPath,
+                        theCemuPath,
+                        strlen(theCemuPath));
+            } else {
+                printf("ERROR: Cemu launcher at index %d is missing 'cemu_path' field\n", i);
+                printf("       Please add a cemu_path to your cemu launcher in config.json\n");
+            }
 
             json_object_object_get_ex(launcherNode, "platform",
                     &platformStringNode);
             thePlatform = json_object_get_string(platformStringNode);
-            if (strlen(thePlatform) >= 256) {
-                condPrintConfigError(NULL, 
-                        "Your cemu platform string is too long.");
+            if (thePlatform != NULL) {
+                if (strlen(thePlatform) >= 256) {
+                    condPrintConfigError(NULL,
+                            "Your cemu platform string is too long.");
+                }
+                memcpy(&theLauncher->platform,
+                        thePlatform, strlen(thePlatform));
+            } else {
+                printf("ERROR: Cemu launcher at index %d is missing 'platform' field\n", i);
+                printf("       Please add a platform to your cemu launcher in config.json\n");
             }
-            memcpy(&theLauncher->platform, 
-                    thePlatform, strlen(thePlatform));
 
             json_object_object_get_ex(launcherNode, "cmd",
                     &cmdStringNode);
             theCommand = json_object_get_string(cmdStringNode);
-            if (strlen(theCommand) >= 512) {
-                condPrintConfigError(NULL, 
-                        "Your cemu command string is too long.");
+            if (theCommand != NULL) {
+                if (strlen(theCommand) >= 512) {
+                    condPrintConfigError(NULL,
+                            "Your cemu command string is too long.");
+                }
+                memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
+            } else {
+                printf("ERROR: Cemu launcher at index %d is missing 'cmd' field\n", i);
+                printf("       Please add a cmd to your cemu launcher in config.json\n");
             }
-            memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
 
         }
         else if (strcmp("custom", theLauncher->type) == 0 || 
@@ -1015,36 +1035,56 @@ int main(int argc, char** argv) {
             json_object_object_get_ex(launcherNode, "rom_path",
                     &romPathStringNode);
             theRomPath = json_object_get_string(romPathStringNode);
-            memcpy(&theLauncher->romPath, theRomPath, strlen(theRomPath));
+            if (theRomPath != NULL) {
+                memcpy(&theLauncher->romPath, theRomPath, strlen(theRomPath));
+            } else {
+                printf("ERROR: %s launcher at index %d is missing 'rom_path' field\n", theLauncher->type, i);
+                printf("       Please add a rom_path to your launcher in config.json\n");
+            }
 
             json_object_object_get_ex(launcherNode, "extension",
                     &extensionStringNode);
             theExtension = json_object_get_string(extensionStringNode);
-            if (strlen(theExtension) >= 32) {
-                condPrintConfigError(NULL, 
-                        "One of your custom launchers has too many extensions");
+            if (theExtension != NULL) {
+                if (strlen(theExtension) >= 32) {
+                    condPrintConfigError(NULL,
+                            "One of your custom launchers has too many extensions");
+                }
+                memcpy(&theLauncher->extension,
+                        theExtension, strlen(theExtension));
+            } else {
+                printf("ERROR: %s launcher at index %d is missing 'extension' field\n", theLauncher->type, i);
+                printf("       Please add an extension to your launcher in config.json\n");
             }
-            memcpy(&theLauncher->extension, 
-                    theExtension, strlen(theExtension));
 
             json_object_object_get_ex(launcherNode, "platform",
                     &platformStringNode);
             thePlatform = json_object_get_string(platformStringNode);
-            if (strlen(thePlatform) >= 256) {
-                condPrintConfigError(NULL, 
-                        "One of your custom launchers' platform strings is too long.");
+            if (thePlatform != NULL) {
+                if (strlen(thePlatform) >= 256) {
+                    condPrintConfigError(NULL,
+                            "One of your custom launchers' platform strings is too long.");
+                }
+                memcpy(&theLauncher->platform,
+                        thePlatform, strlen(thePlatform));
+            } else {
+                printf("ERROR: %s launcher at index %d is missing 'platform' field\n", theLauncher->type, i);
+                printf("       Please add a platform to your launcher in config.json\n");
             }
-            memcpy(&theLauncher->platform, 
-                    thePlatform, strlen(thePlatform));
 
             json_object_object_get_ex(launcherNode, "cmd",
                     &cmdStringNode);
             theCommand = json_object_get_string(cmdStringNode);
-            if (strlen(theCommand) >= 512) {
-                condPrintConfigError(NULL, 
-                        "One of your custom launchers' command strings is too long.");
+            if (theCommand != NULL) {
+                if (strlen(theCommand) >= 512) {
+                    condPrintConfigError(NULL,
+                            "One of your custom launchers' command strings is too long.");
+                }
+                memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
+            } else {
+                printf("ERROR: %s launcher at index %d is missing 'cmd' field\n", theLauncher->type, i);
+                printf("       Please add a cmd to your launcher in config.json\n");
             }
-            memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
 
         }
         else if (strcmp("steam", theLauncher->type) == 0){
@@ -1578,8 +1618,13 @@ int main(int argc, char** argv) {
 
         }
         else {
-            printf("couldn't load texture for avatar %s\n", 
-                    offblast->users[i].avatarPath);
+            printf("WARNING: Cannot load avatar image for user '%s': '%s'\n",
+                    offblast->users[i].name, offblast->users[i].avatarPath);
+            if (strlen(offblast->users[i].avatarPath) == 0) {
+                printf("         Avatar path is empty in config.json\n");
+            } else {
+                printf("         Please check that the image file exists and is a valid format (PNG/JPG)\n");
+            }
             // TODO use mystery man image
         }
         free(imageData);
@@ -3467,9 +3512,13 @@ void launch() {
 
             if (strcmp(theLauncher->type, "cemu") == 0) {
 
-                assert(strlen(theLauncher->cemuPath));
-                char *cemuBinSlug;
+                if (strlen(theLauncher->cemuPath) == 0) {
+                    printf("ERROR: Cannot launch Cemu - cemu_path is not configured\n");
+                    printf("       Please set the cemu_path in your config.json\n");
+                    return;
+                }
 
+                char *cemuBinSlug;
                 asprintf(&cemuBinSlug, "%s/Cemu.exe", theLauncher->cemuPath);
 
                 replaceIter = 0; replaceLimit = 8;
@@ -4862,7 +4911,12 @@ void importFromCemu(Launcher *theLauncher) {
     DIR *dir = opendir(theLauncher->romPath);
     DIR *rpxDir = NULL;
     if (dir == NULL) {
-        printf("Path %s failed to open\n", theLauncher->romPath);
+        printf("ERROR: Cannot access Cemu rom_path: '%s'\n", theLauncher->romPath);
+        if (strlen(theLauncher->romPath) == 0) {
+            printf("       The rom_path is empty. Please set it in config.json\n");
+        } else {
+            printf("       Please check that the directory exists and is readable\n");
+        }
         return;
     }
 
@@ -5113,7 +5167,9 @@ void importFromRPCS3(Launcher *theLauncher) {
 
     FILE *fp = fopen(registryPath, "r");
     if (fp == NULL) {
-        perror("Couldn't open rpcs3 games directory\n");
+        printf("WARNING: Cannot access RPCS3 games registry: '%s'\n", registryPath);
+        printf("         RPCS3 may not be installed or configured\n");
+        free(registryPath);
         return;
     }
 
@@ -5341,7 +5397,12 @@ void importFromCustom(Launcher *theLauncher) {
     // TODO NFS shares when unavailable just lock this up!
     DIR *dir = opendir(theLauncher->romPath);
     if (dir == NULL) {
-        printf("Path %s failed to open\n", theLauncher->romPath);
+        printf("ERROR: Cannot access %s rom_path: '%s'\n", theLauncher->type, theLauncher->romPath);
+        if (strlen(theLauncher->romPath) == 0) {
+            printf("       The rom_path is empty. Please set it in config.json\n");
+        } else {
+            printf("       Please check that the directory exists and is readable\n");
+        }
         return;
     }
 
@@ -5415,8 +5476,10 @@ void importFromCustom(Launcher *theLauncher) {
             char *ext = strchr(searchString, '(');
 
             if (ext == NULL) ext = strrchr(searchString, '.');
-            if (ext != NULL) *ext = '\0';
-            if (*(ext-1) == ' ') *(ext-1) = '\0';
+            if (ext != NULL) {
+                *ext = '\0';
+                if (ext > searchString && *(ext-1) == ' ') *(ext-1) = '\0';
+            }
 
             float matchScore = 0;
 
@@ -5512,10 +5575,15 @@ void logMissingGame(char *missingGamePath){
     asprintf(&path, "%s/missinggames.log", offblast->configPath);
     FILE * fp = fopen(path, "a+");
 
-    fwrite(missingGamePath, strlen(missingGamePath), 1, fp);
-    fwrite("\n", 1, 1, fp);
+    if (fp != NULL) {
+        fwrite(missingGamePath, strlen(missingGamePath), 1, fp);
+        fwrite("\n", 1, 1, fp);
+        fclose(fp);
+    } else {
+        printf("Warning: Could not open %s for logging\n", path);
+    }
 
-    fclose(fp);
+    free(path);
 }
 
 void calculateRowGeometry(UiRow *row) {
