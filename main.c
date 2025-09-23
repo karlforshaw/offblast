@@ -799,12 +799,12 @@ int main(int argc, char** argv) {
                     asprintf(&gameSeed, "%s_%s", 
                             &fileNameSplit[0], gameName);
 
-                    uint64_t targetSignature = 0;
-                    lmmh_x64_128(gameSeed, strlen(gameSeed), 33, 
-                            (uint64_t*)&targetSignature);
+                    uint64_t targetSignature[2] = {0, 0};
+                    lmmh_x64_128(gameSeed, strlen(gameSeed), 33,
+                            targetSignature);
 
                     int32_t indexOfEntry = launchTargetIndexByTargetSignature(
-                            launchTargetFile, targetSignature);
+                            launchTargetFile, targetSignature[0]);
 
                     if (indexOfEntry == -1) {
 
@@ -831,10 +831,10 @@ int main(int argc, char** argv) {
                         char *coverArtUrl = getCsvField(csvLine, 7);
                         char *gameId = getCsvField(csvLine, 8);
 
-                        printf("\n--\nAdding: \n%s\n%" PRIu64 "\n%s\n%s\ng: %s\n\nm: %s\n%s\n", 
-                                gameSeed, 
-                                targetSignature, 
-                                gameName, 
+                        printf("\n--\nAdding: \n%s\n%" PRIu64 "\n%s\n%s\ng: %s\n\nm: %s\n%s\n",
+                                gameSeed,
+                                targetSignature[0],
+                                gameName,
                                 gameDate,
                                 scoreString, metaScoreString, gameId);
 
@@ -842,7 +842,7 @@ int main(int argc, char** argv) {
                             &launchTargetFile->entries[launchTargetFile->nEntries];
                         printf("writing new game to %p\n", newEntry);
 
-                        newEntry->targetSignature = targetSignature;
+                        newEntry->targetSignature = targetSignature[0];
 
                         memcpy(&newEntry->name, 
                                 gameName, 
@@ -908,7 +908,7 @@ int main(int argc, char** argv) {
                             &offblast->descriptionFile->memory[
                                 offblast->descriptionFile->cursor];
 
-                        newDescription->targetSignature = targetSignature;
+                        newDescription->targetSignature = targetSignature[0];
                         newDescription->length = strlen(description);
 
                         memcpy(&newDescription->content, description, 
@@ -937,9 +937,9 @@ int main(int argc, char** argv) {
 
                     }
                     else {
-                        printf("%d index found, We already have %"PRIu64":%s\n", 
+                        printf("%d index found, We already have %"PRIu64":%s\n",
                                 indexOfEntry,
-                                targetSignature, 
+                                targetSignature[0],
                                 gameSeed);
                     }
 
@@ -4790,9 +4790,10 @@ void importFromCustom(Launcher *theLauncher) {
                 if (strcmp(entry->d_name, "..") == 0) continue;
 
                 // Check if this is a directory
-                char fullPath[PATH_MAX];
-                snprintf(fullPath, PATH_MAX, "%s/%s",
+                char fullPath[PATH_MAX * 2];  // Extra space to avoid truncation
+                snprintf(fullPath, sizeof(fullPath), "%s/%s",
                         theLauncher->romPath, entry->d_name);
+                fullPath[PATH_MAX - 1] = '\0';  // Ensure null termination at PATH_MAX boundary
 
                 struct stat statbuf;
                 if (stat(fullPath, &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
@@ -4815,9 +4816,10 @@ void importFromCustom(Launcher *theLauncher) {
         }
         else {
             // Use glob to find files matching the pattern
-            char globPattern[PATH_MAX];
-            snprintf(globPattern, PATH_MAX, "%s/%s",
+            char globPattern[PATH_MAX * 2];  // Extra space to avoid truncation
+            snprintf(globPattern, sizeof(globPattern), "%s/%s",
                     theLauncher->romPath, theLauncher->scanPattern);
+            globPattern[PATH_MAX - 1] = '\0';  // Ensure null termination at PATH_MAX boundary
 
             glob_t globResult;
             printf("Scanning with pattern: %s\n", globPattern);
@@ -4826,7 +4828,7 @@ void importFromCustom(Launcher *theLauncher) {
                 for (size_t i = 0; i < globResult.gl_pathc; i++) {
                     char *filePath = globResult.gl_pathv[i];
 
-                    // Extract game name from path (parent directory for Cemu-style)
+                    // Extract game name from path (parent directory)
                     char *gameName = NULL;
                     if (strstr(theLauncher->scanPattern, "*/vol/code/") != NULL) {
                         // For Cemu: extract game directory name
@@ -4834,6 +4836,19 @@ void importFromCustom(Launcher *theLauncher) {
                         char *volPos = strstr(temp, "/vol/code/");
                         if (volPos) {
                             *volPos = '\0';
+                            char *lastSlash = strrchr(temp, '/');
+                            if (lastSlash) {
+                                gameName = strdup(lastSlash + 1);
+                            }
+                        }
+                        free(temp);
+                    }
+                    else if (strstr(theLauncher->scanPattern, "*/PS3_GAME/USRDIR/") != NULL) {
+                        // For PS3: extract game directory name
+                        char *temp = strdup(filePath);
+                        char *ps3Pos = strstr(temp, "/PS3_GAME/USRDIR/");
+                        if (ps3Pos) {
+                            *ps3Pos = '\0';
                             char *lastSlash = strrchr(temp, '/');
                             if (lastSlash) {
                                 gameName = strdup(lastSlash + 1);
@@ -4906,23 +4921,32 @@ void importFromCustom(Launcher *theLauncher) {
 
             char *searchString = NULL;
 
-            searchString = calloc(1, 
-                    strlen((char*)&list->items[j].path) + 1);
+            // Check if we have a stored name (from pattern-based scanning)
+            if (list->items[j].name[0] != '\0') {
+                // Use the stored name for pattern-based scanning (Wii U, PS3, ScummVM)
+                searchString = strdup(list->items[j].name);
+                printf("Using stored name for matching: %s\n", searchString);
+            }
+            else {
+                // Fall back to extracting from filename for regular scanning
+                searchString = calloc(1,
+                        strlen((char*)&list->items[j].path) + 1);
 
-            char *startOfFileName = 
-                strrchr((char*)&list->items[j].path, '/');
+                char *startOfFileName =
+                    strrchr((char*)&list->items[j].path, '/');
 
-            startOfFileName++;
-            mempcpy(searchString, 
-                    startOfFileName,
-                    strlen(startOfFileName));
+                startOfFileName++;
+                mempcpy(searchString,
+                        startOfFileName,
+                        strlen(startOfFileName));
 
-            char *ext = strchr(searchString, '(');
+                char *ext = strchr(searchString, '(');
 
-            if (ext == NULL) ext = strrchr(searchString, '.');
-            if (ext != NULL) {
-                *ext = '\0';
-                if (ext > searchString && *(ext-1) == ' ') *(ext-1) = '\0';
+                if (ext == NULL) ext = strrchr(searchString, '.');
+                if (ext != NULL) {
+                    *ext = '\0';
+                    if (ext > searchString && *(ext-1) == ' ') *(ext-1) = '\0';
+                }
             }
 
             float matchScore = 0;
