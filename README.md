@@ -1,7 +1,7 @@
 # OffBlast
 A fast, lightweight game launcher written in C with SDL2. OffBlast provides a unified interface for launching games across multiple platforms and emulators with multi-user support and customizable configurations.
 
-[![offblast.png](https://i.postimg.cc/YjB0Rf4M/offblast.png)](https://postimg.cc/Lgvm6PBb)
+[![offblast.png](https://i.postimg.cc/brW9yN6h/offblast.png)](https://postimg.cc/Lgvm6PBb)
 
 ## Get the OpenGameDB
 Offblast is powered by the OpenGameDb, which is a bunch of csv files that are publicly available on github for everyone.
@@ -174,6 +174,38 @@ Use these platform identifiers to match games with OpenGameDB:
 - `pc` (for ScummVM and PC games)
 
 See the [sample config](https://github.com/karlforshaw/offblast/blob/master/config-dist.json) for more examples.
+
+## Features
+
+### Playtime Tracking
+OffBlast automatically tracks:
+- **Total playtime** for each game per user
+- **Last played** timestamp
+- **Most played** games (shown in the top row)
+- **Recently played** games (shown in the second row)
+
+Playtime data is stored per-user in the path specified by `playtime_path` in your config. Each user gets their own playtime database based on their email hash.
+
+### Smart Game Organization
+The home screen automatically organizes games into:
+1. **Most Played** - Your top games by total playtime
+2. **Recently Played** - Games you've played recently
+3. **Platform sections** - All games organized by platform
+
+### Multi-User Support
+- Switch between users at startup
+- Each user has their own:
+  - Save game locations
+  - Emulator configurations
+  - Playtime statistics
+  - Custom settings via dynamic fields
+
+### Game Metadata
+Powered by [OpenGameDB](https://github.com/karlforshaw/opengamedb) for:
+- Game cover art
+- Descriptions
+- Release dates
+- Metacritic scores
 
 ## Troubleshooting
 
