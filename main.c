@@ -4456,6 +4456,7 @@ void killRunningGame() {
     printf("killed %d\n", offblast->runningPid);
     offblast->mode = OFFBLAST_UI_MODE_MAIN;
     offblast->runningPid = 0;
+    offblast->mainUi.rowGeometryInvalid = 1;  // Force tile repositioning
 
     LaunchTarget *target = offblast->playingTarget;
     assert(target);
