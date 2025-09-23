@@ -29,9 +29,8 @@ typedef struct Launcher {
     char platform[256];
     char extension[32];
     char cmd[MAX_LAUNCH_COMMAND_LENGTH];
-
-    char cemuPath[PATH_MAX];
     char romPath[PATH_MAX];
+    char scanPattern[256];  // Optional: pattern like "*/vol/code/*.rpx"
 } Launcher;
 
 typedef struct LauncherFile {

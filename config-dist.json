@@ -1,34 +1,44 @@
 {
     "launchers": [
         {
-            "type": "cemu",
-            "cemu_path": "/home/karl/Apps/Cemu/cemu1.19.1/",
-            "cmd": "/home/karl/.local/share/lutris/runners/wine/lutris-5.7-x86_64/bin/wine %CEMU_BIN% -f -a %CEMU_ACCOUNT% -g %ROM%",
-            "platform": "wii_u"
+            "type": "standard",
+            "rom_path": "/home/karl/SeraphStore/Games/WiiU",
+            "scan_pattern": "*/vol/code/*.rpx",
+            "cmd": "wine /home/karl/Apps/Cemu/Cemu.exe -f -a %CEMU_ACCOUNT% -g %ROM%",
+            "platform": "wii_u",
+            "comment": "scan_pattern searches recursively for .rpx files in game subdirectories"
         },
         {
-            "type": "retroarch",
+            "type": "standard",
+            "rom_path": "/home/karl/SeraphStore/Games/PS3",
+            "scan_pattern": "*/PS3_GAME/USRDIR/EBOOT.BIN",
+            "cmd": "rpcs3 --no-gui %ROM%",
+            "platform": "playstation_3",
+            "comment": "scan_pattern finds EBOOT.BIN files in PS3 game folders"
+        },
+        {
+            "type": "standard",
             "rom_path": "/home/karl/SeraphStore/Games/Super Console/psx",
             "extension": ".cue,.m3u",
             "cmd": "retroarch -f --appendconfig=%RETROARCH_CONFIG% -L /home/karl/.config/retroarch/cores/mednafen_psx_hw_libretro.so %ROM%",
             "platform": "playstation"
         },
         {
-            "type": "custom",
+            "type": "standard",
             "rom_path": "/home/karl/SeraphStore/Games/Super Console/gc",
             "extension": ".iso",
             "cmd": "dolphin-emu-nogui -C \"Dolphin.Core.MemcardAPath=%DOLPHIN_CARD%\" %ROM%",
             "platform": "gamecube"
         },
         {
-            "type": "retroarch",
+            "type": "standard",
             "rom_path": "/home/karl/SeraphStore/Games/Super Console/nes",
             "extension": ".zip",
             "cmd": "retroarch -f --appendconfig=%RETROARCH_CONFIG% -L /home/karl/.config/retroarch/cores/nestopia_libretro.so %ROM%",
             "platform": "nintendo_entertainment_system"
         },
         {
-            "type": "retroarch",
+            "type": "standard",
             "rom_path": "/home/karl/SeraphStore/Games/Super Console/snes",
             "extension": ".zip",
             "cmd": "retroarch -f --appendconfig=%RETROARCH_CONFIG% -L /home/karl/.config/retroarch/cores/mednafen_snes_libretro.so %ROM%",
@@ -36,6 +46,14 @@
         },
         {
             "type": "steam"
+        },
+        {
+            "type": "standard",
+            "rom_path": "/home/karl/SeraphStore/Games/SCUMM",
+            "scan_pattern": "DIRECTORY",
+            "cmd": "scummvm --auto-detect --path=%ROM%",
+            "platform": "scummvm",
+            "comment": "scan_pattern=DIRECTORY scans for subdirectories instead of files"
         }
     ],
     "users": [
@@ -43,10 +61,17 @@
             "name": "Karl",
             "email": "my@email.com",
             "avatar": "/home/karl/Pictures/avatars/karl.jpg",
+
+            "comment": "You can define ANY custom fields below and use them in launchers with %FIELD_NAME%",
             "cemu_account": "80000001",
             "retroarch_config": "/home/karl/.offblast/karl_ra.cfg",
             "save_path": "/home/karl/SeraphStore/Games/Super Console/saves/karl/",
-            "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/karl/dolphin/karl.USA.raw"
+            "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/karl/dolphin/karl.USA.raw",
+            "wine_prefix": "/home/karl/.wine-gaming",
+            "rpcs3_account": "00000002",
+            "yuzu_user_index": "1",
+            "my_custom_setting": "any_value_you_want",
+            "literally_anything": "will_be_available_as_%LITERALLY_ANYTHING%"
         }, {
             "name": "Cloud",
             "email": "my@email.com",

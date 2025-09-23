@@ -81,6 +81,7 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <glob.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
@@ -119,13 +120,63 @@ typedef struct User {
     char name[256];
     char email[512];
     char avatarPath[PATH_MAX];
-    char cemuAccount[32];
-    char yuzuIndex[32];
-    char rpcs3Account[32];
-    char retroarchConfig[PATH_MAX];
-    char savePath[PATH_MAX];
-    char dolphinCardPath[PATH_MAX];
+
+    // Dynamic field storage for all custom user fields
+    char **customKeys;     // Array of field names (e.g., "cemu_account")
+    char **customValues;   // Array of field values
+    int numCustomFields;   // Number of custom fields
 } User;
+
+// Helper function to get a custom field value from a user
+const char* getUserCustomField(User *user, const char *fieldName) {
+    if (!user || !fieldName) return NULL;
+
+    for (int i = 0; i < user->numCustomFields; i++) {
+        if (strcasecmp(user->customKeys[i], fieldName) == 0) {
+            return user->customValues[i];
+        }
+    }
+    return NULL;
+}
+
+// Helper function to replace all user field placeholders in a string
+void replaceUserPlaceholders(char *launchString, User *user) {
+    if (!user || !launchString) return;
+
+    char *p;
+    int replaceIter, replaceLimit = 8;
+
+    // Replace all custom field placeholders
+    for (int i = 0; i < user->numCustomFields; i++) {
+        // Build placeholder like %FIELD_NAME% (uppercase)
+        char placeholder[256];
+        snprintf(placeholder, sizeof(placeholder), "%%%s%%", user->customKeys[i]);
+
+        // Convert placeholder to uppercase
+        for (char *c = placeholder; *c; c++) {
+            if (*c >= 'a' && *c <= 'z') *c -= 32;
+        }
+
+        replaceIter = 0;
+        while ((p = strstr(launchString, placeholder))) {
+            const char *value = user->customValues[i];
+
+            // Move the rest of the string to make room
+            memmove(p + strlen(value),
+                    p + strlen(placeholder),
+                    strlen(p + strlen(placeholder)) + 1);
+
+            // Copy in the replacement value
+            memcpy(p, value, strlen(value));
+
+            replaceIter++;
+            if (replaceIter >= replaceLimit) {
+                printf("Replacement iterations exceeded for %s\n", placeholder);
+                break;
+            }
+        }
+    }
+}
 
 typedef struct Player {
     int32_t jsIndex;
@@ -476,11 +527,8 @@ void loadPlaytimeFile();
 Window getActiveWindowRaw();
 void raiseWindow();
 void killRunningGame(); 
-void importFromCemu(Launcher *theLauncher);
 void importFromSteam(Launcher *theLauncher);
-void importFromScummvm(Launcher *theLauncher);
 void importFromCustom(Launcher *theLauncher);
-void importFromRPCS3(Launcher *theLauncher);
 WindowInfo getOffblastWindowInfo();
 uint32_t activeWindowIsOffblast();
 uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature, 
@@ -943,8 +991,6 @@ int main(int argc, char** argv) {
         json_object *romPathStringNode = NULL;
         const char *theRomPath = NULL;
 
-        json_object *cemuPathStringNode = NULL;
-        const char *theCemuPath = NULL;
 
         json_object_object_get_ex(launcherNode, "type",
                 &typeStringNode);
@@ -967,145 +1013,89 @@ int main(int argc, char** argv) {
             memcpy(&theLauncher->name, theName, strlen(theName));
         }
 
-        if (strcmp("cemu", theLauncher->type) == 0) {
-
-            // Cemu needs both rom_path (for finding games) and cemu_path (for launching)
-            json_object_object_get_ex(
-                    launcherNode,
-                    "rom_path",
-                    &romPathStringNode);
-            theRomPath = json_object_get_string(romPathStringNode);
-            if (theRomPath != NULL) {
-                memcpy(&theLauncher->romPath, theRomPath, strlen(theRomPath));
-            } else {
-                printf("WARNING: Cemu launcher at index %d has no 'rom_path' configured\n", i);
-                printf("         Please set rom_path to your unpacked Wii U games directory\n");
-            }
-
-            json_object_object_get_ex(
-                    launcherNode,
-                    "cemu_path",
-                    &cemuPathStringNode);
-
-            theCemuPath = json_object_get_string(cemuPathStringNode);
-            if (theCemuPath != NULL) {
-                memcpy(&theLauncher->cemuPath,
-                        theCemuPath,
-                        strlen(theCemuPath));
-            } else {
-                printf("ERROR: Cemu launcher at index %d is missing 'cemu_path' field\n", i);
-                printf("       Please add a cemu_path to your cemu launcher in config.json\n");
-            }
-
-            json_object_object_get_ex(launcherNode, "platform",
-                    &platformStringNode);
-            thePlatform = json_object_get_string(platformStringNode);
-            if (thePlatform != NULL) {
-                if (strlen(thePlatform) >= 256) {
-                    condPrintConfigError(NULL,
-                            "Your cemu platform string is too long.");
-                }
-                memcpy(&theLauncher->platform,
-                        thePlatform, strlen(thePlatform));
-            } else {
-                printf("ERROR: Cemu launcher at index %d is missing 'platform' field\n", i);
-                printf("       Please add a platform to your cemu launcher in config.json\n");
-            }
-
-            json_object_object_get_ex(launcherNode, "cmd",
-                    &cmdStringNode);
-            theCommand = json_object_get_string(cmdStringNode);
-            if (theCommand != NULL) {
-                if (strlen(theCommand) >= 512) {
-                    condPrintConfigError(NULL,
-                            "Your cemu command string is too long.");
-                }
-                memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
-            } else {
-                printf("ERROR: Cemu launcher at index %d is missing 'cmd' field\n", i);
-                printf("       Please add a cmd to your cemu launcher in config.json\n");
-            }
-
-        }
-        else if (strcmp("custom", theLauncher->type) == 0 || 
-                strcmp("retroarch", theLauncher->type) == 0)
+        // Handle standard directory-based launchers
+        if (strcmp("standard", theLauncher->type) == 0)
         {
 
+            // Handle rom_path (required for standard launchers)
             json_object_object_get_ex(launcherNode, "rom_path",
                     &romPathStringNode);
             theRomPath = json_object_get_string(romPathStringNode);
             if (theRomPath != NULL) {
                 memcpy(&theLauncher->romPath, theRomPath, strlen(theRomPath));
             } else {
-                printf("ERROR: %s launcher at index %d is missing 'rom_path' field\n", theLauncher->type, i);
+                printf("ERROR: standard launcher at index %d is missing 'rom_path' field\n", i);
                 printf("       Please add a rom_path to your launcher in config.json\n");
             }
 
+            // Handle extension (optional if scan_pattern is provided)
             json_object_object_get_ex(launcherNode, "extension",
                     &extensionStringNode);
             theExtension = json_object_get_string(extensionStringNode);
             if (theExtension != NULL) {
                 if (strlen(theExtension) >= 32) {
                     condPrintConfigError(NULL,
-                            "One of your custom launchers has too many extensions");
+                            "One of your launchers has too many extensions");
                 }
                 memcpy(&theLauncher->extension,
                         theExtension, strlen(theExtension));
-            } else {
-                printf("ERROR: %s launcher at index %d is missing 'extension' field\n", theLauncher->type, i);
-                printf("       Please add an extension to your launcher in config.json\n");
             }
 
+            // Handle scan_pattern (optional - for recursive/pattern-based scanning)
+            json_object *scanPatternNode = NULL;
+            json_object_object_get_ex(launcherNode, "scan_pattern",
+                    &scanPatternNode);
+            const char *theScanPattern = json_object_get_string(scanPatternNode);
+            if (theScanPattern != NULL) {
+                if (strlen(theScanPattern) >= 256) {
+                    condPrintConfigError(NULL,
+                            "One of your launchers' scan_pattern is too long");
+                }
+                memcpy(&theLauncher->scanPattern,
+                        theScanPattern, strlen(theScanPattern));
+                printf("Launcher %d using scan pattern: %s\n", i, theScanPattern);
+            } else if (theExtension == NULL) {
+                // Must have either extension or scan_pattern
+                printf("ERROR: standard launcher at index %d has neither 'extension' nor 'scan_pattern'\n", i);
+                printf("       Please add either an extension or scan_pattern to your launcher\n");
+            }
+
+            // Handle platform (required for standard launchers)
             json_object_object_get_ex(launcherNode, "platform",
                     &platformStringNode);
             thePlatform = json_object_get_string(platformStringNode);
             if (thePlatform != NULL) {
                 if (strlen(thePlatform) >= 256) {
                     condPrintConfigError(NULL,
-                            "One of your custom launchers' platform strings is too long.");
+                            "One of your launchers' platform strings is too long.");
                 }
                 memcpy(&theLauncher->platform,
                         thePlatform, strlen(thePlatform));
             } else {
-                printf("ERROR: %s launcher at index %d is missing 'platform' field\n", theLauncher->type, i);
+                printf("ERROR: standard launcher at index %d is missing 'platform' field\n", i);
                 printf("       Please add a platform to your launcher in config.json\n");
             }
 
+            // Handle command (required for standard launchers)
             json_object_object_get_ex(launcherNode, "cmd",
                     &cmdStringNode);
             theCommand = json_object_get_string(cmdStringNode);
             if (theCommand != NULL) {
                 if (strlen(theCommand) >= 512) {
                     condPrintConfigError(NULL,
-                            "One of your custom launchers' command strings is too long.");
+                            "One of your launchers' command strings is too long.");
                 }
                 memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
             } else {
-                printf("ERROR: %s launcher at index %d is missing 'cmd' field\n", theLauncher->type, i);
+                printf("ERROR: standard launcher at index %d is missing 'cmd' field\n", i);
                 printf("       Please add a cmd to your launcher in config.json\n");
             }
 
+
         }
         else if (strcmp("steam", theLauncher->type) == 0){
-            memcpy(&theLauncher->platform, 
+            memcpy(&theLauncher->platform,
                     "steam", strlen("steam"));
-        }
-        else if (strcmp("rpcs3", theLauncher->type) == 0){
-            memcpy(&theLauncher->platform, 
-                    "playstation_3", strlen("playstation_3"));
-
-            json_object_object_get_ex(launcherNode, "cmd",
-                    &cmdStringNode);
-            theCommand = json_object_get_string(cmdStringNode);
-            if (strlen(theCommand) >= 512) {
-                condPrintConfigError(NULL, 
-                        "Your RPCS3 command string is too long.");
-            }
-            memcpy(&theLauncher->cmd, theCommand, strlen(theCommand));
-        }
-        else if (strcmp("scummvm", theLauncher->type) == 0){
-            memcpy(&theLauncher->platform, 
-                    "pc", strlen("pc"));
         }
         else {
             printf("Unsupported Launcher Type: %s\n", theLauncher->type);
@@ -1147,21 +1137,13 @@ int main(int argc, char** argv) {
         }
 
 
-        if (strcmp(theLauncher->type, "cemu") == 0) {
-            importFromCemu(theLauncher);
-        }
-        else if (strcmp(theLauncher->type, "steam") == 0) {
+        // Import games based on launcher type
+        if (strcmp(theLauncher->type, "steam") == 0) {
             importFromSteam(theLauncher);
         }
-        else if (strcmp(theLauncher->type, "scummvm") == 0) {
-            importFromScummvm(theLauncher);
-        }
-        else if (strcmp(theLauncher->type, "rpcs3") == 0) {
-            importFromRPCS3(theLauncher);
-        }
-        else if (strcmp(theLauncher->type, "custom") == 0||
-                strcmp(theLauncher->type, "retroarch") == 0) 
-        { 
+        else {
+            // All directory-based launchers use the same import logic
+            // This includes: standard, custom, retroarch, cemu, rpcs3, scummvm
             importFromCustom(theLauncher);
         }
 
@@ -1219,112 +1201,56 @@ int main(int argc, char** argv) {
 
     uint32_t iUser;
     for (iUser = 0; iUser < offblast->nUsers; iUser++) {
-
-        json_object *workingUserNode = NULL;
-        json_object *workingNameNode = NULL;
-        json_object *workingEmailNode = NULL;
-        json_object *workingAvatarPathNode = NULL;
-        json_object *workingCemuAccountNode = NULL;
-        json_object *workingRPCS3AccountNode = NULL;
-        json_object *workingYuzuIndexNode= NULL;
-        json_object *workingRetroarchConfigNode = NULL;
-        json_object *workingSavePathNode = NULL;
-        json_object *workingDolphinCardPathNode = NULL;
-
-        const char *theName= NULL;
-        const char *theEmail = NULL;
-        const char *theAvatarPath= NULL;
-        const char *theCemuAccount = NULL;
-        const char *theRPCS3Account = NULL;
-        const char *theYuzuIndex = NULL;
-        const char *theRetroarchConfig = NULL;
-        const char *theSavePath = NULL;
-        const char *theDolphinCardPath = NULL;
-
-        workingUserNode = json_object_array_get_idx(usersObject, iUser);
-        json_object_object_get_ex(workingUserNode, "name",
-                &workingNameNode);
-        json_object_object_get_ex(workingUserNode, "email",
-                &workingEmailNode);
-        json_object_object_get_ex(workingUserNode, "avatar",
-                &workingAvatarPathNode);
-        json_object_object_get_ex(workingUserNode, "cemu_account",
-                &workingCemuAccountNode);
-        json_object_object_get_ex(workingUserNode, "rpcs3_account",
-                &workingRPCS3AccountNode);
-        json_object_object_get_ex(workingUserNode, "yuzu_user_index",
-                &workingYuzuIndexNode);
-        json_object_object_get_ex(workingUserNode, "retroarch_config",
-                &workingRetroarchConfigNode);
-        json_object_object_get_ex(workingUserNode, "save_path",
-                &workingSavePathNode);
-        json_object_object_get_ex(workingUserNode, "dolphin_card",
-                &workingDolphinCardPathNode);
-
-
-        theName = json_object_get_string(workingNameNode);
-        theEmail = json_object_get_string(workingEmailNode);
-        theAvatarPath = json_object_get_string(workingAvatarPathNode);
-
+        json_object *workingUserNode = json_object_array_get_idx(usersObject, iUser);
         User *pUser = &offblast->users[iUser];
-        uint32_t nameLen = (strlen(theName) < 256) ? strlen(theName) : 255;
-        uint32_t emailLen = (strlen(theEmail) < 512) ? strlen(theEmail) : 512;
-        uint32_t avatarLen = 
-            (strlen(theAvatarPath) < PATH_MAX) ? 
-                    strlen(theAvatarPath) : PATH_MAX;
 
-        memcpy(&pUser->name, theName, nameLen);
-        memcpy(&pUser->email, theEmail, emailLen);
-        memcpy(&pUser->avatarPath, theAvatarPath, avatarLen);
+        // Initialize custom field arrays
+        pUser->numCustomFields = 0;
+        pUser->customKeys = NULL;
+        pUser->customValues = NULL;
 
-        if (workingCemuAccountNode) {
-            theCemuAccount = json_object_get_string(workingCemuAccountNode);
-            if (strlen(theCemuAccount) < 32) 
-                memcpy(&pUser->cemuAccount, 
-                        theCemuAccount, strlen(theCemuAccount));
+        // Count custom fields first (to allocate arrays)
+        int customFieldCount = 0;
+        json_object_object_foreach(workingUserNode, key, val) {
+            if (strcmp(key, "name") != 0 &&
+                strcmp(key, "email") != 0 &&
+                strcmp(key, "avatar") != 0) {
+                customFieldCount++;
+            }
         }
 
-        if (workingYuzuIndexNode) {
-            theYuzuIndex = json_object_get_string(workingYuzuIndexNode);
-            if (strlen(theYuzuIndex) < 32) 
-                memcpy(&pUser->yuzuIndex, 
-                        theYuzuIndex, strlen(theYuzuIndex));
+        // Allocate arrays for custom fields
+        if (customFieldCount > 0) {
+            pUser->customKeys = calloc(customFieldCount, sizeof(char*));
+            pUser->customValues = calloc(customFieldCount, sizeof(char*));
         }
 
-        if (workingRPCS3AccountNode) {
-            theRPCS3Account = json_object_get_string(workingRPCS3AccountNode);
-            if (strlen(theRPCS3Account) < 32) 
-                memcpy(&pUser->rpcs3Account, 
-                        theRPCS3Account, strlen(theRPCS3Account));
+        // Parse all fields dynamically
+        json_object_object_foreach(workingUserNode, key2, val2) {
+            const char *value = json_object_get_string(val2);
+            if (value == NULL) continue;
+
+            if (strcmp(key2, "name") == 0) {
+                uint32_t len = (strlen(value) < 256) ? strlen(value) : 255;
+                memcpy(&pUser->name, value, len);
+            }
+            else if (strcmp(key2, "email") == 0) {
+                uint32_t len = (strlen(value) < 512) ? strlen(value) : 511;
+                memcpy(&pUser->email, value, len);
+            }
+            else if (strcmp(key2, "avatar") == 0) {
+                uint32_t len = (strlen(value) < PATH_MAX) ? strlen(value) : PATH_MAX - 1;
+                memcpy(&pUser->avatarPath, value, len);
+            }
+            else {
+                // Store as custom field
+                pUser->customKeys[pUser->numCustomFields] = strdup(key2);
+                pUser->customValues[pUser->numCustomFields] = strdup(value);
+                printf("User %s has custom field: %s = %s\n",
+                       pUser->name, key2, value);
+                pUser->numCustomFields++;
+            }
         }
-
-        if (workingRetroarchConfigNode) {
-            theRetroarchConfig = 
-                json_object_get_string(workingRetroarchConfigNode);
-
-            if (strlen(theRetroarchConfig) < PATH_MAX) 
-                memcpy(&pUser->retroarchConfig, 
-                        theRetroarchConfig, strlen(theRetroarchConfig));
-        }
-
-        if (workingSavePathNode) {
-            theSavePath= 
-                json_object_get_string(workingSavePathNode);
-
-            if (strlen(theSavePath) < PATH_MAX) 
-                memcpy(&pUser->savePath, 
-                        theSavePath, strlen(theSavePath));
-        }
-
-        if (workingDolphinCardPathNode) {
-            theDolphinCardPath = 
-                json_object_get_string(workingDolphinCardPathNode);
-
-            if (strlen(theDolphinCardPath) < PATH_MAX) 
-                memcpy(&pUser->dolphinCardPath, 
-                        theDolphinCardPath, strlen(theDolphinCardPath));
-        }
-
     }
 
     json_tokener_free(tokener);
@@ -3383,9 +3309,10 @@ void launch() {
                     target->id);
         }
         else if (isScummvm) {
-            if (theUser->savePath) {
+            const char *savePath = getUserCustomField(theUser, "save_path");
+            if (savePath) {
                 asprintf(&launchString, "SDL_AUDIODRIVER=alsa scummvm -f --savepath='%s' %s",
-                        theUser->savePath,
+                        savePath,
                         target->path);
             }
             else {
@@ -3421,192 +3348,8 @@ void launch() {
                 }
             }
 
-            if (strlen(theUser->savePath) != 0) {
-                replaceIter = 0; replaceLimit = 8;
-
-                while ((p = strstr(launchString, "%SAVE_PATH%"))) {
-
-                    memmove(
-                            p + strlen(theUser->savePath) + 2, 
-                            p + strlen("%SAVE_PATH%"),
-                            strlen(p));
-
-                    *p = '"';
-                    memcpy(p+1, theUser->savePath, strlen(theUser->savePath));
-                    *(p + 1 + strlen(theUser->savePath)) = '"';
-
-                    replaceIter++;
-                    if (replaceIter >= replaceLimit) {
-                        printf("save path iter exceeded, breaking\n");
-                        break;
-                    }
-                }
-
-                while ((p = strstr(launchString, "%SAVE_PATH_NOQUOTE%"))) {
-
-                    memmove(
-                            p + strlen(theUser->savePath), 
-                            p + strlen("%SAVE_PATH_NOQUOTE%"),
-                            strlen(p));
-
-                    memcpy(p, theUser->savePath, strlen(theUser->savePath));
-
-                    replaceIter++;
-                    if (replaceIter >= replaceLimit) {
-                        printf("save path iter exceeded, breaking\n");
-                        break;
-                    }
-                }
-            }
-
-            if (strlen(theUser->dolphinCardPath) != 0) {
-                replaceIter = 0; replaceLimit = 8;
-
-                while ((p = strstr(launchString, "%DOLPHIN_CARD%"))) {
-
-                    memmove(
-                            p + strlen(theUser->dolphinCardPath), 
-                            p + strlen("%DOLPHIN_CARD%"),
-                            strlen(p));
-
-                    memcpy(p, theUser->dolphinCardPath, strlen(theUser->dolphinCardPath));
-
-                    replaceIter++;
-                    if (replaceIter >= replaceLimit) {
-                        printf("dolphin path iter exceeded, breaking\n");
-                        break;
-                    }
-                }
-            }
-
-            if (strlen(theUser->rpcs3Account) != 0) {
-                replaceIter = 0; replaceLimit = 8;
-
-                while ((p = strstr(launchString, "%RPCS3_ACCOUNT%"))) {
-
-                    memmove(
-                            p + strlen(theUser->rpcs3Account), 
-                            p + strlen("%RPCS3_ACCOUNT%"),
-                            strlen(p));
-
-                    memcpy(p, theUser->rpcs3Account, strlen(theUser->rpcs3Account));
-
-                    replaceIter++;
-                    if (replaceIter >= replaceLimit) {
-                        printf("rpcs3 index iter exceeded, breaking\n");
-                        break;
-                    }
-                }
-            }
-
-            if (strlen(theUser->yuzuIndex) != 0) {
-                replaceIter = 0; replaceLimit = 8;
-
-                while ((p = strstr(launchString, "%YUZU_USER_INDEX%"))) {
-
-                    memmove(
-                            p + strlen(theUser->yuzuIndex), 
-                            p + strlen("%YUZU_USER_INDEX%"),
-                            strlen(p));
-
-                    memcpy(p, theUser->yuzuIndex, strlen(theUser->yuzuIndex));
-
-                    replaceIter++;
-                    if (replaceIter >= replaceLimit) {
-                        printf("yuzu index iter exceeded, breaking\n");
-                        break;
-                    }
-                }
-            }
-
-            if (strcmp(theLauncher->type, "cemu") == 0) {
-
-                if (strlen(theLauncher->cemuPath) == 0) {
-                    printf("ERROR: Cannot launch Cemu - cemu_path is not configured\n");
-                    printf("       Please set the cemu_path in your config.json\n");
-                    return;
-                }
-
-                char *cemuBinSlug;
-                asprintf(&cemuBinSlug, "%s/Cemu.exe", theLauncher->cemuPath);
-
-                replaceIter = 0; replaceLimit = 8;
-                while ((p = strstr(launchString, "%CEMU_BIN%"))) {
-
-                    memmove(
-                            p + strlen(cemuBinSlug) + 2, 
-                            p + strlen("%CEMU_BIN%"),
-                            strlen(p));
-
-                    *p = '"';
-                    memcpy(p+1, cemuBinSlug, strlen(cemuBinSlug));
-                    *(p + 1 + strlen(cemuBinSlug)) = '"';
-
-                    replaceIter++;
-                    if (replaceIter >= replaceLimit) {
-                        printf("cemu path replace iterations exceeded, breaking\n");
-                        break;
-                    }
-                }
-                free(cemuBinSlug);
-
-                char *cemuAccountSlug;
-                if (theUser->cemuAccount != NULL) {
-                    cemuAccountSlug = (char*)theUser->cemuAccount;
-                }
-                else {
-                    cemuAccountSlug = "80000001";
-                }
-
-                // TODO write a function for this
-                while ((p = strstr(launchString, "%CEMU_ACCOUNT%"))) {
-
-                    memmove(
-                            p + strlen(cemuAccountSlug) + 2, 
-                            p + strlen("%CEMU_ACCOUNT%"),
-                            strlen(p));
-
-                    *p = '"';
-                    memcpy(p+1, cemuAccountSlug, 
-                            strlen(cemuAccountSlug));
-
-                    *(p + 1 + strlen(cemuAccountSlug)) = '"';
-
-                    replaceIter++;
-                    if (replaceIter >= replaceLimit) {
-                        printf("cemu account replace iterations exceeded, breaking\n");
-                        break;
-                    }
-                }
-
-            }
-
-            if (strcmp(theLauncher->type, "retroarch") == 0 
-                    && strlen(theUser->retroarchConfig) != 0) 
-            {
-
-                replaceIter = 0; replaceLimit = 8;
-
-                // TODO write a function to replace this stuff
-                while ((p = strstr(launchString, "%RETROARCH_CONFIG%"))) {
-
-                    memmove(
-                            p + strlen(theUser->retroarchConfig) + 2, 
-                            p + strlen("%RETROARCH_CONFIG%"),
-                            strlen(p));
-
-                    *p = '"';
-                    memcpy(p+1, theUser->retroarchConfig, strlen(theUser->retroarchConfig));
-                    *(p + 1 + strlen(theUser->retroarchConfig)) = '"';
-
-                    replaceIter++;
-                    if (replaceIter >= replaceLimit) {
-                        printf("retroarch configi iter exceeded, breaking\n");
-                        break;
-                    }
-                }
-            }
-
+            // Replace all user field placeholders
+            replaceUserPlaceholders(launchString, theUser);
         }
 
         // TODO detect when the command errors or doesn't exist and handle it
@@ -4913,388 +4656,6 @@ void freeRomList(RomFoundList *list) {
 // This no longer works, we should be recursively searching for RPX files instead
 // These functions need to find a list of games
 // create the fields needed to update the internal game db
-void importFromCemu(Launcher *theLauncher) {
-
-
-    // TODO NFS shares when unavailable just lock this up!
-    DIR *dir = opendir(theLauncher->romPath);
-    DIR *rpxDir = NULL;
-    if (dir == NULL) {
-        printf("ERROR: Cannot access Cemu rom_path: '%s'\n", theLauncher->romPath);
-        if (strlen(theLauncher->romPath) == 0) {
-            printf("       The rom_path is empty. Please set it in config.json\n");
-        } else {
-            printf("       Please check that the directory exists and is readable\n");
-        }
-        return;
-    }
-
-    RomFoundList *list = newRomList();
-
-    // It's just the same as custom but we're opening /vol/code/*.rpx as the path,
-    // and the name is the directory name
-    struct dirent *currentEntry;
-    struct dirent *rpxEntry;
-
-    char *rpxPath = calloc(1, PATH_MAX);
-
-    while ((currentEntry = readdir(dir)) != NULL) {
-
-        if (currentEntry->d_name[0] == '.') continue;
-        if (strcmp(currentEntry->d_name, ".") == 0) continue;
-        if (strcmp(currentEntry->d_name, "..") == 0) continue;
-
-        char *ext = strrchr((char*)currentEntry->d_name, '.');
-        if (ext == NULL) {
-            //printf("CEM Directory: %s\n", currentEntry->d_name);
-
-            memset(rpxPath, 0x0, PATH_MAX);
-            sprintf(rpxPath, "%s/%s/vol/code",
-                    theLauncher->romPath,
-                    currentEntry->d_name);
-            rpxDir = opendir(rpxPath);
-
-            if (rpxDir == NULL) {
-                //printf("CEM Path %s failed to open\n", rpxPath);
-                continue;
-            }
-
-            while ((rpxEntry = readdir(rpxDir)) != NULL) {
-                if (rpxEntry->d_name[0] == '.') continue;
-                if (strcmp(rpxEntry->d_name, ".") == 0) continue;
-                if (strcmp(rpxEntry->d_name, "..") == 0) continue;
-
-                //printf("CEM %s\n", rpxEntry->d_name);
-
-                char *ext = strrchr((char*)rpxEntry->d_name, '.');
-                if (ext == NULL) continue;
-
-                if (strcmp(ext, ".rpx") == 0) {
-                    char *fullPath = NULL;
-                    asprintf(&fullPath, "%s/%s", 
-                            rpxPath, rpxEntry->d_name);
-
-                    //printf("CEM ADDING: %s\t %s\n", fullPath, currentEntry->d_name);
-                    pushToRomList(list, fullPath, currentEntry->d_name, NULL);
-                    free(fullPath);
-                }
-            }
-
-            closedir(rpxDir);
-
-        }
-    }
-
-    free(rpxPath);
-    closedir(dir);
-
-    if (list->numItems == 0) { 
-        printf("no items found\n");
-        freeRomList(list);
-        list = NULL;
-        return;
-    }
-
-    uint32_t rescrapeRequired = 0;
-
-    if (launcherContentsCacheUpdated(theLauncher->signature, romListContentSig(list))) {
-        printf("Launcher targets for %u have changed!\n", theLauncher->signature);
-        rescrapeRequired = 1;
-    }
-    else {
-        printf("Contents unchanged for: %u\n", theLauncher->signature);
-    }
-
-
-    if (rescrapeRequired) {
-
-        for (uint32_t j=0 ; j< list->numItems; j++) {
-
-            float matchScore = 0;
-            int32_t indexOfEntry = launchTargetIndexByNameMatch(
-                    offblast->launchTargetFile, 
-                    list->items[j].name, 
-                    theLauncher->platform,
-                    &matchScore);
-
-            printf("found by name at index %d\n", indexOfEntry);
-
-            if (indexOfEntry > -1 &&
-                    matchScore > offblast->launchTargetFile->entries[indexOfEntry].matchScore) 
-            {
-
-                LaunchTarget *theTarget = 
-                    &offblast->launchTargetFile->entries[indexOfEntry];
-
-                theTarget->launcherSignature = theLauncher->signature;
-
-                if (theTarget->path != NULL && strlen(theTarget->path)) {
-                    printf("%s already has a path, overwriting with %s\n",
-                            theTarget->name,
-                            list->items[j].path);
-
-                    memset(&theTarget->path, 0x00, PATH_MAX);
-                }
-
-                memcpy(&theTarget->path, 
-                        list->items[j].path,
-                        strlen(list->items[j].path));
-
-            }
-        } 
-    }
-
-    freeRomList(list);
-    list = NULL;
-}
-
-void importFromScummvm(Launcher *theLauncher) {
-
-    RomFoundList *list = newRomList();
-    char *homePath = getenv("HOME");
-
-    char *registryPath = NULL;
-    asprintf(&registryPath, "%s/.config/scummvm/scummvm.ini", homePath);
-
-    FILE *fp = fopen(registryPath, "r");
-    if (fp == NULL) {
-        perror("Couldn't open scummvm config\n");
-        return;
-    }
-
-    char *lineBuffer = calloc(512, sizeof(char));
-    assert(lineBuffer);
-
-    char *currentId = calloc(64, sizeof(char));
-    char *currentName = calloc(64, sizeof(char));
-
-    while(fgets(lineBuffer, 512, fp)) {
-
-
-        if (lineBuffer[0] == '[') {
-
-            if (strncmp(lineBuffer, "[scummvm]", strlen("[scummvm]")) != 0) {
-
-                // Got a new game
-                memset(currentId, 0, 64);
-                char *closePos = strchr(lineBuffer, ']');
-                assert(*closePos);
-
-                assert(closePos-(lineBuffer+1) <= 64);
-                memcpy(currentId, lineBuffer+1, 
-                        closePos-(lineBuffer+1));
-            }
-        }
-        else if (strcasestr(lineBuffer, "description=") == lineBuffer) {
-            char *startP = strchr(lineBuffer, '=') +1;
-            char *endP = strchr(lineBuffer, '\n');
-
-            if (strchr(lineBuffer, '(')) endP = strchr(lineBuffer, '(');
-            assert(endP);
-
-            memset(currentName, 0, 64);
-            assert(endP-startP <= 64);
-            memcpy(currentName, startP, endP-startP);
-
-            pushToRomList(list, currentId, currentName, NULL);
-        }
-    }
-
-    fclose(fp);
-
-    free(lineBuffer);
-    free(registryPath);
-    free(currentId);
-    free(currentName);
-
-    if (list->numItems == 0) { 
-        printf("no items found\n");
-        freeRomList(list);
-        list = NULL;
-        return;
-    }
-
-    uint32_t rescrapeRequired = 0;
-    if (launcherContentsCacheUpdated(theLauncher->signature, romListContentSig(list))) {
-        printf("Launcher targets for %u have changed!\n", 
-                theLauncher->signature);
-
-        rescrapeRequired = 1;
-    }
-    else {
-        printf("Contents unchanged for: %u\n", theLauncher->signature);
-    }
-
-
-    if (rescrapeRequired) {
-
-        for (uint32_t j=0; j < list->numItems; j++) {
-
-            float matchScore = 0;
-            int32_t indexOfEntry = launchTargetIndexByNameMatch(
-                    offblast->launchTargetFile, 
-                    list->items[j].name, 
-                    theLauncher->platform,
-                    &matchScore);
-
-            printf("found by name at index %d\n", indexOfEntry);
-
-            if (indexOfEntry > -1 &&
-                    matchScore > offblast->launchTargetFile->entries[indexOfEntry].matchScore) 
-            {
-
-                LaunchTarget *theTarget = 
-                    &offblast->launchTargetFile->entries[indexOfEntry];
-
-                theTarget->launcherSignature = theLauncher->signature;
-
-                if (theTarget->path != NULL && strlen(theTarget->path)) {
-                    printf("%s already has a path, overwriting with %s\n",
-                            theTarget->name,
-                            list->items[j].path);
-
-                    memset(&theTarget->path, 0x00, PATH_MAX);
-                }
-
-                memcpy(&theTarget->path, 
-                        list->items[j].path,
-                        strlen(list->items[j].path));
-
-            }
-        } 
-    }
-
-    freeRomList(list);
-    list = NULL;
-}
-
-void importFromRPCS3(Launcher *theLauncher) {
-
-    char *homePath = getenv("HOME");
-    char *registryPath = NULL;
-    asprintf(&registryPath, "%s/.config/rpcs3/games.yml", homePath);
-
-    FILE *fp = fopen(registryPath, "r");
-    if (fp == NULL) {
-        printf("WARNING: Cannot access RPCS3 games registry: '%s'\n", registryPath);
-        printf("         RPCS3 may not be installed or configured\n");
-        free(registryPath);
-        return;
-    }
-
-    RomFoundList *list = newRomList();
-
-    char *lineBuffer = calloc(512, sizeof(char));
-    assert(lineBuffer);
-
-    char *currentPath = calloc(PATH_MAX, sizeof(char));
-    char *currentName = calloc(64, sizeof(char));
-    char *pathToRom = "PS3_GAME/USRDIR/EBOOT.BIN";
-
-    while(fgets(lineBuffer, 512, fp)) {
-
-        memset(currentPath, 0, PATH_MAX);
-
-        // Get the path
-        char *startP = strchr(lineBuffer, ' ') +1;
-        char *closePos = strchr(lineBuffer, '\n');
-        if (!closePos) {
-            printf("falling back\n");
-            closePos = strrchr(lineBuffer, '/')+1;
-;
-        }
-        assert(closePos);
-
-        assert(closePos-(lineBuffer+1) <= PATH_MAX);
-
-        memcpy(currentPath, startP, 
-                closePos-(startP));
-
-        char *appendChar = strrchr(currentPath, '/') +1;
-        assert(appendChar);
-        strncpy(appendChar, pathToRom, strlen(pathToRom));
-
-        // Get the name
-        startP = strchr(lineBuffer, '[') +1;
-        char *endP = strchr(lineBuffer, ']');
-        if (!endP || !startP) continue;
-
-        memset(currentName, 0, 64);
-        assert(endP-startP <= 64);
-        memcpy(currentName, startP, endP-startP);
-
-        //printf("ps3 game: %s\n%s\n", currentName, currentPath);
-
-        pushToRomList(list, currentPath, currentName, NULL);
-    }
-
-    fclose(fp);
-
-    free(lineBuffer);
-    free(registryPath);
-    free(currentPath);
-    free(currentName);
-
-    if (list->numItems == 0) { 
-        printf("no items found\n");
-        freeRomList(list);
-        list = NULL;
-        return;
-    }
-
-    uint32_t rescrapeRequired = 0;
-    if (launcherContentsCacheUpdated(theLauncher->signature, romListContentSig(list))) {
-        printf("Launcher targets for %u have changed!\n", 
-                theLauncher->signature);
-
-        rescrapeRequired = 1;
-    }
-    else {
-        printf("Contents unchanged for: %u\n", theLauncher->signature);
-    }
-
-
-    if (rescrapeRequired) {
-
-        for (uint32_t j=0; j < list->numItems; j++) {
-
-            float matchScore = 0;
-            int32_t indexOfEntry = launchTargetIndexByNameMatch(
-                    offblast->launchTargetFile, 
-                    list->items[j].name, 
-                    theLauncher->platform,
-                    &matchScore);
-
-            printf("found by name at index %d\n", indexOfEntry);
-
-            if (indexOfEntry > -1 &&
-                    matchScore > offblast->launchTargetFile->entries[indexOfEntry].matchScore) 
-            {
-
-                LaunchTarget *theTarget = 
-                    &offblast->launchTargetFile->entries[indexOfEntry];
-
-                theTarget->launcherSignature = theLauncher->signature;
-
-                if (theTarget->path != NULL && strlen(theTarget->path)) {
-                    printf("%s already has a path, overwriting with %s\n",
-                            theTarget->name,
-                            list->items[j].path);
-
-                    memset(&theTarget->path, 0x00, PATH_MAX);
-                }
-
-                memcpy(&theTarget->path, 
-                        list->items[j].path,
-                        strlen(list->items[j].path));
-
-            }
-        } 
-    }
-
-    freeRomList(list);
-    list = NULL;
-}
 
 void importFromSteam(Launcher *theLauncher) {
 
@@ -5417,34 +4778,108 @@ void importFromCustom(Launcher *theLauncher) {
 
     RomFoundList *list = newRomList();
 
-    struct dirent *currentEntry;
-    while ((currentEntry = readdir(dir)) != NULL) {
+    // Check if we should use pattern-based scanning
+    if (strlen(theLauncher->scanPattern) > 0) {
+        // Special case: DIRECTORY means scan for directories instead of files
+        if (strcmp(theLauncher->scanPattern, "DIRECTORY") == 0) {
+            // Scan for subdirectories in rom_path
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL) {
+                if (entry->d_name[0] == '.') continue;
+                if (strcmp(entry->d_name, ".") == 0) continue;
+                if (strcmp(entry->d_name, "..") == 0) continue;
 
-        if (currentEntry->d_name[0] == '.') continue;
-        if (strcmp(currentEntry->d_name, ".") == 0) continue;
-        if (strcmp(currentEntry->d_name, "..") == 0) continue;
+                // Check if this is a directory
+                char fullPath[PATH_MAX];
+                snprintf(fullPath, PATH_MAX, "%s/%s",
+                        theLauncher->romPath, entry->d_name);
 
-        char *ext = strrchr((char*)currentEntry->d_name, '.');
-        if (ext == NULL) continue;
+                struct stat statbuf;
+                if (stat(fullPath, &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
+                    // This is a directory - add it as a game
+                    // Extract game name from directory (remove suffixes like "(CD VGA)")
+                    char gameName[256];
+                    strncpy(gameName, entry->d_name, 255);
+                    gameName[255] = '\0';
 
-        char *workingExt = strdup(theLauncher->extension);
-        char *token = strtok(workingExt, ",");
+                    // Remove common suffixes in parentheses for cleaner names
+                    char *paren = strchr(gameName, '(');
+                    if (paren && paren > gameName && *(paren-1) == ' ') {
+                        *(paren-1) = '\0';
+                    }
 
-        while (token) {
-            if (strcmp(ext, token) == 0) {
-
-                char *fullPath = NULL;
-                asprintf(&fullPath, "%s/%s", 
-                        theLauncher->romPath, currentEntry->d_name);
-
-                pushToRomList(list, fullPath, NULL, NULL);
-                free(fullPath);
-
+                    pushToRomList(list, fullPath, gameName, NULL);
+                    printf("Found game directory: %s -> %s\n", entry->d_name, gameName);
+                }
             }
-            token = strtok(NULL, ",");
         }
+        else {
+            // Use glob to find files matching the pattern
+            char globPattern[PATH_MAX];
+            snprintf(globPattern, PATH_MAX, "%s/%s",
+                    theLauncher->romPath, theLauncher->scanPattern);
 
-        free(workingExt);
+            glob_t globResult;
+            printf("Scanning with pattern: %s\n", globPattern);
+
+            if (glob(globPattern, GLOB_NOSORT, NULL, &globResult) == 0) {
+                for (size_t i = 0; i < globResult.gl_pathc; i++) {
+                    char *filePath = globResult.gl_pathv[i];
+
+                    // Extract game name from path (parent directory for Cemu-style)
+                    char *gameName = NULL;
+                    if (strstr(theLauncher->scanPattern, "*/vol/code/") != NULL) {
+                        // For Cemu: extract game directory name
+                        char *temp = strdup(filePath);
+                        char *volPos = strstr(temp, "/vol/code/");
+                        if (volPos) {
+                            *volPos = '\0';
+                            char *lastSlash = strrchr(temp, '/');
+                            if (lastSlash) {
+                                gameName = strdup(lastSlash + 1);
+                            }
+                        }
+                        free(temp);
+                    }
+
+                    pushToRomList(list, filePath, gameName, NULL);
+                    if (gameName) free(gameName);
+                }
+                globfree(&globResult);
+            }
+        }
+    }
+    else {
+        // Standard directory scanning with extensions
+        struct dirent *currentEntry;
+        while ((currentEntry = readdir(dir)) != NULL) {
+
+            if (currentEntry->d_name[0] == '.') continue;
+            if (strcmp(currentEntry->d_name, ".") == 0) continue;
+            if (strcmp(currentEntry->d_name, "..") == 0) continue;
+
+            char *ext = strrchr((char*)currentEntry->d_name, '.');
+            if (ext == NULL) continue;
+
+            char *workingExt = strdup(theLauncher->extension);
+            char *token = strtok(workingExt, ",");
+
+            while (token) {
+                if (strcmp(ext, token) == 0) {
+
+                    char *fullPath = NULL;
+                    asprintf(&fullPath, "%s/%s",
+                            theLauncher->romPath, currentEntry->d_name);
+
+                    pushToRomList(list, fullPath, NULL, NULL);
+                    free(fullPath);
+
+                }
+                token = strtok(NULL, ",");
+            }
+
+            free(workingExt);
+        }
     }
 
     closedir(dir);
