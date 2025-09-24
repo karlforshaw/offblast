@@ -2136,24 +2136,23 @@ int main(int argc, char** argv) {
                 char string[2] ;
                 string[1] = 0;
 
-                double joyY = fabs((double)offblast->joyY) / INT16_MAX;
-                double joyX = fabs((double)offblast->joyX) / INT16_MAX;
+                // Calculate joystick magnitude and apply deadzone
+                double joyX = (double)offblast->joyX / INT16_MAX;
+                double joyY = (double)offblast->joyY / INT16_MAX;
+                double magnitude = sqrt(joyX * joyX + joyY * joyY);
 
-                if (offblast->joyY < 0) {
-                    joyY = 0-joyY;
+                // Only update selection if joystick is pushed beyond deadzone (30% of max)
+                int32_t onChar = -1;  // -1 means no selection
+                const double DEADZONE = 0.3;
+
+                if (magnitude > DEADZONE) {
+                    double joyTangent = atan2(joyY, joyX);
+
+                    // Convert angle to character index (0-27)
+                    onChar = round(28/(2*M_PI) * joyTangent);
+                    if (joyTangent < 0)
+                        onChar = 27 - onChar * -1;
                 }
-
-                if (offblast->joyX < 0){
-                    joyX = 0-joyX;
-                }
-
-                double joyTangent = atan2(
-                        joyY,
-                        joyX);
-
-                int32_t onChar = round(28/(2*M_PI) * joyTangent);
-                if (joyTangent < 0)
-                    onChar = 27 -onChar * -1;
 
                 for (uint32_t ki = 0; ki < 28; ki++) {
 
@@ -2174,9 +2173,9 @@ int main(int argc, char** argv) {
                         if (offblast->searchCurChar != string[0]) {
                             // Character changed, trigger haptic feedback
                             if (offblast->player.usingController != NULL) {
-                                uint16_t low_freq = 0x4000;  // Stronger rumble
-                                uint16_t high_freq = 0x4000; // Stronger rumble
-                                uint32_t duration_ms = 100;  // 100ms for better feel
+                                uint16_t low_freq = 0x0CCC;  // Very light tick (~10%)
+                                uint16_t high_freq = 0x0CCC; // Very light tick (~10%)
+                                uint32_t duration_ms = 50;   // 50ms for reliable tick feel
 
                                 int result = SDL_GameControllerRumble(offblast->player.usingController,
                                     low_freq, high_freq, duration_ms);
