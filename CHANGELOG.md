@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased] - 2025-01-24
+## [Unreleased]
+
+## [0.6.2] - 2025-01-24
 
 ### Performance Improvements 🚀
 
