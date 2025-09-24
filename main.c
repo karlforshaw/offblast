@@ -2148,10 +2148,14 @@ int main(int argc, char** argv) {
                 if (magnitude > DEADZONE) {
                     double joyTangent = atan2(joyY, joyX);
 
+                    // Normalize angle to 0-2π range
+                    if (joyTangent < 0) {
+                        joyTangent += 2 * M_PI;
+                    }
+
                     // Convert angle to character index (0-27)
-                    onChar = round(28/(2*M_PI) * joyTangent);
-                    if (joyTangent < 0)
-                        onChar = 27 - onChar * -1;
+                    // Round to nearest character position
+                    onChar = (int)round(28.0 * joyTangent / (2 * M_PI)) % 28;
                 }
 
                 for (uint32_t ki = 0; ki < 28; ki++) {
