@@ -383,7 +383,8 @@ typedef struct OffblastUi {
 
     char searchTerm[OFFBLAST_MAX_SEARCH];
     uint32_t searchCursor;
-    char searchCurChar; 
+    char searchCurChar;
+    char searchPrevChar; 
 
     int32_t winWidth;
     int32_t winHeight;
@@ -564,6 +565,7 @@ void doSearch() {
     changeRowset(offblast->mainUi.searchRowset);
     offblast->mainUi.rowGeometryInvalid = 1;
     offblast->mainUi.showSearch = 1;
+    offblast->searchPrevChar = 0; // Reset previous char when entering search
 }
 void doHome() {
     changeRowset(offblast->mainUi.homeRowset);
@@ -1736,9 +1738,13 @@ int main(int argc, char** argv) {
                 if (SDL_IsGameController(devEvent->which) == SDL_TRUE 
                         && offblast->player.jsIndex == -1) 
                 {
-                    controller = SDL_GameControllerOpen(devEvent->which); 
+                    controller = SDL_GameControllerOpen(devEvent->which);
                     if (controller == NULL)  {
                         printf("failed to add %d\n", devEvent->which);
+                    } else {
+                        offblast->player.jsIndex = devEvent->which;
+                        offblast->player.usingController = controller;
+                        printf("Controller connected and stored\n");
                     }
                     /*
                     else {
@@ -1751,6 +1757,10 @@ int main(int argc, char** argv) {
                 SDL_ControllerDeviceEvent *devEvent = 
                     (SDL_ControllerDeviceEvent*)&event;
                 if (offblast->player.jsIndex == devEvent->which) {
+                    if (offblast->player.usingController != NULL) {
+                        SDL_GameControllerClose(offblast->player.usingController);
+                        offblast->player.usingController = NULL;
+                    }
                     offblast->player.jsIndex = -1;
                     printf("controller removed\n");
                 }
@@ -2161,6 +2171,24 @@ int main(int argc, char** argv) {
                     float opacity = 0.70;
 
                     if (onChar == ki) {
+                        if (offblast->searchCurChar != string[0]) {
+                            // Character changed, trigger haptic feedback
+                            if (offblast->player.usingController != NULL) {
+                                uint16_t low_freq = 0x4000;  // Stronger rumble
+                                uint16_t high_freq = 0x4000; // Stronger rumble
+                                uint32_t duration_ms = 100;  // 100ms for better feel
+
+                                int result = SDL_GameControllerRumble(offblast->player.usingController,
+                                    low_freq, high_freq, duration_ms);
+
+                                if (result < 0) {
+                                    printf("Rumble failed: %s\n", SDL_GetError());
+                                }
+                            } else {
+                                printf("No controller connected for haptic feedback\n");
+                            }
+                            offblast->searchPrevChar = offblast->searchCurChar;
+                        }
                         offblast->searchCurChar = string[0];
                         opacity = 1;
                     }
