@@ -4730,7 +4730,7 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
 
     // Set initial status message
     snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
-             "Updating %s database...", targetLauncher->platform);
+             "Updating %.233s database...", targetLauncher->platform);
     offblast->statusMessageTick = SDL_GetTicks();
     offblast->statusMessageDuration = 60000; // 60 seconds before fade
     offblast->rescrapeInProgress = 1;
@@ -4979,7 +4979,7 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
 
     // Update status to show completion
     snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
-             "%s database updated: %u games refreshed",
+             "%.218s database updated: %u games refreshed",
              targetLauncher->platform, matchCount);
     offblast->statusMessageTick = SDL_GetTicks();
     offblast->statusMessageDuration = 3000; // Show for 3 seconds before fade
