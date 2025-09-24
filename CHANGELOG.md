@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased] - 2025-01-24
+
+### Performance Improvements 🚀
+
+#### Memory Management Overhaul
+- **Implemented texture eviction system** to prevent VRAM exhaustion
+  - Hard limit of 150 loaded textures (was unlimited)
+  - LRU (Least Recently Used) eviction when limit reached
+  - Time-based eviction for textures unused > 3 seconds (was 10 seconds)
+  - Fixed texture reloading when returning to evicted tiles
+  - **Result**: VRAM usage stays under 200MB (was growing to 4GB+)
+
+#### Cover Image Optimization
+- **Added automatic cover resizing on download**
+  - Resizes to max 660px height, preserving aspect ratio
+  - Large covers (1500x2000+) reduced by ~70%
+  - Logs operations and skips already-small images
+  - **Example savings**:
+    - 2760x4030 cover: 44MB → 1.2MB VRAM (97% reduction)
+    - 1500x2100 cover: 12MB → 1.2MB VRAM (90% reduction)
+    - Disk usage for 1000+ covers: 1.6GB → ~500MB
+
+#### Display Limits
+- **Increased game display limit** from 249 to 2000
+  - Fixed hardcoded limits preventing large libraries from displaying
+  - Mega Drive with 274+ games now shows all titles
+
+### Bug Fixes 🐛
+- Fixed rescrape function to use signature-based matching (prevents wrong covers)
+- Added two-tier rescrape: 'r' for single cover, 'Shift+R' for all covers
+- Fixed UI notifications positioning for rescrape status
+
 ## [Unreleased] - 2025-01-23
 
 ### Breaking Changes 🚨
