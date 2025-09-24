@@ -15,6 +15,8 @@
 #define WINDOW_MANAGER_GNOME 2
 
 #define IMAGE_STORE_SIZE 2000
+#define MAX_LOADED_TEXTURES 150
+#define TEXTURE_EVICTION_TIME_MS 3000
 
 // Version 0.6.2 ===============================================================
 //
@@ -457,6 +459,7 @@ typedef struct OffblastUi {
 
     Image *imageStore;
     pthread_mutex_t imageStoreLock;
+    uint32_t numLoadedTextures;
 
     // Rescrape status notification
     char statusMessage[256];
@@ -512,6 +515,8 @@ void jumpScreen(uint32_t direction);
 void pressCancel();
 void pressGuide();
 void rescrapeCurrentLauncher(int deleteAllCovers);
+void evictOldestTexture();
+void evictTexturesOlderThan(uint32_t ageMs);
 void updateResults();
 void updateHomeLists();
 void updateInfoText();
@@ -1284,6 +1289,7 @@ int main(int argc, char** argv) {
     // CREATE IMAGE STORE
     pthread_mutex_init(&offblast->imageStoreLock, NULL);
     offblast->imageStore = calloc(IMAGE_STORE_SIZE, sizeof(Image));
+    offblast->numLoadedTextures = 0;
     for (uint32_t i = 0; i < IMAGE_STORE_SIZE; ++i) {
         offblast->imageStore[i].lastUsedTick = SDL_GetTicks();
     }
@@ -1850,6 +1856,16 @@ int main(int argc, char** argv) {
             offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
             // TODO this should probably kill all the active animations?
             // or fire their callbacks immediately
+        }
+
+        // Periodic texture cleanup - evict textures unused for too long
+        static uint32_t lastEvictionCheck = 0;
+        uint32_t currentTick = SDL_GetTicks();
+        if (currentTick - lastEvictionCheck > 1000) {  // Check every second
+            pthread_mutex_lock(&offblast->imageStoreLock);
+            evictTexturesOlderThan(TEXTURE_EVICTION_TIME_MS);
+            pthread_mutex_unlock(&offblast->imageStoreLock);
+            lastEvictionCheck = currentTick;
         }
 
         // RENDER
@@ -4925,6 +4941,7 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
                 if (offblast->imageStore[i].textureHandle) {
                     glDeleteTextures(1, &offblast->imageStore[i].textureHandle);
                     offblast->imageStore[i].textureHandle = 0;
+                    offblast->numLoadedTextures--;
                 }
                 printf("  Cleared image cache for signature %"PRIu64"\n",
                        targetFile->entries[j].targetSignature);
@@ -5496,6 +5513,52 @@ void calculateRowGeometry(UiRow *row) {
     }
 }
 
+void evictOldestTexture() {
+    // This function assumes the imageStoreLock is already held
+    uint32_t oldestTick = UINT32_MAX;
+    int32_t oldestIndex = -1;
+
+    for (uint32_t i = 0; i < IMAGE_STORE_SIZE; i++) {
+        if (offblast->imageStore[i].state == IMAGE_STATE_COMPLETE &&
+            offblast->imageStore[i].textureHandle != 0) {
+            if (offblast->imageStore[i].lastUsedTick < oldestTick) {
+                oldestTick = offblast->imageStore[i].lastUsedTick;
+                oldestIndex = i;
+            }
+        }
+    }
+
+    if (oldestIndex != -1) {
+        // Free the texture
+        glDeleteTextures(1, &offblast->imageStore[oldestIndex].textureHandle);
+        offblast->imageStore[oldestIndex].textureHandle = 0;
+        offblast->imageStore[oldestIndex].state = IMAGE_STATE_COLD;
+        offblast->numLoadedTextures--;
+
+    }
+}
+
+void evictTexturesOlderThan(uint32_t ageMs) {
+    // This function assumes the imageStoreLock is already held
+    uint32_t currentTick = SDL_GetTicks();
+    uint32_t evictedCount = 0;
+
+    for (uint32_t i = 0; i < IMAGE_STORE_SIZE; i++) {
+        if (offblast->imageStore[i].state == IMAGE_STATE_COMPLETE &&
+            offblast->imageStore[i].textureHandle != 0) {
+            if (currentTick - offblast->imageStore[i].lastUsedTick > ageMs) {
+                // Free the texture
+                glDeleteTextures(1, &offblast->imageStore[i].textureHandle);
+                offblast->imageStore[i].textureHandle = 0;
+                offblast->imageStore[i].state = IMAGE_STATE_COLD;
+                offblast->numLoadedTextures--;
+                evictedCount++;
+            }
+        }
+    }
+
+}
+
 Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
 
     uint64_t targetSignature = target->targetSignature;
@@ -5524,14 +5587,20 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
         // Load anything that's ready.
         if (offblast->imageStore[i].state == IMAGE_STATE_READY) {
 
+            // Check if we're at the texture limit
+            if (offblast->numLoadedTextures >= MAX_LOADED_TEXTURES) {
+                evictOldestTexture();
+            }
+
             glGenTextures(1, &offblast->imageStore[i].textureHandle);
             imageToGlTexture(
                     &offblast->imageStore[i].textureHandle,
-                    offblast->imageStore[i].atlas, 
+                    offblast->imageStore[i].atlas,
                     offblast->imageStore[i].width,
                     offblast->imageStore[i].height);
 
             offblast->imageStore[i].state = IMAGE_STATE_COMPLETE;
+            offblast->numLoadedTextures++;
             free(offblast->imageStore[i].atlas);
             offblast->imageStore[i].atlas = NULL;
             offblast->mainUi.rowGeometryInvalid = 1;
@@ -5595,6 +5664,18 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
         if (offblast->imageStore[foundAtIndex].state == IMAGE_STATE_COMPLETE) {
             returnImage = &offblast->imageStore[foundAtIndex];
         }
+        else if (offblast->imageStore[foundAtIndex].state == IMAGE_STATE_COLD && affectQueue) {
+            // Re-queue evicted texture for loading
+            path = getCoverPath(target);
+            url = getCoverUrl(target);
+
+            offblast->imageStore[foundAtIndex].state = IMAGE_STATE_QUEUED;
+            offblast->imageStore[foundAtIndex].lastUsedTick = tickNow;
+            strncpy(offblast->imageStore[foundAtIndex].path, path, PATH_MAX);
+            strncpy(offblast->imageStore[foundAtIndex].url, url, PATH_MAX);
+
+            returnImage = &offblast->missingCoverImage;
+        }
         else {
             // TODO consider a loading image if the state is different
             returnImage = &offblast->missingCoverImage;
@@ -5615,8 +5696,9 @@ Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue) {
             strncpy(offblast->imageStore[oldestFreeIndex].url, url, PATH_MAX);
 
             if (offblast->imageStore[oldestFreeIndex].textureHandle) {
-                glDeleteTextures(1, 
+                glDeleteTextures(1,
                         &offblast->imageStore[oldestFreeIndex].textureHandle);
+                offblast->numLoadedTextures--;
             }
             offblast->imageStore[oldestFreeIndex].textureHandle = 0;
             //printf("%"PRIu64" queued in slot %d\n", targetSignature, oldestFreeIndex);
