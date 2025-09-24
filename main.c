@@ -21,7 +21,6 @@
 // Version 0.6.2 ===============================================================
 //
 //      BUGS
-//      - When you press right at the end of a row it shows the menu
 //
 //      FEATURES
 //      - CSV corruption checking.
@@ -49,17 +48,9 @@
 //      - RPC (Discord Rich Presence)
 //      - OpenGameDb, auto download/update? Evict Assets and update.
 //
-//      - Rescrape! Would be cool if we could tell the app that the gamedb has 
-//          been updated and get it to 'rescrape' info for a specific platform.
-//
 //      - Chek if the opengamedb is out of date and attempt to rectify, would
 //          be good if offblast could attempt to download the opengamedb if
 //          no config entry is in place for it.
-//
-// TODO 
-//      - Better config slugs, I'd love to have player specific slugs so that
-//          anything in the player section could be included in the launcher 
-//          entries like %PLAYER_FOO%
 //
 // TODO 
 //      - steam support: When a game is removed offblast still thinks it's 
@@ -2593,7 +2584,7 @@ void changeColumn(uint32_t direction)
                             = ui->activeRowset->rowCursor->tileCursor->next;
                     }
                     else {
-                        ui->showMenu = 1;
+                        // Do nothing - don't open menu when pressing right at the end
                         return;
                     }
                 }

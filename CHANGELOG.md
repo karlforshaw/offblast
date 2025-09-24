@@ -33,6 +33,10 @@
   - Root cause: Last row length calculated as 0 for multiples of 25 (modulo bug)
   - Fixed calculation to properly handle full rows (25 items)
   - **Result**: Search results now display correctly for all result counts
+- **Fixed menu incorrectly opening when pressing right at row end**
+  - Menu was opening when pressing right on the last tile in a row
+  - Should only open when pressing left on the first tile
+  - **Result**: Right arrow at row end now correctly does nothing
 - Fixed rescrape function to use signature-based matching (prevents wrong covers)
 - Added two-tier rescrape: 'r' for single cover, 'Shift+R' for all covers
 - Fixed UI notifications positioning for rescrape status
