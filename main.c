@@ -31,9 +31,6 @@
 //          Need to have a proper think about the input modes and the system
 //          in general.
 //
-//      - Some concept of acceleration that will effect the speed of running 
-//          animations based on how long the button has been held
-//
 //      - games with poor match scores should probably be logged to the missing
 //          games log, we're allowing bad matches to go through as long as the 
 //          proper game isn't present
