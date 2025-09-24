@@ -22,7 +22,6 @@
 //
 //      BUGS
 //      - When you press right at the end of a row it shows the menu
-//      - Whats with the row geometry smashing? try searching for 'mick'
 //
 //      FEATURES
 //      - CSV corruption checking.
@@ -4488,7 +4487,7 @@ void updateResults(uint32_t *launcherSignature) {
             }
         }
 
-        mainUi->searchRowset->rows[onRow].length = onTile % 25;                 
+        mainUi->searchRowset->rows[onRow].length = onTile % 25 == 0 ? 25 : onTile % 25;                 
 
         UiRow *firstRow = &mainUi->searchRowset->rows[0];
         UiRow *lastRow = 

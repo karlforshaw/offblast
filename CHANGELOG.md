@@ -28,6 +28,11 @@
   - Mega Drive with 274+ games now shows all titles
 
 ### Bug Fixes 🐛
+- **Fixed row geometry smashing in search results** (years-old bug!)
+  - Search results with exactly 25, 50, 75 etc. items were causing tiles to overlap/compress
+  - Root cause: Last row length calculated as 0 for multiples of 25 (modulo bug)
+  - Fixed calculation to properly handle full rows (25 items)
+  - **Result**: Search results now display correctly for all result counts
 - Fixed rescrape function to use signature-based matching (prevents wrong covers)
 - Added two-tier rescrape: 'r' for single cover, 'Shift+R' for all covers
 - Fixed UI notifications positioning for rescrape status
