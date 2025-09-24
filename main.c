@@ -108,6 +108,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#include "stb_image_resize2.h"
+
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
@@ -3209,9 +3212,9 @@ void *downloadMain(void *arg) {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
 
         int w, h, channels;
-        unsigned char *image = 
+        unsigned char *image =
             stbi_load_from_memory(
-                    fetch.data, 
+                    fetch.data,
                     fetch.size, &w, &h, &channels, 4);
 
         if (image == NULL) {
@@ -3226,14 +3229,49 @@ void *downloadMain(void *arg) {
             return NULL;
         }
 
+        // Resize if height is larger than 660px
+        #define MAX_COVER_HEIGHT 660
+        unsigned char *finalImage = image;
+        int finalW = w;
+        int finalH = h;
+
+        if (h > MAX_COVER_HEIGHT) {
+            // Calculate new dimensions preserving aspect ratio
+            float scale = (float)MAX_COVER_HEIGHT / h;
+            finalH = MAX_COVER_HEIGHT;
+            finalW = (int)(w * scale);
+
+            printf("Resizing cover from %dx%d to %dx%d (%.1f%% scale)\n",
+                   w, h, finalW, finalH, scale * 100);
+
+            // Allocate buffer for resized image
+            unsigned char *resized = (unsigned char*)malloc(finalW * finalH * 4);
+            if (resized) {
+                // Perform resize (using stb_image_resize2 API)
+                stbir_resize(image, w, h, 0,
+                            resized, finalW, finalH, 0,
+                            STBIR_RGBA, STBIR_TYPE_UINT8,
+                            STBIR_EDGE_CLAMP, STBIR_FILTER_DEFAULT);
+                free(image);
+                finalImage = resized;
+            } else {
+                printf("Warning: Couldn't allocate memory for resize, using original\n");
+            }
+        } else if (h < MAX_COVER_HEIGHT) {
+            printf("Cover %dx%d already smaller than %dpx height, keeping original\n",
+                   w, h, MAX_COVER_HEIGHT);
+        } else {
+            printf("Cover %dx%d exactly at target height\n", w, h);
+        }
+
         stbi_flip_vertically_on_write(1);
-        if (!stbi_write_jpg(workingPath, w, h, 4, image, 100)) {
+        if (!stbi_write_jpg(workingPath, finalW, finalH, 4, finalImage, 100)) {
 
             pthread_mutex_lock(ctx->lock);
             ctx->image->state = IMAGE_STATE_DEAD;
             pthread_mutex_unlock(ctx->lock);
 
-            free(image);
+            free(finalImage);
             printf("Couldnt save JPG");
             free(ctx);
             curl_easy_cleanup(curl);
@@ -3241,7 +3279,7 @@ void *downloadMain(void *arg) {
         }
         else {
             curl_easy_cleanup(curl);
-            free(image);
+            free(finalImage);
         }
     }
 
