@@ -457,6 +457,14 @@ typedef struct OffblastUi {
 
     Image *imageStore;
     pthread_mutex_t imageStoreLock;
+
+    // Rescrape status notification
+    char statusMessage[256];
+    uint32_t statusMessageTick;
+    uint32_t statusMessageDuration;
+    uint32_t rescrapeInProgress;
+    uint32_t rescrapeTotal;
+    uint32_t rescrapeProcessed;
 } OffblastUi;
 
 typedef struct CurlFetch {
@@ -2321,7 +2329,48 @@ int main(int argc, char** argv) {
         animationTick(mainUi->menuAnimation);
         animationTick(mainUi->menuNavigateAnimation);
 
-    
+        // Render status message (rescrape notification)
+        if (offblast->statusMessageTick > 0) {
+            uint32_t currentTick = SDL_GetTicks();
+            uint32_t elapsed = currentTick - offblast->statusMessageTick;
+
+            float alpha = 1.0f;
+
+            // Fade out after duration
+            if (elapsed > offblast->statusMessageDuration) {
+                uint32_t fadeTime = 500; // 500ms fade
+                if (elapsed < offblast->statusMessageDuration + fadeTime) {
+                    alpha = 1.0f - ((float)(elapsed - offblast->statusMessageDuration) / fadeTime);
+                } else {
+                    offblast->statusMessageTick = 0; // Clear message
+                    alpha = 0.0f;
+                }
+            }
+
+            if (alpha > 0.0f) {
+                // Build the full message with progress if rescanning
+                char displayMessage[512];
+                if (offblast->rescrapeInProgress && offblast->rescrapeTotal > 0) {
+                    snprintf(displayMessage, sizeof(displayMessage), "%s (%u/%u)",
+                             offblast->statusMessage,
+                             offblast->rescrapeProcessed,
+                             offblast->rescrapeTotal);
+                } else {
+                    strncpy(displayMessage, offblast->statusMessage, sizeof(displayMessage) - 1);
+                }
+
+                // Calculate position (6% of screen height from right edge, 6% from top)
+                uint32_t messageWidth = getTextLineWidth(displayMessage, offblast->infoCharData);
+                float xPos = offblast->winWidth - messageWidth - (offblast->winHeight * 0.06f);
+                // Position at 6% from top (Y coordinate in OpenGL is from bottom)
+                float yPos = offblast->winHeight - (offblast->winHeight * 0.06f);
+
+                // Render the text directly without gradient background
+                renderText(offblast, xPos, yPos,
+                          OFFBLAST_TEXT_INFO, alpha, 0, displayMessage);
+            }
+        }
+
         SDL_GL_SwapWindow(window);
 
         if (SDL_GetTicks() - lastTick < renderFrequency) {
@@ -4597,6 +4646,15 @@ void rescrapeCurrentLauncher() {
     }
     printf("Will rescrape %u games for platform %s\n", affectedCount, targetLauncher->platform);
 
+    // Set initial status message
+    snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
+             "Updating %s database...", targetLauncher->platform);
+    offblast->statusMessageTick = SDL_GetTicks();
+    offblast->statusMessageDuration = 60000; // 60 seconds before fade
+    offblast->rescrapeInProgress = 1;
+    offblast->rescrapeTotal = affectedCount;
+    offblast->rescrapeProcessed = 0;
+
     // Clear metadata for all targets with this launcher signature
     printf("\nClearing existing metadata...\n");
     char *homePath = getenv("HOME");
@@ -4773,6 +4831,7 @@ void rescrapeCurrentLauncher() {
                 free(gameId);
 
                 matchCount++;
+                offblast->rescrapeProcessed = matchCount; // Update progress
                 break; // Found match for this target, move to next
             }
         }
@@ -4787,6 +4846,16 @@ void rescrapeCurrentLauncher() {
 
     printf("\nRescrape complete: %u/%u games updated from OpenGameDB\n",
            matchCount, affectedCount);
+
+    // Update status to show completion
+    snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
+             "%s database updated: %u games refreshed",
+             targetLauncher->platform, matchCount);
+    offblast->statusMessageTick = SDL_GetTicks();
+    offblast->statusMessageDuration = 3000; // Show for 3 seconds before fade
+    offblast->rescrapeInProgress = 0;
+    offblast->rescrapeProcessed = 0;
+    offblast->rescrapeTotal = 0;
 
     // Force image store to reload covers for affected targets
     printf("Clearing image cache for affected games...\n");
