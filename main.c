@@ -503,6 +503,7 @@ void pressConfirm();
 void jumpScreen(uint32_t direction);
 void pressCancel();
 void pressGuide();
+void rescrapeCurrentLauncher();
 void updateResults();
 void updateHomeLists();
 void updateInfoText();
@@ -1699,6 +1700,10 @@ int main(int argc, char** argv) {
                     case SDL_CONTROLLER_BUTTON_Y:
                         pressSearch();
                         break;
+                    case SDL_CONTROLLER_BUTTON_X:
+                        printf("X button pressed - triggering rescrape\n");
+                        rescrapeCurrentLauncher();
+                        break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
                         jumpScreen(0);
                         break;
@@ -1778,9 +1783,13 @@ int main(int argc, char** argv) {
                 }
                 else if (
                         keyEvent->keysym.scancode == SDL_SCANCODE_LEFT ||
-                        keyEvent->keysym.scancode == SDL_SCANCODE_H) 
+                        keyEvent->keysym.scancode == SDL_SCANCODE_H)
                 {
                     changeColumn(0);
+                }
+                else if (keyEvent->keysym.scancode == SDL_SCANCODE_R) {
+                    printf("R key pressed - triggering rescrape\n");
+                    rescrapeCurrentLauncher();
                 }
                 else {
                     printf("key up %d\n", keyEvent->keysym.scancode);
@@ -4514,8 +4523,8 @@ uint32_t activeWindowIsOffblast() {
 
 void pressGuide() {
 
-    if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND 
-            && offblast->runningPid > 0) 
+    if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND
+            && offblast->runningPid > 0)
     {
 
         if (!activeWindowIsOffblast()) {
@@ -4531,6 +4540,280 @@ void pressGuide() {
             }
         }
     }
+}
+
+void rescrapeCurrentLauncher() {
+    printf("\n=== RESCRAPE STARTED ===\n");
+
+    // Check if we're in the right UI mode
+    if (offblast->mode != OFFBLAST_UI_MODE_MAIN) {
+        printf("Rescrape only available in main UI mode\n");
+        return;
+    }
+
+    MainUi *mainUi = &offblast->mainUi;
+
+    // Get the currently selected target
+    if (!mainUi->activeRowset || !mainUi->activeRowset->rowCursor ||
+        !mainUi->activeRowset->rowCursor->tileCursor ||
+        !mainUi->activeRowset->rowCursor->tileCursor->target) {
+        printf("No game selected for rescrape\n");
+        return;
+    }
+
+    LaunchTarget *currentTarget = mainUi->activeRowset->rowCursor->tileCursor->target;
+    printf("Current target: %s (platform: %s, launcher sig: %u)\n",
+           currentTarget->name, currentTarget->platform, currentTarget->launcherSignature);
+
+    // Check if target has a launcher signature
+    if (currentTarget->launcherSignature == 0) {
+        printf("Target has no launcher signature - might be from OpenGameDB only\n");
+        return;
+    }
+
+    // Find the launcher with matching signature
+    Launcher *targetLauncher = NULL;
+    for (uint32_t i = 0; i < offblast->nLaunchers; i++) {
+        if (offblast->launchers[i].signature == currentTarget->launcherSignature) {
+            targetLauncher = &offblast->launchers[i];
+            printf("Found launcher: type=%s, platform=%s\n",
+                   targetLauncher->type, targetLauncher->platform);
+            break;
+        }
+    }
+
+    if (!targetLauncher) {
+        printf("Could not find launcher with signature %u\n", currentTarget->launcherSignature);
+        return;
+    }
+
+    // Count how many targets will be affected
+    uint32_t affectedCount = 0;
+    LaunchTargetFile *targetFile = offblast->launchTargetFile;
+    for (uint32_t i = 0; i < targetFile->nEntries; i++) {
+        if (targetFile->entries[i].launcherSignature == currentTarget->launcherSignature) {
+            affectedCount++;
+        }
+    }
+    printf("Will rescrape %u games for platform %s\n", affectedCount, targetLauncher->platform);
+
+    // Clear metadata for all targets with this launcher signature
+    printf("\nClearing existing metadata...\n");
+    char *homePath = getenv("HOME");
+    for (uint32_t i = 0; i < targetFile->nEntries; i++) {
+        if (targetFile->entries[i].launcherSignature == currentTarget->launcherSignature) {
+            LaunchTarget *target = &targetFile->entries[i];
+
+            // Delete cached cover file
+            char coverPath[PATH_MAX];
+            snprintf(coverPath, PATH_MAX, "%s/.offblast/covers/%"PRIu64".jpg",
+                    homePath, target->targetSignature);
+            if (access(coverPath, F_OK) == 0) {
+                if (unlink(coverPath) == 0) {
+                    printf("  Deleted cover: %s\n", coverPath);
+                } else {
+                    printf("  Failed to delete cover: %s\n", coverPath);
+                }
+            }
+
+            // Clear cover URL - this will force re-download
+            memset(target->coverUrl, 0, PATH_MAX);
+
+            // Clear other metadata that comes from OpenGameDB
+            memset(target->date, 0, sizeof(target->date));
+            target->ranking = 0;
+            target->descriptionOffset = 0;
+
+            printf("  Cleared metadata for: %s\n", target->name);
+        }
+    }
+
+    // Now rescrape from OpenGameDB for this platform
+    printf("\nRescanning OpenGameDB for platform: %s\n", targetLauncher->platform);
+
+    // Get OpenGameDB path from config - need to read config file
+    char configFilePath[PATH_MAX];
+    snprintf(configFilePath, PATH_MAX, "%s/config.json", offblast->configPath);
+
+    FILE *configFile = fopen(configFilePath, "r");
+    if (!configFile) {
+        printf("ERROR: Could not open config file: %s\n", configFilePath);
+        return;
+    }
+
+    fseek(configFile, 0, SEEK_END);
+    long configSize = ftell(configFile);
+    fseek(configFile, 0, SEEK_SET);
+
+    char *configText = calloc(1, configSize + 1);
+    fread(configText, 1, configSize, configFile);
+    fclose(configFile);
+
+    json_tokener *tokener = json_tokener_new();
+    json_object *configObj = json_tokener_parse_ex(tokener, configText, configSize);
+    free(configText);
+    json_tokener_free(tokener);
+
+    if (!configObj) {
+        printf("ERROR: Could not parse config file\n");
+        return;
+    }
+
+    json_object *configForOpenGameDb = NULL;
+    json_object_object_get_ex(configObj, "opengamedb", &configForOpenGameDb);
+
+    if (!configForOpenGameDb) {
+        printf("ERROR: No OpenGameDB path in config\n");
+        json_object_put(configObj);
+        return;
+    }
+
+    const char *openGameDbPath = json_object_get_string(configForOpenGameDb);
+    if (!openGameDbPath) {
+        printf("ERROR: Invalid OpenGameDB path in config\n");
+        json_object_put(configObj);
+        return;
+    }
+
+    printf("OpenGameDB path from config: %s\n", openGameDbPath);
+
+    // Open the CSV file for this platform
+    char csvPath[PATH_MAX];
+    snprintf(csvPath, PATH_MAX, "%s/%s.csv", openGameDbPath, targetLauncher->platform);
+    printf("Reading CSV: %s\n", csvPath);
+
+    FILE *csvFile = fopen(csvPath, "r");
+    if (!csvFile) {
+        printf("ERROR: Could not open CSV file: %s\n", csvPath);
+        return;
+    }
+
+    // Read and process CSV
+    char *csvLine = NULL;
+    size_t csvLineLength = 0;
+    ssize_t csvBytesRead;
+    uint32_t rowCount = 0;
+    uint32_t matchCount = 0;
+
+    while ((csvBytesRead = getline(&csvLine, &csvLineLength, csvFile)) != -1) {
+        if (rowCount == 0) {
+            rowCount++;
+            continue; // Skip header
+        }
+
+        // Parse CSV fields
+        char *gameName = getCsvField(csvLine, 1);
+        if (!gameName) {
+            rowCount++;
+            continue;
+        }
+
+        // Find matching target by name
+        for (uint32_t i = 0; i < targetFile->nEntries; i++) {
+            if (targetFile->entries[i].launcherSignature != currentTarget->launcherSignature) {
+                continue;
+            }
+
+            LaunchTarget *target = &targetFile->entries[i];
+
+            // Simple name match - you might want to make this more sophisticated
+            if (strcasestr(target->name, gameName) || strcasestr(gameName, target->name)) {
+                printf("  Match found: %s -> %s\n", target->name, gameName);
+
+                // Update metadata from CSV
+                char *gameDate = getCsvField(csvLine, 2);
+                char *scoreString = getCsvField(csvLine, 3);
+                char *metaScoreString = getCsvField(csvLine, 4);
+                char *description = getCsvField(csvLine, 6);
+                char *coverArtUrl = getCsvField(csvLine, 7);
+                char *gameId = getCsvField(csvLine, 8);
+
+                // Update cover URL
+                if (coverArtUrl && strlen(coverArtUrl) > 0) {
+                    strncpy(target->coverUrl, coverArtUrl, PATH_MAX - 1);
+                    printf("    Updated cover URL: %s\n", coverArtUrl);
+                }
+
+                // Update date
+                if (gameDate) {
+                    if (strlen(gameDate) == 10) {
+                        memcpy(target->date, gameDate, 10);
+                    } else if (strlen(gameDate) == 4 && strtod(gameDate, NULL)) {
+                        memcpy(target->date, gameDate, 4);
+                    }
+                }
+
+                // Update score/ranking
+                float score = -1;
+                if (scoreString && strlen(scoreString) != 0) {
+                    score = atof(scoreString) * 2 * 10;
+                }
+                if (metaScoreString && strlen(metaScoreString) != 0) {
+                    if (score == -1) {
+                        score = atof(metaScoreString);
+                    } else {
+                        score = (score + atof(metaScoreString)) / 2;
+                    }
+                }
+                if (score > 0) {
+                    target->ranking = (uint32_t)round(score);
+                }
+
+                // Update game ID
+                if (gameId && strlen(gameId) > 0) {
+                    strncpy(target->id, gameId, OFFBLAST_NAME_MAX - 1);
+                }
+
+                // Clean up
+                free(gameDate);
+                free(scoreString);
+                free(metaScoreString);
+                free(description);
+                free(coverArtUrl);
+                free(gameId);
+
+                matchCount++;
+                break; // Found match for this target, move to next
+            }
+        }
+
+        free(gameName);
+        rowCount++;
+    }
+
+    free(csvLine);
+    fclose(csvFile);
+    json_object_put(configObj); // Free the config object
+
+    printf("\nRescrape complete: %u/%u games updated from OpenGameDB\n",
+           matchCount, affectedCount);
+
+    // Force image store to reload covers for affected targets
+    printf("Clearing image cache for affected games...\n");
+    pthread_mutex_lock(&offblast->imageStoreLock);
+    for (uint32_t i = 0; i < IMAGE_STORE_SIZE; i++) {
+        for (uint32_t j = 0; j < targetFile->nEntries; j++) {
+            if (targetFile->entries[j].launcherSignature == currentTarget->launcherSignature &&
+                offblast->imageStore[i].targetSignature == targetFile->entries[j].targetSignature) {
+                // Mark as cold to force reload
+                offblast->imageStore[i].state = IMAGE_STATE_COLD;
+                offblast->imageStore[i].targetSignature = 0;
+                if (offblast->imageStore[i].textureHandle) {
+                    glDeleteTextures(1, &offblast->imageStore[i].textureHandle);
+                    offblast->imageStore[i].textureHandle = 0;
+                }
+                printf("  Cleared image cache for signature %"PRIu64"\n",
+                       targetFile->entries[j].targetSignature);
+            }
+        }
+    }
+    pthread_mutex_unlock(&offblast->imageStoreLock);
+
+    // Refresh UI
+    updateHomeLists();
+    updateGameInfo();
+
+    printf("=== RESCRAPE COMPLETE ===\n\n");
 }
 
 Window getActiveWindowRaw() {
