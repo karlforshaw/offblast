@@ -14,7 +14,7 @@
 #define WINDOW_MANAGER_I3 1
 #define WINDOW_MANAGER_GNOME 2
 
-#define IMAGE_STORE_SIZE 500
+#define IMAGE_STORE_SIZE 2000
 
 // Version 0.6.2 ===============================================================
 //
@@ -511,7 +511,7 @@ void pressConfirm();
 void jumpScreen(uint32_t direction);
 void pressCancel();
 void pressGuide();
-void rescrapeCurrentLauncher();
+void rescrapeCurrentLauncher(int deleteAllCovers);
 void updateResults();
 void updateHomeLists();
 void updateInfoText();
@@ -1709,8 +1709,8 @@ int main(int argc, char** argv) {
                         pressSearch();
                         break;
                     case SDL_CONTROLLER_BUTTON_X:
-                        printf("X button pressed - triggering rescrape\n");
-                        rescrapeCurrentLauncher();
+                        printf("X button pressed - rescrape with single cover deletion\n");
+                        rescrapeCurrentLauncher(0); // Delete only current cover
                         break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
                         jumpScreen(0);
@@ -1796,8 +1796,15 @@ int main(int argc, char** argv) {
                     changeColumn(0);
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_R) {
-                    printf("R key pressed - triggering rescrape\n");
-                    rescrapeCurrentLauncher();
+                    // Check if Shift is held
+                    SDL_Keymod modstate = SDL_GetModState();
+                    if (modstate & KMOD_SHIFT) {
+                        printf("Shift+R pressed - full rescrape with all cover deletion\n");
+                        rescrapeCurrentLauncher(1); // 1 = delete all covers
+                    } else {
+                        printf("R pressed - rescrape with single cover deletion\n");
+                        rescrapeCurrentLauncher(0); // 0 = delete only current cover
+                    }
                 }
                 else {
                     printf("key up %d\n", keyEvent->keysym.scancode);
@@ -4331,8 +4338,8 @@ void updateResults(uint32_t *launcherSignature) {
         }
 
         if (isMatch) {
-            if (tileCount >= 249) {
-                printf("More than 250 results!\n");
+            if (tileCount >= 1999) {
+                printf("More than 2000 results!\n");
                 printf("\n");
                 break;
             }
@@ -4343,7 +4350,7 @@ void updateResults(uint32_t *launcherSignature) {
                 if (strcoll(targetFile->entries[i].name, tiles[j].target->name) 
                         <= 0) 
                 {
-                    if (tileCount >= 249) break;
+                    if (tileCount >= 1999) break;
                     uint32_t hanging = tileCount - j;
                     memmove(&tiles[j+1], &tiles[j], sizeof(UiTile) * hanging);
                     tileCount++;
@@ -4591,8 +4598,8 @@ void pressGuide() {
     }
 }
 
-void rescrapeCurrentLauncher() {
-    printf("\n=== RESCRAPE STARTED ===\n");
+void rescrapeCurrentLauncher(int deleteAllCovers) {
+    printf("\n=== RESCRAPE STARTED (deleteAllCovers=%d) ===\n", deleteAllCovers);
 
     // Check if we're in the right UI mode
     if (offblast->mode != OFFBLAST_UI_MODE_MAIN) {
@@ -4658,31 +4665,66 @@ void rescrapeCurrentLauncher() {
     // Clear metadata for all targets with this launcher signature
     printf("\nClearing existing metadata...\n");
     char *homePath = getenv("HOME");
-    for (uint32_t i = 0; i < targetFile->nEntries; i++) {
-        if (targetFile->entries[i].launcherSignature == currentTarget->launcherSignature) {
-            LaunchTarget *target = &targetFile->entries[i];
 
-            // Delete cached cover file
-            char coverPath[PATH_MAX];
-            snprintf(coverPath, PATH_MAX, "%s/.offblast/covers/%"PRIu64".jpg",
-                    homePath, target->targetSignature);
-            if (access(coverPath, F_OK) == 0) {
-                if (unlink(coverPath) == 0) {
-                    printf("  Deleted cover: %s\n", coverPath);
-                } else {
-                    printf("  Failed to delete cover: %s\n", coverPath);
+    if (deleteAllCovers) {
+        printf("Mode: Delete ALL covers for platform\n");
+        // Delete all covers for this launcher
+        for (uint32_t i = 0; i < targetFile->nEntries; i++) {
+            if (targetFile->entries[i].launcherSignature == currentTarget->launcherSignature) {
+                LaunchTarget *target = &targetFile->entries[i];
+
+                // Delete cached cover file
+                char coverPath[PATH_MAX];
+                snprintf(coverPath, PATH_MAX, "%s/.offblast/covers/%"PRIu64".jpg",
+                        homePath, target->targetSignature);
+                if (access(coverPath, F_OK) == 0) {
+                    if (unlink(coverPath) == 0) {
+                        printf("  Deleted cover: %s\n", coverPath);
+                    } else {
+                        printf("  Failed to delete cover: %s\n", coverPath);
+                    }
                 }
+
+                // Clear cover URL - this will force re-download
+                memset(target->coverUrl, 0, PATH_MAX);
+
+                // Clear other metadata that comes from OpenGameDB
+                memset(target->date, 0, sizeof(target->date));
+                target->ranking = 0;
+                target->descriptionOffset = 0;
+
+                printf("  Cleared metadata for: %s\n", target->name);
             }
+        }
+    } else {
+        printf("Mode: Delete only CURRENT game's cover\n");
+        // Only delete the current target's cover
+        char coverPath[PATH_MAX];
+        snprintf(coverPath, PATH_MAX, "%s/.offblast/covers/%"PRIu64".jpg",
+                homePath, currentTarget->targetSignature);
+        if (access(coverPath, F_OK) == 0) {
+            if (unlink(coverPath) == 0) {
+                printf("  Deleted cover for current game: %s\n", currentTarget->name);
+            } else {
+                printf("  Failed to delete cover: %s\n", coverPath);
+            }
+        }
 
-            // Clear cover URL - this will force re-download
-            memset(target->coverUrl, 0, PATH_MAX);
+        // Still clear metadata for all games (will be re-populated from CSV)
+        for (uint32_t i = 0; i < targetFile->nEntries; i++) {
+            if (targetFile->entries[i].launcherSignature == currentTarget->launcherSignature) {
+                LaunchTarget *target = &targetFile->entries[i];
 
-            // Clear other metadata that comes from OpenGameDB
-            memset(target->date, 0, sizeof(target->date));
-            target->ranking = 0;
-            target->descriptionOffset = 0;
+                // Clear cover URL - this will force re-download
+                memset(target->coverUrl, 0, PATH_MAX);
 
-            printf("  Cleared metadata for: %s\n", target->name);
+                // Clear other metadata that comes from OpenGameDB
+                memset(target->date, 0, sizeof(target->date));
+                target->ranking = 0;
+                target->descriptionOffset = 0;
+
+                printf("  Cleared metadata for: %s\n", target->name);
+            }
         }
     }
 
@@ -4766,17 +4808,30 @@ void rescrapeCurrentLauncher() {
             continue;
         }
 
-        // Find matching target by name
+        // Use the same matching logic as initial scan
+        // Create signature from platform + gameName to find the right target
+        char *gameSeed;
+        asprintf(&gameSeed, "%s_%s", targetLauncher->platform, gameName);
+
+        uint64_t targetSignature[2] = {0, 0};
+        lmmh_x64_128(gameSeed, strlen(gameSeed), 33, targetSignature);
+
+        // Find the target with this exact signature
+        int32_t targetIndex = -1;
         for (uint32_t i = 0; i < targetFile->nEntries; i++) {
-            if (targetFile->entries[i].launcherSignature != currentTarget->launcherSignature) {
-                continue;
+            if (targetFile->entries[i].targetSignature == targetSignature[0]) {
+                targetIndex = i;
+                break;
             }
+        }
 
-            LaunchTarget *target = &targetFile->entries[i];
+        if (targetIndex >= 0) {
+            LaunchTarget *target = &targetFile->entries[targetIndex];
 
-            // Simple name match - you might want to make this more sophisticated
-            if (strcasestr(target->name, gameName) || strcasestr(gameName, target->name)) {
-                printf("  Match found: %s -> %s\n", target->name, gameName);
+            // Only update if it's from our launcher
+            if (target->launcherSignature == currentTarget->launcherSignature) {
+                printf("  Match found by signature: %s -> %s (sig: %"PRIu64")\n",
+                       target->name, gameName, targetSignature[0]);
 
                 // Update metadata from CSV
                 char *gameDate = getCsvField(csvLine, 2);
@@ -4832,10 +4887,10 @@ void rescrapeCurrentLauncher() {
 
                 matchCount++;
                 offblast->rescrapeProcessed = matchCount; // Update progress
-                break; // Found match for this target, move to next
             }
         }
 
+        free(gameSeed);
         free(gameName);
         rowCount++;
     }
@@ -5304,19 +5359,31 @@ void importFromCustom(Launcher *theLauncher) {
 
             float matchScore = 0;
 
+            printf("\nDEBUG: Searching for ROM: %s\n", searchString);
+            printf("       Platform: %s\n", theLauncher->platform);
+
             int32_t indexOfEntry = launchTargetIndexByNameMatch(
-                    offblast->launchTargetFile, 
-                    searchString, 
+                    offblast->launchTargetFile,
+                    searchString,
                     theLauncher->platform,
                     &matchScore);
 
             free(searchString);
 
+            if (indexOfEntry > -1) {
+                printf("DEBUG: Found match at index %d with score %f\n", indexOfEntry, matchScore);
+                LaunchTarget *theTarget = &offblast->launchTargetFile->entries[indexOfEntry];
+                printf("       Matched to: %s\n", theTarget->name);
+                printf("       Current matchScore: %f, new matchScore: %f\n",
+                       theTarget->matchScore, matchScore);
+            } else {
+                printf("DEBUG: No match found at all\n");
+            }
 
-            if (indexOfEntry > -1 && 
+            if (indexOfEntry > -1 &&
                     matchScore > offblast->launchTargetFile->entries[indexOfEntry].matchScore)             {
 
-                LaunchTarget *theTarget = 
+                LaunchTarget *theTarget =
                     &offblast->launchTargetFile->entries[indexOfEntry];
 
                 if (theTarget->path != NULL && strlen(theTarget->path)) {
@@ -5328,14 +5395,16 @@ void importFromCustom(Launcher *theLauncher) {
                 }
 
                 theTarget->launcherSignature = theLauncher->signature;
-                memcpy(&theTarget->path, 
+                memcpy(&theTarget->path,
                         (char *) &list->items[j].path,
                         strlen((char *) &list->items[j].path));
                 theTarget->matchScore = matchScore;
 
+                printf("DEBUG: Successfully assigned path to %s\n", theTarget->name);
+
             }
             else {
-                printf("No match found for %s\n", list->items[j].path);
+                printf("No match found (or score too low) for %s\n", list->items[j].path);
                 logMissingGame(list->items[j].path);
             }
         }
