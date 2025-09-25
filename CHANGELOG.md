@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+- **Haptic feedback for search navigation** with game controllers
+  - Controller rumbles when selected letter changes in search wheel
+  - Subtle 50ms tick at 10% intensity for mechanical feel
+  - 30% deadzone prevents flickering when joystick is near center
+- **Viewport-based menu scrolling** with visual indicators
+  - Menu now handles unlimited number of launchers
+  - Automatic scrolling keeps selected item visible
+  - Fade effects (16% screen height) indicate hidden content above/below
+
+### Fixed
+- Improved search navigation angle calculation for more accurate character selection with analog stick
+- Fixed compiler warnings for potential string truncation in status messages
+
 ## [0.6.2] - 2025-01-24
 
 ### Performance Improvements 🚀
