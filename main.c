@@ -300,6 +300,8 @@ typedef struct MainUi {
     MenuItem *menuItems;
     uint32_t numMenuItems;
     uint32_t menuCursor;
+    uint32_t menuScrollOffset;
+    uint32_t maxVisibleMenuItems;
 
     int32_t showSearch;
 
@@ -1372,7 +1374,6 @@ int main(int argc, char** argv) {
     mainUi->showSearch = 0;
 
     // Init Menu
-    // Let's make enough room for say 20 menu items TODO
     uint32_t iItem = 0;
     mainUi->menuItems = calloc(offblast->nLaunchers+5, sizeof(MenuItem));
     mainUi->menuItems[iItem].label = "Home";
@@ -1410,6 +1411,8 @@ int main(int argc, char** argv) {
     mainUi->numMenuItems++;
 
     mainUi->menuCursor = 0;
+    mainUi->menuScrollOffset = 0;
+    mainUi->maxVisibleMenuItems = 0; // Will be calculated based on window height
 
     if (1) {
         mainUi->menuItems[mainUi->numMenuItems].label = "Shut Down Machine";
@@ -2100,22 +2103,57 @@ int main(int argc, char** argv) {
                         0,
                         menuColor, menuColor);
 
-                float itemTransparency = 0.6f;
-                float yOffset = 0;
+                // Calculate max visible menu items based on available height
+                float menuStartY = offblast->winHeight - 133;
+                float menuHeight = menuStartY - 50; // Leave some space at top
+                float itemHeight = offblast->infoPointSize * 1.61;
+                mainUi->maxVisibleMenuItems = (uint32_t)(menuHeight / itemHeight);
 
-                for (uint32_t mi = 0; mi < mainUi->numMenuItems; mi++) {
+                float itemTransparency = 0.6f;
+
+                // Render visible menu items within viewport
+                uint32_t firstVisible = mainUi->menuScrollOffset;
+                uint32_t lastVisible = firstVisible + mainUi->maxVisibleMenuItems;
+                if (lastVisible > mainUi->numMenuItems) {
+                    lastVisible = mainUi->numMenuItems;
+                }
+
+                for (uint32_t mi = firstVisible; mi < lastVisible; mi++) {
                     if (mainUi->menuItems[mi].label != NULL) {
+                        uint32_t relativeIndex = mi - firstVisible;
 
                         if (mi == mainUi->menuCursor) itemTransparency = 1.0f;
 
-                        renderText(offblast, xOffset + offblast->winWidth * 0.016, 
-                                offblast->winHeight - 133 - yOffset, 
-                                OFFBLAST_TEXT_INFO, itemTransparency, 0, 
+                        renderText(offblast, xOffset + offblast->winWidth * 0.016,
+                                menuStartY - (relativeIndex * itemHeight),
+                                OFFBLAST_TEXT_INFO, itemTransparency, 0,
                                 mainUi->menuItems[mi].label);
 
                         itemTransparency = 0.6f;
-                        yOffset += offblast->infoPointSize *1.61;
                     }
+                }
+
+                // Render fade effects (after text to ensure they're on top)
+                float fadeHeight = offblast->winHeight * 0.16;
+
+                // Bottom fade when more items below viewport
+                if (mainUi->menuScrollOffset + mainUi->maxVisibleMenuItems < mainUi->numMenuItems) {
+                    Color fadeBottomStart = {0.0, 0.0, 0.0, 0.85};
+                    Color fadeBottomEnd = {0.0, 0.0, 0.0, 0.0};
+                    renderGradient(xOffset, 50,
+                            offblast->winWidth * 0.16, fadeHeight,
+                            0, // 0 = vertical gradient
+                            fadeBottomStart, fadeBottomEnd);
+                }
+
+                // Top fade when items are scrolled above viewport
+                if (mainUi->menuScrollOffset > 0) {
+                    Color fadeTopStart = {0.0, 0.0, 0.0, 0.0};
+                    Color fadeTopEnd = {0.0, 0.0, 0.0, 0.85};
+                    renderGradient(xOffset, offblast->winHeight - fadeHeight,
+                            offblast->winWidth * 0.16, fadeHeight,
+                            0, // 0 = vertical gradient
+                            fadeTopStart, fadeTopEnd);
                 }
             }
 
@@ -2589,6 +2627,17 @@ void changeColumn(uint32_t direction)
                     else {
                         // TODO create a function for this
                         ui->showMenu = 1;
+
+                        // Ensure cursor is visible when opening menu
+                        if (ui->maxVisibleMenuItems > 0 && ui->menuCursor >= ui->maxVisibleMenuItems) {
+                            ui->menuScrollOffset = ui->menuCursor - ui->maxVisibleMenuItems / 2;
+                            if (ui->menuScrollOffset + ui->maxVisibleMenuItems > ui->numMenuItems) {
+                                ui->menuScrollOffset = ui->numMenuItems - ui->maxVisibleMenuItems;
+                            }
+                        } else {
+                            ui->menuScrollOffset = 0;
+                        }
+
                         ui->menuAnimation->startTick = SDL_GetTicks();
                         ui->menuAnimation->direction = direction;
                         ui->menuAnimation->durationMs = NAVIGATION_MOVE_DURATION/2;
@@ -2834,11 +2883,23 @@ void menuToggleDone(void *arg) {
 
 void menuNavigationDone(void *arg) {
     uint32_t *direction = (uint32_t*) arg;
-    
-    if (*direction == 0)
-        offblast->mainUi.menuCursor++;
-    else 
-        offblast->mainUi.menuCursor--;
+    MainUi *ui = &offblast->mainUi;
+
+    if (*direction == 0) {
+        ui->menuCursor++;
+
+        // Adjust scroll offset if cursor moved below visible area
+        if (ui->menuCursor >= ui->menuScrollOffset + ui->maxVisibleMenuItems) {
+            ui->menuScrollOffset = ui->menuCursor - ui->maxVisibleMenuItems + 1;
+        }
+    } else {
+        ui->menuCursor--;
+
+        // Adjust scroll offset if cursor moved above visible area
+        if (ui->menuCursor < ui->menuScrollOffset) {
+            ui->menuScrollOffset = ui->menuCursor;
+        }
+    }
 }
 
 void verticalMoveDone() {
