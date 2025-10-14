@@ -1710,8 +1710,10 @@ int main(int argc, char** argv) {
                         pressSearch();
                         break;
                     case SDL_CONTROLLER_BUTTON_X:
-                        printf("X button pressed - rescrape with single cover deletion\n");
-                        rescrapeCurrentLauncher(0); // Delete only current cover
+                        if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
+                            printf("X button pressed - rescrape with single cover deletion\n");
+                            rescrapeCurrentLauncher(0); // Delete only current cover
+                        }
                         break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
                         jumpScreen(0);
@@ -1805,14 +1807,16 @@ int main(int argc, char** argv) {
                     changeColumn(0);
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_R) {
-                    // Check if Shift is held
-                    SDL_Keymod modstate = SDL_GetModState();
-                    if (modstate & KMOD_SHIFT) {
-                        printf("Shift+R pressed - full rescrape with all cover deletion\n");
-                        rescrapeCurrentLauncher(1); // 1 = delete all covers
-                    } else {
-                        printf("R pressed - rescrape with single cover deletion\n");
-                        rescrapeCurrentLauncher(0); // 0 = delete only current cover
+                    if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
+                        // Check if Shift is held
+                        SDL_Keymod modstate = SDL_GetModState();
+                        if (modstate & KMOD_SHIFT) {
+                            printf("Shift+R pressed - full rescrape with all cover deletion\n");
+                            rescrapeCurrentLauncher(1); // 1 = delete all covers
+                        } else {
+                            printf("R pressed - rescrape with single cover deletion\n");
+                            rescrapeCurrentLauncher(0); // 0 = delete only current cover
+                        }
                     }
                 }
                 else {
