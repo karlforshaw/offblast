@@ -2350,9 +2350,9 @@ int main(int argc, char** argv) {
 
             yOffset -= (offblast->infoPointSize * 3);
 
-            UiTile *theTile = 
+            UiTile *theTile =
                 offblast->mainUi.activeRowset->rowCursor->tileCursor;
-            Image *imageToShow = requestImageForTarget(theTile->target, 0);
+            Image *imageToShow = requestImageForTarget(theTile->target, 1);
 
 
             double xPos = offblast->winWidth / 2 - getWidthForScaledImage(
