@@ -461,6 +461,9 @@ typedef struct OffblastUi {
     uint32_t rescrapeInProgress;
     uint32_t rescrapeTotal;
     uint32_t rescrapeProcessed;
+
+    // Config options
+    uint32_t showInstalledOnly;
 } OffblastUi;
 
 typedef struct CurlFetch {
@@ -664,6 +667,13 @@ int main(int argc, char** argv) {
     }
     printf("Playtime location: %s\n", offblast->playtimePath);
 
+    json_object *configShowInstalledOnly;
+    json_object_object_get_ex(configObj, "show_installed_only",
+            &configShowInstalledOnly);
+    if (configShowInstalledOnly) {
+        offblast->showInstalledOnly = json_object_get_boolean(configShowInstalledOnly);
+        printf("Show installed only: %s\n", offblast->showInstalledOnly ? "yes" : "no");
+    }
 
     char *launchTargetDbPath;
     asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
@@ -4200,9 +4210,15 @@ void updateHomeLists(){
                     pt->targetSignature);
 
             LaunchTarget *target = &launchTargetFile->entries[targetIndex];
+
+            // Skip uninstalled games if filter is enabled
+            if (offblast->showInstalledOnly && strlen(target->path) == 0) {
+                continue;
+            }
+
             tiles[tileCount].target = target;
             tiles[tileCount].next = &tiles[tileCount+1];
-            if (tileCount != 0) 
+            if (tileCount != 0)
                 tiles[tileCount].previous = &tiles[tileCount-1];
 
             tileCount++;
@@ -4214,16 +4230,16 @@ void updateHomeLists(){
             tiles[tileCount-1].next = NULL;
             tiles[0].previous = NULL;
 
-            if (mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+            if (mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles
                     != NULL) {
                 free(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles);
             }
 
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles = tiles; 
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles = tiles;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor
                 = tiles;
             memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 256);
-            strcpy(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
+            strcpy(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name,
                     "Jump Back In");
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
                 = tileCount; 
@@ -4253,9 +4269,15 @@ void updateHomeLists(){
                     pt->targetSignature);
 
             LaunchTarget *target = &launchTargetFile->entries[targetIndex];
+
+            // Skip uninstalled games if filter is enabled
+            if (offblast->showInstalledOnly && strlen(target->path) == 0) {
+                continue;
+            }
+
             tiles[tileCount].target = target;
             tiles[tileCount].next = &tiles[tileCount+1];
-            if (tileCount != 0) 
+            if (tileCount != 0)
                 tiles[tileCount].previous = &tiles[tileCount-1];
 
             tileCount++;
@@ -4268,17 +4290,17 @@ void updateHomeLists(){
             tiles[tileCount-1].next = NULL;
             tiles[0].previous = NULL;
 
-            if (mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
+            if (mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles
                     != NULL) {
                 free(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles);
             }
 
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
-                = tiles; 
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor 
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles
+                = tiles;
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tileCursor
                 = tiles;
             memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 256);
-            strcpy(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 
+            strcpy(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name,
                     "Most played");
             mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
                 = tileCount; 
@@ -4309,9 +4331,14 @@ void updateHomeLists(){
 
             if (target->launcherSignature != 0) {
 
+                // Skip uninstalled games if filter is enabled
+                if (offblast->showInstalledOnly && strlen(target->path) == 0) {
+                    continue;
+                }
+
                 tiles[tileCount].target = target;
                 tiles[tileCount].next = &tiles[tileCount+1];
-                if (tileCount != 0) 
+                if (tileCount != 0)
                     tiles[tileCount].previous = &tiles[tileCount-1];
 
                 tileCount++;
@@ -4365,15 +4392,20 @@ void updateHomeLists(){
             LaunchTarget *target = &launchTargetFile->entries[i];
 
             if (strcmp(target->platform, offblast->platforms[iPlatform]) == 0) {
-                
+
                 if (isSteam && target->launcherSignature == 0) {
                     continue;
                 }
 
-                tiles[numTiles].target = target; 
-                tiles[numTiles].next = &tiles[numTiles+1]; 
+                // Skip uninstalled games if filter is enabled
+                if (offblast->showInstalledOnly && strlen(target->path) == 0) {
+                    continue;
+                }
 
-                if (numTiles != 0) 
+                tiles[numTiles].target = target;
+                tiles[numTiles].next = &tiles[numTiles+1];
+
+                if (numTiles != 0)
                     tiles[numTiles].previous = &tiles[numTiles-1];
 
                 numTiles++;
@@ -4475,6 +4507,11 @@ void updateResults(uint32_t *launcherSignature) {
         }
 
         if (isMatch) {
+            // Skip uninstalled games if filter is enabled
+            if (offblast->showInstalledOnly && strlen(targetFile->entries[i].path) == 0) {
+                continue;
+            }
+
             if (tileCount >= 1999) {
                 printf("More than 2000 results!\n");
                 printf("\n");
