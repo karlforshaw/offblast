@@ -6,4 +6,4 @@ Path=/home/karl/work/offblast
 Exec=startoffblast.sh
 Icon=/home/karl/work/offblast/offblast.png
 Terminal=false
-Categories=Games;
+Categories=Game;

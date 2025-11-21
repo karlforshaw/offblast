@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Added
+- **AppImage build support** with automatic desktop integration
+  - New `make appimage` target creates portable Linux packages
+  - Bundles all dependencies (SDL2, libcurl, json-c, GLEW, etc.)
+  - Auto-installs desktop file and icon on first run
+  - Proper dock icon display with StartupWMClass
+  - Updates desktop integration when AppImage is moved
 - **Haptic feedback for search navigation** with game controllers
   - Controller rumbles when selected letter changes in search wheel
   - Subtle 50ms tick at 10% intensity for mechanical feel

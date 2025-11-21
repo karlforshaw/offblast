@@ -31,3 +31,62 @@ install:
 	mkdir -p ~/.offblast
 	cp -i config-dist.json ~/.offblast/config.json
 
+appimage: ${PROG}
+	@echo "Creating AppImage build directory..."
+	rm -rf AppImageBuild
+	mkdir -p AppImageBuild/offblast.AppDir/usr/bin
+	mkdir -p AppImageBuild/offblast.AppDir/usr/lib
+
+	@echo "Copying binary..."
+	cp ${PROG} AppImageBuild/offblast.AppDir/usr/bin/
+
+	@echo "Copying fonts and shaders..."
+	cp -r fonts AppImageBuild/offblast.AppDir/usr/bin/
+	cp -r shaders AppImageBuild/offblast.AppDir/usr/bin/
+
+	@echo "Copying resource files..."
+	cp guest-512.jpg AppImageBuild/offblast.AppDir/usr/bin/
+	cp missingcover.png AppImageBuild/offblast.AppDir/usr/bin/
+
+	@echo "Copying dependencies..."
+	@# Copy SDL2 and other bundled libraries
+	@for lib in $$(ldd ${PROG} | grep -E '(libSDL2|libcurl|libjson-c|libGLEW|libxml2|libmurmurhash|libXmu)' | awk '{print $$3}'); do \
+		if [ -f "$$lib" ]; then \
+			echo "  Bundling $$lib"; \
+			cp "$$lib" AppImageBuild/offblast.AppDir/usr/lib/; \
+		fi \
+	done
+
+	@echo "Creating AppRun script..."
+	@echo '#!/bin/bash' > AppImageBuild/offblast.AppDir/AppRun
+	@echo 'SELF=$$(readlink -f "$$0")' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo 'HERE=$${SELF%/*}' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '# Desktop integration - update on every run in case AppImage was moved' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '# Use APPIMAGE env var if available (points to actual .AppImage file), otherwise use ARGV0' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo 'APPIMAGE_PATH="$${APPIMAGE:-$$(readlink -f "$$ARGV0")}"' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo 'if [ -n "$$APPIMAGE_PATH" ] && [ -f "$$APPIMAGE_PATH" ]; then' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '    mkdir -p "$$HOME/.local/share/applications"' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '    mkdir -p "$$HOME/.cache/offblast"' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '    cp "$${HERE}/offblast.png" "$$HOME/.cache/offblast/icon.png"' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '    sed -e "s|Exec=offblast|Exec=\"$$APPIMAGE_PATH\"|" -e "s|Icon=offblast|Icon=$$HOME/.cache/offblast/icon.png|" "$${HERE}/offblast.desktop" > "$$HOME/.local/share/applications/offblast.desktop"' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '    command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$$HOME/.local/share/applications" 2>/dev/null || true' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo 'fi' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo 'export LD_LIBRARY_PATH="$${HERE}/usr/lib:$${LD_LIBRARY_PATH}"' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo 'cd "$${HERE}/usr/bin"' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo 'exec "./offblast" "$$@"' >> AppImageBuild/offblast.AppDir/AppRun
+	chmod +x AppImageBuild/offblast.AppDir/AppRun
+
+	@echo "Copying desktop file and icon..."
+	cp offblast.png AppImageBuild/offblast.AppDir/
+	@# Fix desktop file paths for AppImage
+	sed -e 's|^Path=.*||' -e 's|^Exec=.*|Exec=offblast|' -e 's|^Icon=.*|Icon=offblast|' \
+		offblast.desktop > AppImageBuild/offblast.AppDir/offblast.desktop
+	@# Add StartupWMClass for proper dock icon
+	@echo 'StartupWMClass=offblast' >> AppImageBuild/offblast.AppDir/offblast.desktop
+
+	@echo "Packaging AppImage..."
+	cd AppImageBuild && appimagetool offblast.AppDir
+	@echo "Done! AppImage created at AppImageBuild/Offblast-x86_64.AppImage"
+
