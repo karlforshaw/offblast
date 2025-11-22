@@ -932,13 +932,14 @@ int main(int argc, char** argv) {
                                 strlen(description));
                         *(newDescription->content + strlen(description)) = '\0';
 
-                        newEntry->descriptionOffset = 
+                        newEntry->descriptionOffset =
                             offblast->descriptionFile->cursor;
-                        
-                        offblast->descriptionFile->cursor += 
+
+                        offblast->descriptionFile->cursor +=
                             sizeof(OffblastBlob) + strlen(description) + 1;
 
-                        printf("description file cursor is now %lu\n", 
+                        printf("Stored description for '%s' at offset %lu, cursor now %lu\n",
+                                gameName, newEntry->descriptionOffset,
                                 offblast->descriptionFile->cursor);
 
                         newEntry->ranking = (uint32_t)round(score);
