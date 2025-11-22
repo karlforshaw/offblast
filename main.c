@@ -856,27 +856,26 @@ int main(int argc, char** argv) {
                                 gameDate,
                                 scoreString, metaScoreString, gameId);
 
-                        LaunchTarget *newEntry = 
+                        LaunchTarget *newEntry =
                             &launchTargetFile->entries[launchTargetFile->nEntries];
                         printf("writing new game to %p\n", newEntry);
 
+                        // Zero the entire structure to ensure null-terminated strings
+                        memset(newEntry, 0, sizeof(LaunchTarget));
+
                         newEntry->targetSignature = targetSignature[0];
 
-                        memcpy(&newEntry->name, 
-                                gameName, 
-                                strlen(gameName));
+                        strncpy(newEntry->name, gameName, OFFBLAST_NAME_MAX - 1);
+                        newEntry->name[OFFBLAST_NAME_MAX - 1] = '\0';
 
-                        memcpy(&newEntry->platform, 
-                                &fileNameSplit[0],
-                                strlen(&fileNameSplit[0]));
+                        strncpy(newEntry->platform, &fileNameSplit[0], 255);
+                        newEntry->platform[255] = '\0';
 
-                        memcpy(&newEntry->coverUrl, 
-                                coverArtUrl,
-                                strlen(coverArtUrl));
+                        strncpy(newEntry->coverUrl, coverArtUrl, PATH_MAX - 1);
+                        newEntry->coverUrl[PATH_MAX - 1] = '\0';
 
-                        memcpy(&newEntry->id, 
-                                gameId,
-                                strlen(gameId));
+                        strncpy(newEntry->id, gameId, OFFBLAST_NAME_MAX - 1);
+                        newEntry->id[OFFBLAST_NAME_MAX - 1] = '\0';
 
                         // TODO harden
                         if (strlen(gameDate) == 10) {
@@ -5579,9 +5578,10 @@ void importFromCustom(Launcher *theLauncher) {
                 }
 
                 theTarget->launcherSignature = theLauncher->signature;
-                memcpy(&theTarget->path,
+                strncpy(theTarget->path,
                         (char *) &list->items[j].path,
-                        strlen((char *) &list->items[j].path));
+                        PATH_MAX - 1);
+                theTarget->path[PATH_MAX - 1] = '\0';
                 theTarget->matchScore = matchScore;
 
                 printf("DEBUG: Successfully assigned path to %s\n", theTarget->name);
