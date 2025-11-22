@@ -49,11 +49,17 @@ appimage: ${PROG}
 	cp missingcover.png AppImageBuild/offblast.AppDir/usr/bin/
 
 	@echo "Copying dependencies..."
-	@# Copy SDL2 and other bundled libraries
-	@for lib in $$(ldd ${PROG} | grep -E '(libSDL2|libcurl|libjson-c|libGLEW|libxml2|libmurmurhash|libXmu)' | awk '{print $$3}'); do \
+	@# Get all library dependencies except system base libraries
+	@# We exclude libc, libm, libdl, libpthread, librt, libGL, libX11, etc. as they should use system versions
+	@ldd ${PROG} | grep "=>" | awk '{print $$3}' | grep -v "^$$" | \
+		grep -v -E '(libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libgcc_s\.so|libstdc\+\+\.so|ld-linux|linux-vdso)' | \
+		grep -v -E '(libGL\.so|libGLX\.so|libEGL\.so|libdrm\.so|libgbm\.so|libGLdispatch\.so)' | \
+		grep -v -E '(libX11\.so|libxcb\.so|libXext\.so|libXau\.so|libXdmcp\.so|libwayland)' | \
+		grep -v -E '(libssl\.so|libcrypto\.so|libgnutls\.so|libgssapi|libkrb5|libnettle\.so|libhogweed\.so)' | \
+	while read lib; do \
 		if [ -f "$$lib" ]; then \
 			echo "  Bundling $$lib"; \
-			cp "$$lib" AppImageBuild/offblast.AppDir/usr/lib/; \
+			cp "$$lib" AppImageBuild/offblast.AppDir/usr/lib/ 2>/dev/null || true; \
 		fi \
 	done
 
