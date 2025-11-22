@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- **Auto-select single user on startup**
+  - Skips "Who's Playing?" screen when only one user is configured
+  - Improves UX for single-user setups
 - **AppImage build support** with automatic desktop integration
   - New `make appimage` target creates portable Linux packages
   - Bundles all dependencies (SDL2, libcurl, json-c, GLEW, etc.)
@@ -17,6 +20,12 @@
   - Menu now handles unlimited number of launchers
   - Automatic scrolling keeps selected item visible
   - Fade effects (16% screen height) indicate hidden content above/below
+
+### Changed
+- **Removed hardcoded guest account**
+  - Guest account is no longer automatically created
+  - Users can manually add a guest user in config.json if desired
+  - Zero-user case now displays helpful message instead of exiting
 
 ### Fixed
 - **Fixed AMD GPU crash when stopping Flatpak games** (SIGKILL + Mesa issue)

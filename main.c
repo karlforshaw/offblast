@@ -1211,11 +1211,8 @@ int main(int argc, char** argv) {
     json_object_object_get_ex(configObj, "users", &usersObject);
 
     offblast->nUsers = json_object_array_length(usersObject);
-    if (!offblast->nUsers) {
-        condPrintConfigError(NULL, "You have no users defined in your config.");
-    }
 
-    offblast->users = calloc(offblast->nUsers + 1, sizeof(User));
+    offblast->users = calloc(offblast->nUsers, sizeof(User));
 
     uint32_t iUser;
     for (iUser = 0; iUser < offblast->nUsers; iUser++) {
@@ -1273,10 +1270,6 @@ int main(int argc, char** argv) {
 
     json_tokener_free(tokener);
 
-    User *pUser = &offblast->users[iUser];
-    memcpy(&pUser->name, "Guest", strlen("Guest"));
-    memcpy(&pUser->avatarPath, "guest-512.jpg", strlen("guest-512.jpg"));
-    offblast->nUsers++;
     loadPlaytimeFile();
     
 
@@ -1870,9 +1863,27 @@ int main(int argc, char** argv) {
         // § Player Detection
         // TODO should we do this on every loop?
         if (offblast->player.emailHash == 0) {
-            offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
-            // TODO this should probably kill all the active animations?
-            // or fire their callbacks immediately
+            // Auto-select if only one user exists
+            if (offblast->nUsers == 1) {
+                User *theUser = &offblast->users[0];
+                char *email = theUser->email;
+                uint32_t emailSignature = 0;
+
+                lmmh_x86_32(email, strlen(email), 33, &emailSignature);
+
+                offblast->player.user = theUser;
+                offblast->player.emailHash = emailSignature;
+                loadPlaytimeFile();
+                updateHomeLists();
+
+                printf("Auto-selected single user: %s\n", theUser->name);
+                offblast->mode = OFFBLAST_UI_MODE_MAIN;
+            }
+            else {
+                offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
+                // TODO this should probably kill all the active animations?
+                // or fire their callbacks immediately
+            }
         }
 
         // Periodic texture cleanup - evict textures unused for too long
@@ -2268,21 +2279,44 @@ int main(int argc, char** argv) {
         }
         else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
 
-            // TODO cache all these golden ratio calls they are expensive 
+            // TODO cache all these golden ratio calls they are expensive
             // to calculate
             // cache all the x positions of the text perhaps too?
             char *titleText = "Who's playing?";
-            uint32_t titleWidth = getTextLineWidth(titleText, 
+            uint32_t titleWidth = getTextLineWidth(titleText,
                     offblast->titleCharData);
 
-            renderText(offblast, 
-                    offblast->winWidth / 2 - titleWidth / 2, 
-                    offblast->winHeight - 
-                        goldenRatioLarge(offblast->winHeight, 3), 
+            renderText(offblast,
+                    offblast->winWidth / 2 - titleWidth / 2,
+                    offblast->winHeight -
+                        goldenRatioLarge(offblast->winHeight, 3),
                     OFFBLAST_TEXT_TITLE, 1.0, 0,
                     titleText);
 
-            uint32_t xStart= offblast->winWidth / 2 
+            if (offblast->nUsers == 0) {
+                // Display error message when no users are configured
+                char *messageText = "No users configured";
+                uint32_t messageWidth = getTextLineWidth(messageText,
+                        offblast->infoCharData);
+
+                renderText(offblast,
+                        offblast->winWidth / 2 - messageWidth / 2,
+                        offblast->winHeight / 2 - offblast->infoPointSize / 2,
+                        OFFBLAST_TEXT_INFO, 0.7, 0,
+                        messageText);
+
+                char *helpText = "Please add users to ~/.offblast/config.json";
+                uint32_t helpWidth = getTextLineWidth(helpText,
+                        offblast->infoCharData);
+
+                renderText(offblast,
+                        offblast->winWidth / 2 - helpWidth / 2,
+                        offblast->winHeight / 2 + offblast->infoPointSize * 2,
+                        OFFBLAST_TEXT_INFO, 0.5, 0,
+                        helpText);
+            }
+
+            uint32_t xStart= offblast->winWidth / 2
                 - playerSelectUi->totalWidth / 2;
 
             // XXX
