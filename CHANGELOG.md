@@ -19,6 +19,13 @@
   - Fade effects (16% screen height) indicate hidden content above/below
 
 ### Fixed
+- **Fixed AMD GPU crash when stopping Flatpak games** (SIGKILL + Mesa issue)
+  - Child processes now close all inherited file descriptors except stdio
+  - Prevents child from inheriting parent's Mesa GPU device handles (/dev/dri/*)
+  - Workaround for Mesa bug where SIGKILL on process with shared GPU context causes abort()
+  - Issue only affected AMD GPUs (NVIDIA marks GPU FDs as CLOEXEC automatically)
+  - Crash manifested as "amdgpu: The CS has been rejected" followed by segfault
+  - Affected Flatpak emulators (Cemu, Dolphin) on AMD hardware across all distros
 - Improved search navigation angle calculation for more accurate character selection with analog stick
 - Fixed compiler warnings for potential string truncation in status messages
 

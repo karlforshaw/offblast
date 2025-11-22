@@ -3596,6 +3596,15 @@ void launch() {
         }
         else {
             setsid();
+
+            // Close all inherited file descriptors except stdin/stdout/stderr
+            // This prevents the child from inheriting Mesa's GPU device FDs (/dev/dri/*)
+            // which can cause AMD driver crashes when the child is killed
+            int maxfd = sysconf(_SC_OPEN_MAX);
+            for (int fd = 3; fd < maxfd; fd++) {
+                close(fd);
+            }
+
             printf("RUNNING\n%s\n", commandStr);
             system(commandStr);
             exit(1);
@@ -4688,7 +4697,7 @@ void killRunningGame() {
             killpg(offblast->runningPid, SIGKILL);
             //Display *d = XOpenDisplay(NULL);
             //raiseWindow();
-            //SDL_SetWindowFullscreen(offblast->window, 
+            //SDL_SetWindowFullscreen(offblast->window,
              //       SDL_WINDOW_FULLSCREEN_DESKTOP);
             break;
     }
