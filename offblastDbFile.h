@@ -31,6 +31,8 @@ typedef struct Launcher {
     char cmd[MAX_LAUNCH_COMMAND_LENGTH];
     char romPath[PATH_MAX];
     char scanPattern[256];  // Optional: pattern like "*/vol/code/*.rpx"
+    char matchField[32];    // Field to match on: "title" (default), "title_id", etc.
+    uint8_t pathIsMatchString;  // If true, store match string as path instead of file path
 } Launcher;
 
 typedef struct LauncherFile {
@@ -97,5 +99,8 @@ int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file,
 int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file, 
         char *search, char *platform, float *matchScore);
 
-int32_t launchTargetIndexByIdMatch(LaunchTargetFile *file, 
+int32_t launchTargetIndexByIdMatch(LaunchTargetFile *file,
         char *idStr, char *platform);
+
+int32_t launchTargetIndexByFieldMatch(LaunchTargetFile *file,
+        char *fieldName, char *searchValue, char *platform, float *matchScore);

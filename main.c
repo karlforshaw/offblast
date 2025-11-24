@@ -812,10 +812,23 @@ int main(int argc, char** argv) {
                 if (onRow > 0) {
 
                     char *gameName = getCsvField(csvLine, 1);
+                    char *gameDate = getCsvField(csvLine, 2);
+                    char *scoreString = getCsvField(csvLine, 3);
+                    char *metaScoreString = getCsvField(csvLine, 4);
+                    char *description = getCsvField(csvLine, 6);
+                    char *coverArtUrl = getCsvField(csvLine, 7);
+                    char *gameId = getCsvField(csvLine, 8);
+
                     char *gameSeed;
 
-                    asprintf(&gameSeed, "%s_%s", 
-                            &fileNameSplit[0], gameName);
+                    // Include title_id in signature if available to differentiate regional versions
+                    if (gameId != NULL && strlen(gameId) > 0) {
+                        asprintf(&gameSeed, "%s_%s_%s",
+                                &fileNameSplit[0], gameName, gameId);
+                    } else {
+                        asprintf(&gameSeed, "%s_%s",
+                                &fileNameSplit[0], gameName);
+                    }
 
                     uint64_t targetSignature[2] = {0, 0};
                     lmmh_x64_128(gameSeed, strlen(gameSeed), 33,
@@ -827,7 +840,7 @@ int main(int argc, char** argv) {
                     if (indexOfEntry == -1) {
 
                         void *pLaunchTargetMemory = growDbFileIfNecessary(
-                                    &launchTargetDb, 
+                                    &launchTargetDb,
                                     sizeof(LaunchTarget),
                                     OFFBLAST_DB_TYPE_FIXED);
 
@@ -837,17 +850,10 @@ int main(int argc, char** argv) {
                             return 1;
                         }
                         else {
-                            launchTargetFile = 
-                                (LaunchTargetFile*) pLaunchTargetMemory; 
+                            launchTargetFile =
+                                (LaunchTargetFile*) pLaunchTargetMemory;
                             offblast->launchTargetFile = launchTargetFile;
                         }
-
-                        char *gameDate = getCsvField(csvLine, 2);
-                        char *scoreString = getCsvField(csvLine, 3);
-                        char *metaScoreString = getCsvField(csvLine, 4);
-                        char *description = getCsvField(csvLine, 6);
-                        char *coverArtUrl = getCsvField(csvLine, 7);
-                        char *gameId = getCsvField(csvLine, 8);
 
                         printf("\n--\nAdding: \n%s\n%" PRIu64 "\n%s\n%s\ng: %s\n\nm: %s\n%s\n",
                                 gameSeed,
@@ -1076,6 +1082,37 @@ int main(int argc, char** argv) {
                 // Must have either extension or scan_pattern
                 printf("ERROR: standard launcher at index %d has neither 'extension' nor 'scan_pattern'\n", i);
                 printf("       Please add either an extension or scan_pattern to your launcher\n");
+            }
+
+            // Handle match_field (optional - defaults to "title")
+            json_object *matchFieldNode = NULL;
+            json_object_object_get_ex(launcherNode, "match_field",
+                    &matchFieldNode);
+            const char *theMatchField = json_object_get_string(matchFieldNode);
+            if (theMatchField != NULL) {
+                if (strlen(theMatchField) >= 32) {
+                    condPrintConfigError(NULL,
+                            "One of your launchers' match_field is too long");
+                }
+                memcpy(&theLauncher->matchField,
+                        theMatchField, strlen(theMatchField));
+                printf("Launcher %d using match field: %s\n", i, theMatchField);
+            } else {
+                // Default to "title" for backwards compatibility
+                strcpy(theLauncher->matchField, "title");
+            }
+
+            // Handle path_is_match_string (optional - defaults to false)
+            json_object *pathIsMatchStringNode = NULL;
+            json_object_object_get_ex(launcherNode, "path_is_match_string",
+                    &pathIsMatchStringNode);
+            if (pathIsMatchStringNode != NULL) {
+                theLauncher->pathIsMatchString = json_object_get_boolean(pathIsMatchStringNode);
+                if (theLauncher->pathIsMatchString) {
+                    printf("Launcher %d will store match string as path\n", i);
+                }
+            } else {
+                theLauncher->pathIsMatchString = 0;  // Default to false
             }
 
             // Handle platform (required for standard launchers)
@@ -3110,6 +3147,9 @@ const char *platformString(char *key) {
     }
     else if (strcmp(key, "playstation_portable") == 0) {
         return "Playstation Portable";
+    }
+    else if (strcmp(key, "playstation_vita") == 0) {
+        return "Playstation Vita";
     }
     else if (strcmp(key, "sega_cd") == 0) {
         return "Sega CD";
@@ -5435,47 +5475,81 @@ void importFromCustom(Launcher *theLauncher) {
                         *(paren-1) = '\0';
                     }
 
-                    pushToRomList(list, fullPath, gameName, NULL);
+                    // Use match string as path if configured to do so
+                    if (theLauncher->pathIsMatchString) {
+                        pushToRomList(list, gameName, gameName, NULL);
+                    } else {
+                        pushToRomList(list, fullPath, gameName, NULL);
+                    }
                     printf("Found game directory: %s -> %s\n", entry->d_name, gameName);
                 }
             }
         }
         else {
+            // Parse scan_pattern for {*} marker to determine extraction logic
+            char *extractionAnchor = NULL;
+            char globPatternStr[256];
+            strncpy(globPatternStr, theLauncher->scanPattern, 255);
+            globPatternStr[255] = '\0';
+
+            // Check if pattern contains {*} marker
+            char *markerPos = strstr(globPatternStr, "{*}");
+            if (markerPos != NULL) {
+                // Extract the anchor string (what follows {*})
+                extractionAnchor = strdup(markerPos + 3);  // Skip past "{*}"
+                // Remove {*} from the glob pattern
+                memmove(markerPos, markerPos + 2, strlen(markerPos + 2) + 1);  // Remove "{*", leave "}"
+                markerPos[0] = '*';  // Replace with plain "*"
+            } else if (strncmp(globPatternStr, "*/", 2) == 0) {
+                // Pattern starts with */ - derive anchor from pattern
+                // E.g., "*/vol/code/*.rpx" -> anchor "/vol/code/"
+                char *patternCopy = strdup(globPatternStr + 2);  // Skip "*/"
+                char *nextWildcard = strchr(patternCopy, '*');
+                if (nextWildcard != NULL) {
+                    *nextWildcard = '\0';  // Terminate at next wildcard
+                }
+                // Build anchor with leading /
+                asprintf(&extractionAnchor, "/%s", patternCopy);
+                free(patternCopy);
+            }
+
             // Use glob to find files matching the pattern
             char globPattern[PATH_MAX * 2];  // Extra space to avoid truncation
             snprintf(globPattern, sizeof(globPattern), "%s/%s",
-                    theLauncher->romPath, theLauncher->scanPattern);
+                    theLauncher->romPath, globPatternStr);
             globPattern[PATH_MAX - 1] = '\0';  // Ensure null termination at PATH_MAX boundary
 
             glob_t globResult;
             printf("Scanning with pattern: %s\n", globPattern);
+            if (extractionAnchor != NULL) {
+                printf("Using extraction anchor: %s\n", extractionAnchor);
+            }
 
             if (glob(globPattern, GLOB_NOSORT, NULL, &globResult) == 0) {
                 for (size_t i = 0; i < globResult.gl_pathc; i++) {
                     char *filePath = globResult.gl_pathv[i];
 
-                    // Extract game name from path (parent directory)
+                    // Extract game name from path
                     char *gameName = NULL;
-                    if (strstr(theLauncher->scanPattern, "*/vol/code/") != NULL) {
-                        // For Cemu: extract game directory name
+                    if (extractionAnchor != NULL) {
+                        // Use anchor string to find and extract folder name
                         char *temp = strdup(filePath);
-                        char *volPos = strstr(temp, "/vol/code/");
-                        if (volPos) {
-                            *volPos = '\0';
+                        char *anchorPos = strstr(temp, extractionAnchor);
+                        if (anchorPos) {
+                            *anchorPos = '\0';
                             char *lastSlash = strrchr(temp, '/');
                             if (lastSlash) {
                                 gameName = strdup(lastSlash + 1);
                             }
                         }
                         free(temp);
-                    }
-                    else if (strstr(theLauncher->scanPattern, "*/PS3_GAME/USRDIR/") != NULL) {
-                        // For PS3: extract game directory name
+                    } else {
+                        // Default: extract parent folder of matched file
                         char *temp = strdup(filePath);
-                        char *ps3Pos = strstr(temp, "/PS3_GAME/USRDIR/");
-                        if (ps3Pos) {
-                            *ps3Pos = '\0';
-                            char *lastSlash = strrchr(temp, '/');
+                        char *lastSlash = strrchr(temp, '/');
+                        if (lastSlash) {
+                            *lastSlash = '\0';  // Remove filename
+                            lastSlash = strrchr(temp, '/');
                             if (lastSlash) {
                                 gameName = strdup(lastSlash + 1);
                             }
@@ -5483,10 +5557,19 @@ void importFromCustom(Launcher *theLauncher) {
                         free(temp);
                     }
 
-                    pushToRomList(list, filePath, gameName, NULL);
+                    // Use match string as path if configured to do so
+                    if (theLauncher->pathIsMatchString && gameName != NULL) {
+                        pushToRomList(list, gameName, gameName, NULL);
+                    } else {
+                        pushToRomList(list, filePath, gameName, NULL);
+                    }
                     if (gameName) free(gameName);
                 }
                 globfree(&globResult);
+            }
+
+            if (extractionAnchor != NULL) {
+                free(extractionAnchor);
             }
         }
     }
@@ -5579,9 +5662,11 @@ void importFromCustom(Launcher *theLauncher) {
 
             printf("\nDEBUG: Searching for ROM: %s\n", searchString);
             printf("       Platform: %s\n", theLauncher->platform);
+            printf("       Match field: %s\n", theLauncher->matchField);
 
-            int32_t indexOfEntry = launchTargetIndexByNameMatch(
+            int32_t indexOfEntry = launchTargetIndexByFieldMatch(
                     offblast->launchTargetFile,
+                    theLauncher->matchField,
                     searchString,
                     theLauncher->platform,
                     &matchScore);

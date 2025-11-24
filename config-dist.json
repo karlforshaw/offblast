@@ -54,6 +54,16 @@
             "cmd": "scummvm --auto-detect --path=%ROM%",
             "platform": "scummvm",
             "comment": "scan_pattern=DIRECTORY scans for subdirectories instead of files"
+        },
+        {
+            "type": "standard",
+            "rom_path": "/home/karl/.local/share/Vita3K/ux0/app",
+            "scan_pattern": "{*}/eboot.bin",
+            "match_field": "title_id",
+            "path_is_match_string": true,
+            "cmd": "/home/karl/Apps/Vita3K.AppImage -r %ROM%",
+            "platform": "playstation_vita",
+            "comment": "{*} extracts folder name for matching, match_field uses title_id instead of game name, path_is_match_string uses extracted ID as ROM path"
         }
     ],
     "users": [

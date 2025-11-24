@@ -3,6 +3,25 @@
 ## [Unreleased]
 
 ### Added
+- **Flexible game matching system** with `match_field` config option
+  - New `match_field` parameter allows matching against different database fields
+  - Supports `"title"` (default) for name-based fuzzy matching
+  - Supports `"title_id"` for exact ID matching (PS Vita, Steam, etc.)
+  - Enables proper multi-region game support with unique IDs per region
+- **Pattern-based path extraction** with `{*}` marker in `scan_pattern`
+  - Use `{*}` to mark what folder name to extract for matching
+  - Example: `{*}/eboot.bin` extracts parent folder name
+  - Auto-derives extraction anchor for patterns like `*/vol/code/*.rpx`
+  - Replaces hardcoded extraction logic for Wii U and PS3
+- **Configurable path substitution** with `path_is_match_string` option
+  - Set to `true` to use extracted match string as ROM path instead of full file path
+  - Essential for launchers that require just IDs (e.g., Vita3K requires title ID, not file path)
+  - Works seamlessly with pattern-based extraction
+- **Regional game variant support** in database
+  - Database signature now includes title_id when available
+  - Multiple regional releases of same game (different IDs) stored as separate entries
+  - Fixes issue where regional variants were overwriting each other
+  - Enables proper matching for multi-region game libraries
 - **Auto-select single user on startup**
   - Skips "Who's Playing?" screen when only one user is configured
   - Improves UX for single-user setups

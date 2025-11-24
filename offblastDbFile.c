@@ -157,19 +157,20 @@ int32_t launchTargetIndexByTargetSignature(LaunchTargetFile *file,
     return foundIndex;
 }
 
-int32_t launchTargetIndexByIdMatch(LaunchTargetFile *file, 
-        char *idStr, char *platform) 
+int32_t launchTargetIndexByIdMatch(LaunchTargetFile *file,
+        char *idStr, char *platform)
 {
     int32_t foundIndex = -1;
 
     for (uint32_t i = 0; i < file->nEntries; i++) {
-        if (strcmp(file->entries[i].id, idStr) == 0 
-                && strcmp(file->entries[i].platform, platform) == 0) 
+        if (strcmp(file->entries[i].id, idStr) == 0
+                && strcmp(file->entries[i].platform, platform) == 0)
         {
             foundIndex = i;
             break;
         }
     }
+
     return foundIndex;
 }
 
@@ -249,4 +250,28 @@ int32_t launchTargetIndexByNameMatch(LaunchTargetFile *file,
     }
 
     return bestIndex;
+}
+
+
+int32_t launchTargetIndexByFieldMatch(LaunchTargetFile *file,
+        char *fieldName, char *searchValue, char *platform, float *matchScore)
+{
+    if (strcmp(fieldName, "title_id") == 0) {
+        // Match against ID field in database (exact match)
+        int32_t result = launchTargetIndexByIdMatch(file, searchValue, platform);
+        if (result > -1 && matchScore != NULL) {
+            *matchScore = 1.0;  // ID matches are exact matches
+        }
+        return result;
+    }
+    else if (strcmp(fieldName, "title") == 0) {
+        // Match against title/name field (default behavior)
+        return launchTargetIndexByNameMatch(file, searchValue, platform, matchScore);
+    }
+    else {
+        // Unknown field type - fall back to title matching with warning
+        printf("WARNING: Unknown match_field '%s', falling back to title matching\n",
+                fieldName);
+        return launchTargetIndexByNameMatch(file, searchValue, platform, matchScore);
+    }
 }

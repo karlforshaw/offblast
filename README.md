@@ -71,6 +71,37 @@ Some systems need recursive scanning or directory-based games:
 }
 ```
 
+#### Advanced Matching Options
+
+**ID-based matching** (for PS Vita, systems with title IDs):
+```json
+{
+    "type": "standard",
+    "rom_path": "/path/to/vita/ux0/app",
+    "scan_pattern": "{*}/eboot.bin",     // {*} marks what to extract for matching
+    "match_field": "title_id",           // Match against title_id instead of game name
+    "path_is_match_string": true,        // Use title ID as path (not full file path)
+    "cmd": "vita3k -r %ROM%",            // %ROM% becomes the title ID
+    "platform": "playstation_vita"
+}
+```
+
+**Configuration options:**
+- `match_field`: Which database field to match against (default: `"title"`)
+  - `"title"` - Fuzzy name matching (default, works for most systems)
+  - `"title_id"` - Exact ID matching (for PS Vita, Steam, systems with unique IDs)
+- `path_is_match_string`: Use extracted match string as ROM path (default: `false`)
+  - Set to `true` when launcher needs just the ID, not the full file path
+  - Essential for launchers like Vita3K that take title IDs as arguments
+- `{*}` in `scan_pattern`: Marks which folder name to extract
+  - `{*}/eboot.bin` extracts parent folder name (e.g., `PCSE00123`)
+  - Without `{*}`, patterns like `*/vol/code/*.rpx` auto-derive extraction
+
+**Why use ID matching?**
+- Handles multi-region releases correctly (different IDs per region)
+- More accurate matching for systems with unique identifiers
+- Required for launchers that need IDs instead of file paths
+
 #### Steam Launcher
 ```json
 {
@@ -206,6 +237,19 @@ Powered by [OpenGameDB](https://github.com/karlforshaw/opengamedb) for:
 - Descriptions
 - Release dates
 - Metacritic scores
+
+## Upgrading
+
+### After updating to the latest version
+If you're upgrading and want to use the new ID-based matching or multi-region support:
+
+1. Delete the old database files:
+   ```bash
+   rm ~/.offblast/launchtargets.bin ~/.offblast/descriptions.bin
+   ```
+2. Run OffBlast - it will reimport all games with the new matching system
+
+**Why?** The database signature format changed to support multiple regional variants of games. Old databases will still work but won't have the regional variants properly separated.
 
 ## Troubleshooting
 
