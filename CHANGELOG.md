@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.0] - 2025-11-25
 
 ### Added
 - **External platform names via OpenGameDB** (`names.csv`)
