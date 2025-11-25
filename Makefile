@@ -48,13 +48,16 @@ appimage: ${PROG}
 	cp guest-512.jpg AppImageBuild/offblast.AppDir/usr/bin/
 	cp missingcover.png AppImageBuild/offblast.AppDir/usr/bin/
 
-	@echo "Copying OpenGameDB..."
-	@if [ -d "../opengamedb" ]; then \
-		cp -r ../opengamedb AppImageBuild/offblast.AppDir/usr/bin/; \
-		echo "  OpenGameDB included in AppImage"; \
+	@echo "Fetching OpenGameDB from GitHub..."
+	@if [ ! -d "AppImageBuild/opengamedb" ]; then \
+		git clone https://github.com/karlforshaw/opengamedb AppImageBuild/opengamedb; \
 	else \
-		echo "  Warning: ../opengamedb not found, AppImage will not include database"; \
+		echo "  Using cached OpenGameDB (delete AppImageBuild/opengamedb to refetch)"; \
 	fi
+	@echo "Removing .git directory to save space..."
+	@rm -rf AppImageBuild/opengamedb/.git
+	@cp -r AppImageBuild/opengamedb AppImageBuild/offblast.AppDir/usr/bin/
+	@echo "  OpenGameDB included in AppImage"
 
 	@echo "Copying dependencies..."
 	@# Get all library dependencies except system base libraries
