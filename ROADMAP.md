@@ -3,10 +3,10 @@
 ## 0.7.1
 
 ### Steam Metadata (Release Dates, Scores, Descriptions)
-Steam API only provides game names and playtime. Need to fetch additional metadata:
-- Release dates, Metacritic scores, descriptions not available from GetOwnedGames
-- Options: Steam Store API, SteamSpy, or match against steam.csv for metadata only
-- Rescrape functionality needs testing for Steam games
+**SOLVED:** Now fetches from Steam Store API (`store.steampowered.com/api/appdetails`):
+- Release dates, Metacritic scores, descriptions fetched automatically
+- Metadata fetched on startup for games missing data
+- Steam rescrape uses Store API instead of OpenGameDB CSV
 
 ### Steam Launch Options
 **SOLVED:** Launch in Big Picture mode:
@@ -29,6 +29,12 @@ Both now implemented in launch().
 
 ### Bug: Rescrape Borks Descriptions
 Rescrape functionality seems to corrupt or break game descriptions.
+
+### Manual Cover Adding
+Some Steam games don't have 600x900 covers on Steam's CDN (e.g., delisted games like Tales of Symphonia).
+- Add a way to copy the expected cover filename to clipboard (e.g., `{targetSignature}.jpg`)
+- User can then download cover from LaunchBox/SteamGridDB, rename it, and add to `~/.offblast/covers/`
+- Maybe a keyboard shortcut on a game tile to trigger this
 
 ### CSV Corruption Checking
 Validate CSV files on load.
