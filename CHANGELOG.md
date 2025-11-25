@@ -12,6 +12,12 @@
   - Launching uninstalled game opens Steam install dialog
   - Filters out tools/runtimes (Proton, Redistributables, etc.)
   - Falls back to local-only detection if no API key configured
+- **Steam Big Picture mode integration** for couch gaming
+  - Steam games now launch in Big Picture mode via `steam -bigpicture steam://rungameid/<APPID>`
+  - Uninstalled games open Big Picture install dialog
+  - Guide button disabled for Steam games (Big Picture handles it natively)
+  - Simplified UI shows "Return" button instead of Resume/Stop for Steam games
+  - Pressing Return goes back to offblast; Steam manages game lifecycle
 - **Steam documentation** added to README.md
 
 ### Changed

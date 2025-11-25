@@ -2482,29 +2482,45 @@ int main(int argc, char** argv) {
             yOffset -= (mainUi->boxHeight + 200);
 
             if (!offblast->loadingFlag) {
-                double stopWidth = 
-                    getTextLineWidth("Stop", offblast->infoCharData);
+                // For Steam games, just show "Return" (Steam handles resume/stop)
+                int isSteamGame = offblast->playingTarget &&
+                    strcmp(offblast->playingTarget->platform, "steam") == 0;
 
-                double resumeWidth = 
-                    getTextLineWidth("Resume", offblast->infoCharData);
+                if (isSteamGame) {
+                    double returnWidth =
+                        getTextLineWidth("Return", offblast->infoCharData);
+                    renderText(offblast,
+                            offblast->winWidth/2 - returnWidth/2,
+                            yOffset,
+                            OFFBLAST_TEXT_INFO,
+                            1.0,
+                            0,
+                            "Return");
+                } else {
+                    double stopWidth =
+                        getTextLineWidth("Stop", offblast->infoCharData);
 
-                double totalWidth = stopWidth + 200 + resumeWidth;
+                    double resumeWidth =
+                        getTextLineWidth("Resume", offblast->infoCharData);
 
-                renderText(offblast, 
-                        offblast->winWidth/2 - totalWidth/2, 
-                        yOffset,
-                        OFFBLAST_TEXT_INFO, 
-                        (offblast->uiStopButtonHot ? 0.6 : 1.0), 
-                        0,
-                        "Resume");
+                    double totalWidth = stopWidth + 200 + resumeWidth;
 
-                renderText(offblast, 
-                        offblast->winWidth/2 - totalWidth/2 + resumeWidth + 200,
-                        yOffset,
-                        OFFBLAST_TEXT_INFO, 
-                        (offblast->uiStopButtonHot ? 1.0 : 0.6),  
-                        0,
-                        "Stop");
+                    renderText(offblast,
+                            offblast->winWidth/2 - totalWidth/2,
+                            yOffset,
+                            OFFBLAST_TEXT_INFO,
+                            (offblast->uiStopButtonHot ? 0.6 : 1.0),
+                            0,
+                            "Resume");
+
+                    renderText(offblast,
+                            offblast->winWidth/2 - totalWidth/2 + resumeWidth + 200,
+                            yOffset,
+                            OFFBLAST_TEXT_INFO,
+                            (offblast->uiStopButtonHot ? 1.0 : 0.6),
+                            0,
+                            "Stop");
+                }
             }
 
 
@@ -3549,10 +3565,10 @@ void launch() {
     // Check if this is an uninstalled Steam game
     if (target->launcherSignature == 0 && strcmp(target->platform, "steam") == 0) {
         printf("Opening Steam install dialog for %s (id: %s)\n", target->name, target->id);
-        char *installUrl;
-        asprintf(&installUrl, "xdg-open steam://install/%s", target->id);
-        system(installUrl);
-        free(installUrl);
+        char *installCmd;
+        asprintf(&installCmd, "steam -bigpicture steam://install/%s", target->id);
+        system(installCmd);
+        free(installCmd);
         return;
     }
 
@@ -3590,7 +3606,7 @@ void launch() {
         char *launchString = calloc(PATH_MAX, sizeof(char));
 
         if (isSteam) {
-            asprintf(&launchString, "steam -silent -applaunch %s",
+            asprintf(&launchString, "steam -bigpicture steam://rungameid/%s",
                     target->id);
         }
         else if (isScummvm) {
@@ -3707,12 +3723,21 @@ void pressConfirm(int32_t joystickIndex) {
 
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {
         if(activeWindowIsOffblast() && !offblast->loadingFlag) {
-            if(offblast->uiStopButtonHot) 
-            {
+            // For Steam games, just return to main UI (Steam handles the game)
+            int isSteamGame = offblast->playingTarget &&
+                strcmp(offblast->playingTarget->platform, "steam") == 0;
+
+            if (isSteamGame) {
+                offblast->mode = OFFBLAST_UI_MODE_MAIN;
+                offblast->runningPid = 0;
+                offblast->playingTarget = NULL;
+                offblast->mainUi.rowGeometryInvalid = 1;
+            }
+            else if(offblast->uiStopButtonHot) {
                 killRunningGame();
             }
             else {
-                printf("Resume the current game on window %lu \n", 
+                printf("Resume the current game on window %lu \n",
                     offblast->resumeWindow);
                 raiseWindow(offblast->resumeWindow);
             }
@@ -4842,6 +4867,11 @@ void pressGuide() {
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND
             && offblast->runningPid > 0)
     {
+        // Let Steam Big Picture handle guide button for Steam games
+        if (offblast->playingTarget &&
+            strcmp(offblast->playingTarget->platform, "steam") == 0) {
+            return;
+        }
 
         if (!activeWindowIsOffblast()) {
 
