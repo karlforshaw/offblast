@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Added
+- **External platform names via OpenGameDB** (`names.csv`)
+  - Platform display names now loaded from `names.csv` in the OpenGameDB directory
+  - Format: `key,name` (e.g., `playstation_vita,Playstation Vita`)
+  - Adding new platforms no longer requires code changes in offblast
+  - Falls back to "Unknown Platform" if key not found
 - **Flexible game matching system** with `match_field` config option
   - New `match_field` parameter allows matching against different database fields
   - Supports `"title"` (default) for name-based fuzzy matching
