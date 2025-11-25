@@ -100,6 +100,7 @@
             "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/pai/dolphin/USA.raw"
         }
     ],
-    "opengamedb": "/home/karl/opengamedb",
+    "opengamedb": "/home/karl/.offblast/opengamedb",
+    "comment_opengamedb": "AppImage automatically installs/updates database here. Change path if using custom database location.",
     "playtime_path": "/home/karl/SeraphStore/Games/Super Console/saves/"
 }

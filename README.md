@@ -4,8 +4,25 @@ A fast, lightweight game launcher written in C with SDL2. OffBlast provides a un
 [![offblast.png](https://i.postimg.cc/brW9yN6h/offblast.png)](https://postimg.cc/Lgvm6PBb)
 
 ## Get the OpenGameDB
-Offblast is powered by the OpenGameDb, which is a bunch of csv files that are publicly available on github for everyone.
-Check it out before you install Offblast:
+Offblast is powered by the OpenGameDb, which is a collection of CSV files containing game metadata that are publicly available on github.
+
+### AppImage Users
+If you're using the AppImage version, **OpenGameDB is automatically included and managed**:
+- The database is installed to `~/.offblast/opengamedb` on first run
+- Automatically updates when you run a newer AppImage version
+- No manual setup required!
+
+### Manual Build Users
+If you compiled OffBlast from source, you'll need to clone the database manually:
+
+```bash
+git clone https://github.com/karlforshaw/opengamedb ~/opengamedb
+```
+
+Then set the path in your `~/.offblast/config.json`:
+```json
+"opengamedb": "/home/youruser/opengamedb"
+```
 
 [OpenGameDB on Github](https://github.com/karlforshaw/opengamedb)
 

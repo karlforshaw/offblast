@@ -22,6 +22,12 @@
   - Multiple regional releases of same game (different IDs) stored as separate entries
   - Fixes issue where regional variants were overwriting each other
   - Enables proper matching for multi-region game libraries
+- **Bundled OpenGameDB in AppImage** with automatic installation and updates
+  - OpenGameDB now included in AppImage builds (no separate download needed)
+  - Automatically installs to `~/.offblast/opengamedb` on first run
+  - Smart update: only syncs when AppImage contains newer database version
+  - Preserves user modifications when not updating
+  - AppImage users get zero-configuration game metadata
 - **Auto-select single user on startup**
   - Skips "Who's Playing?" screen when only one user is configured
   - Improves UX for single-user setups

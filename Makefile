@@ -48,6 +48,14 @@ appimage: ${PROG}
 	cp guest-512.jpg AppImageBuild/offblast.AppDir/usr/bin/
 	cp missingcover.png AppImageBuild/offblast.AppDir/usr/bin/
 
+	@echo "Copying OpenGameDB..."
+	@if [ -d "../opengamedb" ]; then \
+		cp -r ../opengamedb AppImageBuild/offblast.AppDir/usr/bin/; \
+		echo "  OpenGameDB included in AppImage"; \
+	else \
+		echo "  Warning: ../opengamedb not found, AppImage will not include database"; \
+	fi
+
 	@echo "Copying dependencies..."
 	@# Get all library dependencies except system base libraries
 	@# We exclude libc, libm, libdl, libpthread, librt, libGL, libX11, etc. as they should use system versions
@@ -77,6 +85,15 @@ appimage: ${PROG}
 	@echo '    cp "$${HERE}/offblast.png" "$$HOME/.cache/offblast/icon.png"' >> AppImageBuild/offblast.AppDir/AppRun
 	@echo '    sed -e "s|Exec=offblast|Exec=\"$$APPIMAGE_PATH\"|" -e "s|Icon=offblast|Icon=$$HOME/.cache/offblast/icon.png|" "$${HERE}/offblast.desktop" > "$$HOME/.local/share/applications/offblast.desktop"' >> AppImageBuild/offblast.AppDir/AppRun
 	@echo '    command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$$HOME/.local/share/applications" 2>/dev/null || true' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo 'fi' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '# Sync OpenGameDB if bundled version is newer' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo 'if [ -d "$${HERE}/usr/bin/opengamedb" ]; then' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '    mkdir -p "$$HOME/.offblast"' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '    if [ ! -d "$$HOME/.offblast/opengamedb" ] || [ "$${HERE}/usr/bin/opengamedb" -nt "$$HOME/.offblast/opengamedb" ]; then' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '        echo "Updating OpenGameDB..."' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '        cp -r "$${HERE}/usr/bin/opengamedb" "$$HOME/.offblast/"' >> AppImageBuild/offblast.AppDir/AppRun
+	@echo '    fi' >> AppImageBuild/offblast.AppDir/AppRun
 	@echo 'fi' >> AppImageBuild/offblast.AppDir/AppRun
 	@echo '' >> AppImageBuild/offblast.AppDir/AppRun
 	@echo 'export LD_LIBRARY_PATH="$${HERE}/usr/lib:$${LD_LIBRARY_PATH}"' >> AppImageBuild/offblast.AppDir/AppRun
