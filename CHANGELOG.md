@@ -18,6 +18,11 @@
   - Guide button disabled for Steam games (Big Picture handles it natively)
   - Simplified UI shows "Return" button instead of Resume/Stop for Steam games
   - Pressing Return goes back to offblast; Steam manages game lifecycle
+- **Steam Store API metadata fetching**
+  - Fetches release dates, Metacritic scores, and descriptions from Steam Store API
+  - Metadata fetched automatically for games missing data on startup
+  - Steam rescrape (r/Shift+R) now fetches from Store API instead of OpenGameDB
+  - Dates converted from Steam format ("29 Sep, 2017") to standard format ("2017-09-29")
 - **Steam documentation** added to README.md
 
 ### Changed

@@ -396,6 +396,7 @@ typedef struct OffblastUi {
     char (*platforms)[256];
     uint32_t nPlatforms;
 
+    OffblastDbFile descriptionDb;
     OffblastBlobFile *descriptionFile;
     OffblastDbFile playTimeDb;
     PlayTimeFile *playTimeFile;
@@ -510,6 +511,16 @@ void raiseWindow();
 void killRunningGame(); 
 void importFromSteam(Launcher *theLauncher);
 void importFromCustom(Launcher *theLauncher);
+
+// Steam metadata types and functions
+typedef struct SteamMetadata {
+    char date[11];        // "29 Sep 2017" or "2017" - normalized to fit
+    uint32_t score;       // Metacritic score (0-100)
+    char *description;    // Short description (allocated, caller must free)
+} SteamMetadata;
+SteamMetadata *fetchSteamGameMetadata(uint32_t appid);
+void freeSteamMetadata(SteamMetadata *meta);
+off_t writeDescriptionBlob(LaunchTarget *target, const char *description);
 WindowInfo getOffblastWindowInfo();
 uint32_t activeWindowIsOffblast();
 uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature, 
@@ -716,15 +727,15 @@ int main(int argc, char** argv) {
 
     char *descriptionDbPath;
     asprintf(&descriptionDbPath, "%s/descriptions.bin", configPath);
-    OffblastDbFile descriptionDb = {0};
-    if (!InitDbFile(descriptionDbPath, &descriptionDb, 
+    offblast->descriptionDb = (OffblastDbFile){0};
+    if (!InitDbFile(descriptionDbPath, &offblast->descriptionDb,
                 1))
     {
         printf("couldn't initialize the descriptions file, exiting\n");
         return 1;
     }
-    offblast->descriptionFile = 
-        (OffblastBlobFile*) descriptionDb.memory;
+    offblast->descriptionFile =
+        (OffblastBlobFile*) offblast->descriptionDb.memory;
     free(descriptionDbPath);
 
 
@@ -939,8 +950,8 @@ int main(int argc, char** argv) {
 
 
                         void *pDescriptionFile = growDbFileIfNecessary(
-                                    &descriptionDb, 
-                                    sizeof(OffblastBlob) 
+                                    &offblast->descriptionDb,
+                                    sizeof(OffblastBlob)
                                         + strlen(description),
                                     OFFBLAST_DB_TYPE_BLOB); 
 
@@ -4933,6 +4944,75 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
         return;
     }
 
+    // Steam uses Store API instead of OpenGameDB CSV
+    if (strcmp(targetLauncher->platform, "steam") == 0) {
+        printf("Rescraping Steam games via Store API...\n");
+
+        // Count Steam games
+        uint32_t steamCount = 0;
+        LaunchTargetFile *targetFile = offblast->launchTargetFile;
+        for (uint32_t i = 0; i < targetFile->nEntries; i++) {
+            if (strcmp(targetFile->entries[i].platform, "steam") == 0) {
+                steamCount++;
+            }
+        }
+
+        snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
+                 "Updating Steam metadata...");
+        offblast->statusMessageTick = SDL_GetTicks();
+        offblast->statusMessageDuration = 60000;
+        offblast->rescrapeInProgress = 1;
+        offblast->rescrapeTotal = steamCount;
+        offblast->rescrapeProcessed = 0;
+
+        uint32_t updated = 0;
+        for (uint32_t i = 0; i < targetFile->nEntries; i++) {
+            if (strcmp(targetFile->entries[i].platform, "steam") != 0) continue;
+
+            LaunchTarget *target = &targetFile->entries[i];
+
+            // Clear existing metadata if doing full rescrape
+            if (deleteAllCovers) {
+                memset(target->date, 0, sizeof(target->date));
+                target->ranking = 0;
+                target->descriptionOffset = 0;
+            }
+
+            // Fetch fresh metadata
+            uint32_t appid = (uint32_t)atoi(target->id);
+            printf("Fetching metadata for: %s (%u)\n", target->name, appid);
+
+            SteamMetadata *meta = fetchSteamGameMetadata(appid);
+            if (meta) {
+                if (meta->date[0] != '\0') {
+                    memcpy(target->date, meta->date, sizeof(target->date));
+                }
+                if (meta->score > 0) {
+                    target->ranking = meta->score;
+                }
+                if (meta->description) {
+                    target->descriptionOffset = writeDescriptionBlob(target, meta->description);
+                }
+                printf("  Date: %s, Score: %u\n", meta->date, meta->score);
+                freeSteamMetadata(meta);
+                updated++;
+            }
+
+            offblast->rescrapeProcessed = updated;
+        }
+
+        snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
+                 "Steam metadata updated: %u games refreshed", updated);
+        offblast->statusMessageTick = SDL_GetTicks();
+        offblast->statusMessageDuration = 3000;
+        offblast->rescrapeInProgress = 0;
+        offblast->rescrapeProcessed = 0;
+        offblast->rescrapeTotal = 0;
+
+        printf("Steam rescrape complete: %u/%u games updated\n", updated, steamCount);
+        return;
+    }
+
     // Count how many targets will be affected
     uint32_t affectedCount = 0;
     LaunchTargetFile *targetFile = offblast->launchTargetFile;
@@ -5366,6 +5446,203 @@ typedef struct SteamGameList {
     uint32_t allocated;
 } SteamGameList;
 
+// Parse Steam date format ("29 Sep, 2017") to "YYYY-MM-DD" or "YYYY"
+void parseSteamDate(const char *steamDate, char *outDate, size_t outSize) {
+    if (!steamDate || !outDate || outSize < 5) {
+        if (outDate && outSize > 0) outDate[0] = '\0';
+        return;
+    }
+
+    const char *monthNames[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                 "Jul","Aug","Sep","Oct","Nov","Dec"};
+    int year = 0, month = 0, day = 0;
+
+    // Find 4-digit year
+    const char *p = steamDate;
+    while (*p) {
+        if (p[0] >= '0' && p[0] <= '9' &&
+            p[1] >= '0' && p[1] <= '9' &&
+            p[2] >= '0' && p[2] <= '9' &&
+            p[3] >= '0' && p[3] <= '9') {
+            year = atoi(p);
+            break;
+        }
+        p++;
+    }
+
+    // Find month name
+    for (int i = 0; i < 12; i++) {
+        if (strcasestr(steamDate, monthNames[i])) {
+            month = i + 1;
+            break;
+        }
+    }
+
+    // Find day (1-2 digits, typically at start or after comma)
+    p = steamDate;
+    while (*p) {
+        if (*p >= '0' && *p <= '9') {
+            int num = atoi(p);
+            if (num >= 1 && num <= 31) {
+                day = num;
+                break;
+            }
+        }
+        p++;
+    }
+
+    // Format output
+    if (year > 0 && month > 0 && day > 0) {
+        snprintf(outDate, outSize, "%04d-%02d-%02d", year, month, day);
+    } else if (year > 0 && month > 0) {
+        snprintf(outDate, outSize, "%04d-%02d", year, month);
+    } else if (year > 0) {
+        snprintf(outDate, outSize, "%04d", year);
+    } else {
+        outDate[0] = '\0';
+    }
+}
+
+// Fetch metadata from Steam Store API for a single game
+// Returns NULL on failure (rate limit, network error, game not found)
+SteamMetadata *fetchSteamGameMetadata(uint32_t appid) {
+    char url[256];
+    snprintf(url, sizeof(url),
+        "https://store.steampowered.com/api/appdetails?appids=%u", appid);
+
+    CurlFetch fetch = {0};
+    CURL *curl = curl_easy_init();
+    if (!curl) return NULL;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);  // Shorter timeout for metadata
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        printf("Steam Store API error for %u: %s\n", appid, curl_easy_strerror(res));
+        if (fetch.data) free(fetch.data);
+        return NULL;
+    }
+
+    // Null-terminate response
+    fetch.data = realloc(fetch.data, fetch.size + 1);
+    fetch.data[fetch.size] = '\0';
+
+    // Parse JSON response
+    json_object *root = json_tokener_parse((char *)fetch.data);
+    free(fetch.data);
+
+    if (!root) {
+        printf("Failed to parse Steam Store API response for %u\n", appid);
+        return NULL;
+    }
+
+    // Response format: { "<appid>": { "success": true, "data": { ... } } }
+    char appidKey[16];
+    snprintf(appidKey, sizeof(appidKey), "%u", appid);
+
+    json_object *appObj;
+    if (!json_object_object_get_ex(root, appidKey, &appObj)) {
+        json_object_put(root);
+        return NULL;
+    }
+
+    json_object *successObj;
+    if (!json_object_object_get_ex(appObj, "success", &successObj) ||
+        !json_object_get_boolean(successObj)) {
+        json_object_put(root);
+        return NULL;
+    }
+
+    json_object *dataObj;
+    if (!json_object_object_get_ex(appObj, "data", &dataObj)) {
+        json_object_put(root);
+        return NULL;
+    }
+
+    SteamMetadata *meta = calloc(1, sizeof(SteamMetadata));
+
+    // Get release date and convert to YYYY-MM-DD format
+    json_object *releaseDateObj;
+    if (json_object_object_get_ex(dataObj, "release_date", &releaseDateObj)) {
+        json_object *dateStr;
+        if (json_object_object_get_ex(releaseDateObj, "date", &dateStr)) {
+            const char *dateVal = json_object_get_string(dateStr);
+            if (dateVal && strlen(dateVal) > 0) {
+                parseSteamDate(dateVal, meta->date, sizeof(meta->date));
+            }
+        }
+    }
+
+    // Get Metacritic score
+    json_object *metacriticObj;
+    if (json_object_object_get_ex(dataObj, "metacritic", &metacriticObj)) {
+        json_object *scoreObj;
+        if (json_object_object_get_ex(metacriticObj, "score", &scoreObj)) {
+            meta->score = json_object_get_int(scoreObj);
+        }
+    }
+
+    // Get short description
+    json_object *descObj;
+    if (json_object_object_get_ex(dataObj, "short_description", &descObj)) {
+        const char *desc = json_object_get_string(descObj);
+        if (desc && strlen(desc) > 0) {
+            meta->description = strdup(desc);
+        }
+    }
+
+    json_object_put(root);
+    return meta;
+}
+
+void freeSteamMetadata(SteamMetadata *meta) {
+    if (meta) {
+        if (meta->description) free(meta->description);
+        free(meta);
+    }
+}
+
+// Write a description blob and return the offset, or 0 on failure
+off_t writeDescriptionBlob(LaunchTarget *target, const char *description) {
+    if (!description || strlen(description) == 0) return 0;
+
+    size_t descLen = strlen(description);
+    size_t blobSize = sizeof(OffblastBlob) + descLen + 1;
+
+    // Grow file if necessary
+    void *pDescriptionFile = growDbFileIfNecessary(
+        &offblast->descriptionDb,
+        blobSize,
+        OFFBLAST_DB_TYPE_BLOB);
+
+    if (pDescriptionFile == NULL) {
+        printf("Couldn't expand description file for Steam metadata\n");
+        return 0;
+    }
+
+    offblast->descriptionFile = (OffblastBlobFile*) pDescriptionFile;
+
+    // Write the blob at cursor position
+    OffblastBlob *newDescription = (OffblastBlob*)
+        &offblast->descriptionFile->memory[offblast->descriptionFile->cursor];
+
+    newDescription->targetSignature = target->targetSignature;
+    newDescription->length = descLen;
+    memcpy(&newDescription->content, description, descLen);
+    *(newDescription->content + descLen) = '\0';
+
+    off_t offset = offblast->descriptionFile->cursor;
+    offblast->descriptionFile->cursor += blobSize;
+
+    return offset;
+}
+
 // Check if a name indicates a non-game (tool, runtime, etc.)
 int isSteamTool(const char *name) {
     if (strstr(name, "Proton") != NULL) return 1;
@@ -5652,6 +5929,34 @@ void importFromSteam(Launcher *theLauncher) {
                 target->launcherSignature = theLauncher->signature;
             } else {
                 target->launcherSignature = 0;
+            }
+
+            // Fetch metadata if missing (date is empty means no metadata yet)
+            if (target->date[0] == '\0') {
+                printf("Fetching metadata for: %s (%u)\n", sg->name, sg->appid);
+                SteamMetadata *meta = fetchSteamGameMetadata(sg->appid);
+                if (meta) {
+                    // Set release date
+                    if (meta->date[0] != '\0') {
+                        memcpy(target->date, meta->date, sizeof(target->date));
+                    }
+
+                    // Set score (Metacritic)
+                    if (meta->score > 0) {
+                        target->ranking = meta->score;
+                    }
+
+                    // Write description blob
+                    if (meta->description) {
+                        target->descriptionOffset = writeDescriptionBlob(target, meta->description);
+                        if (target->descriptionOffset > 0) {
+                            printf("  Stored description at offset %lu\n", target->descriptionOffset);
+                        }
+                    }
+
+                    printf("  Date: %s, Score: %u\n", meta->date, meta->score);
+                    freeSteamMetadata(meta);
+                }
             }
         }
 

@@ -60,6 +60,13 @@ Support keyboard input for search (currently controller-only).
 
 ## Planned Features
 
+### Loading/Status Window
+Replace console output with a visual loading window for startup operations:
+- Steam API fetching progress
+- OpenGameDB scanning
+- Cover art downloading
+Move away from dumping everything to console.
+
 ### Discord Rich Presence
 Show currently playing game in Discord status.
 
