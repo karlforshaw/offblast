@@ -18,50 +18,7 @@
 #define MAX_LOADED_TEXTURES 150
 #define TEXTURE_EVICTION_TIME_MS 3000
 
-// Version 0.6.2 ===============================================================
-//
-//      BUGS
-//
-//      FEATURES
-//      - CSV corruption checking.
-//
-//      - animation system improvements:
-//          Don't even know where to start with this, a function that queues
-//          animations instead of repeating code so often would be a good start.
-//          Need to have a proper think about the input modes and the system
-//          in general.
-//
-//      - games with poor match scores should probably be logged to the missing
-//          games log, we're allowing bad matches to go through as long as the 
-//          proper game isn't present
-// 
-//      - Hours played in info
-//
-//      - Search keyboard input
-//
-// Roadmap =====================================================================
-//
-// TODO 
-//      - RPC (Discord Rich Presence)
-//      - OpenGameDb, auto download/update? Evict Assets and update.
-//
-//      - Chek if the opengamedb is out of date and attempt to rectify, would
-//          be good if offblast could attempt to download the opengamedb if
-//          no config entry is in place for it.
-//
-// TODO 
-//      - steam support: When a game is removed offblast still thinks it's 
-//          playable
-//
-// TODO 
-//      - List caches, I think when we generate lists we should cache
-//          them in files.. maybe?
-//
-// TODO 
-//      - Collections, this is more of an opengamedb ticket but It would be
-//          cool to feature collections from youtubers such as metal jesus.
-//
-// =============================================================================
+// See ROADMAP.md for planned features and backlog
 
 #include <stdio.h>
 #include <signal.h>
