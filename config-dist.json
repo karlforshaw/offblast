@@ -102,5 +102,11 @@
     ],
     "opengamedb": "/home/karl/.offblast/opengamedb",
     "comment_opengamedb": "AppImage automatically installs/updates database here. Change path if using custom database location.",
-    "playtime_path": "/home/karl/SeraphStore/Games/Super Console/saves/"
+    "playtime_path": "/home/karl/SeraphStore/Games/Super Console/saves/",
+
+    "steam": {
+        "api_key": "YOUR_STEAM_API_KEY",
+        "steam_id": "YOUR_STEAM_ID_64"
+    },
+    "comment_steam": "Optional: Get API key at https://steamcommunity.com/dev/apikey, find your Steam ID at steamid.io. Enables showing all owned games (not just installed)."
 }

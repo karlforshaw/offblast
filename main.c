@@ -430,6 +430,10 @@ typedef struct OffblastUi {
 
     // Config options
     uint32_t showInstalledOnly;
+
+    // Steam API config
+    char steamApiKey[64];
+    char steamId[32];
 } OffblastUi;
 
 typedef struct CurlFetch {
@@ -672,6 +676,30 @@ int main(int argc, char** argv) {
         printf("Show installed only: %s\n", offblast->showInstalledOnly ? "yes" : "no");
     }
 
+    // Parse Steam API config
+    json_object *configSteam;
+    json_object_object_get_ex(configObj, "steam", &configSteam);
+    offblast->steamApiKey[0] = '\0';
+    offblast->steamId[0] = '\0';
+    if (configSteam) {
+        json_object *steamApiKey, *steamId;
+        json_object_object_get_ex(configSteam, "api_key", &steamApiKey);
+        json_object_object_get_ex(configSteam, "steam_id", &steamId);
+
+        if (steamApiKey) {
+            strncpy(offblast->steamApiKey, json_object_get_string(steamApiKey), 63);
+            offblast->steamApiKey[63] = '\0';
+        }
+        if (steamId) {
+            strncpy(offblast->steamId, json_object_get_string(steamId), 31);
+            offblast->steamId[31] = '\0';
+        }
+
+        if (offblast->steamApiKey[0] && offblast->steamId[0]) {
+            printf("Steam API configured for user %s\n", offblast->steamId);
+        }
+    }
+
     char *launchTargetDbPath;
     asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
     OffblastDbFile launchTargetDb = {0};
@@ -761,6 +789,11 @@ int main(int argc, char** argv) {
         if (ext == NULL) continue;
 
         if (strcmp(ext, ".csv") == 0) {
+            // Skip steam.csv - Steam games come from API, not OpenGameDB
+            if (strcmp(openGameDbEntry->d_name, "steam.csv") == 0) {
+                printf("Skipping steam.csv (Steam games imported via API)\n");
+                continue;
+            }
             printf("Importing game data from %s\n", openGameDbEntry->d_name);
         }
         else {
@@ -3509,9 +3542,19 @@ GLuint createShaderProgram(GLint vertShader, GLint fragShader) {
 
 
 void launch() {
-    
-    LaunchTarget *target = 
+
+    LaunchTarget *target =
         offblast->mainUi.activeRowset->rowCursor->tileCursor->target;
+
+    // Check if this is an uninstalled Steam game
+    if (target->launcherSignature == 0 && strcmp(target->platform, "steam") == 0) {
+        printf("Opening Steam install dialog for %s (id: %s)\n", target->name, target->id);
+        char *installUrl;
+        asprintf(&installUrl, "xdg-open steam://install/%s", target->id);
+        system(installUrl);
+        free(installUrl);
+        return;
+    }
 
     if (target->launcherSignature == 0) {
         printf("%s has no launcher \n", target->name);
@@ -3519,8 +3562,8 @@ void launch() {
 
     int32_t foundIndex = -1;
     for (uint32_t i = 0; i < offblast->nLaunchers; ++i) {
-        if (target->launcherSignature == 
-                offblast->launchers[i].signature) 
+        if (target->launcherSignature ==
+                offblast->launchers[i].signature)
         {
             foundIndex = i;
         }
@@ -4412,14 +4455,8 @@ void updateHomeLists(){
     }
 
 
-    // __ROWS__ Essentials per platform 
+    // __ROWS__ Essentials per platform
     for (uint32_t iPlatform = 0; iPlatform < offblast->nPlatforms; iPlatform++) {
-
-        uint32_t isSteam = 0;
-
-        if (strcmp(offblast->platforms[iPlatform], "steam") == 0) {
-            isSteam = 1;
-        }
 
         uint32_t topRatedMax = 25;
         UiTile *tiles = calloc(topRatedMax, sizeof(UiTile));
@@ -4431,10 +4468,6 @@ void updateHomeLists(){
             LaunchTarget *target = &launchTargetFile->entries[i];
 
             if (strcmp(target->platform, offblast->platforms[iPlatform]) == 0) {
-
-                if (isSteam && target->launcherSignature == 0) {
-                    continue;
-                }
 
                 // Skip uninstalled games if filter is enabled
                 if (offblast->showInstalledOnly && strlen(target->path) == 0) {
@@ -4535,14 +4568,28 @@ void updateResults(uint32_t *launcherSignature) {
         uint32_t isMatch = 0;
         if (!launcherSignature
                 && strlen(offblast->searchTerm)
-                && strcasestr(targetFile->entries[i].name, offblast->searchTerm)) 
+                && strcasestr(targetFile->entries[i].name, offblast->searchTerm))
         {
             isMatch = 1;
         }
-        else if (launcherSignature  
-                && targetFile->entries[i].launcherSignature == *launcherSignature) 
+        else if (launcherSignature
+                && targetFile->entries[i].launcherSignature == *launcherSignature)
         {
             isMatch = 1;
+        }
+        // Also match uninstalled Steam games (launcherSignature == 0) when viewing Steam
+        else if (launcherSignature
+                && targetFile->entries[i].launcherSignature == 0
+                && strcmp(targetFile->entries[i].platform, "steam") == 0)
+        {
+            // Check if we're viewing the Steam launcher
+            for (uint32_t l = 0; l < offblast->nLaunchers; l++) {
+                if (offblast->launchers[l].signature == *launcherSignature
+                    && strcmp(offblast->launchers[l].platform, "steam") == 0) {
+                    isMatch = 1;
+                    break;
+                }
+            }
         }
 
         if (isMatch) {
@@ -5275,112 +5322,432 @@ void freeRomList(RomFoundList *list) {
     free(list);
 }
 
-// This no longer works, we should be recursively searching for RPX files instead
-// These functions need to find a list of games
-// create the fields needed to update the internal game db
+// Steam API game entry
+typedef struct SteamGame {
+    uint32_t appid;
+    char name[256];
+    uint32_t playtime_forever;
+    uint8_t installed;
+} SteamGame;
+
+typedef struct SteamGameList {
+    SteamGame *games;
+    uint32_t count;
+    uint32_t allocated;
+} SteamGameList;
+
+// Check if a name indicates a non-game (tool, runtime, etc.)
+int isSteamTool(const char *name) {
+    if (strstr(name, "Proton") != NULL) return 1;
+    if (strstr(name, "Steam Linux Runtime") != NULL) return 1;
+    if (strstr(name, "Steamworks Common Redistributables") != NULL) return 1;
+    if (strstr(name, "Runtime") != NULL && strstr(name, "Steam") != NULL) return 1;
+    return 0;
+}
+
+// Fetch owned games from Steam Web API
+SteamGameList *fetchSteamLibrary(const char *apiKey, const char *steamId) {
+    if (!apiKey || !steamId || !apiKey[0] || !steamId[0]) {
+        return NULL;
+    }
+
+    char *url;
+    asprintf(&url,
+        "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/"
+        "?key=%s&steamid=%s&include_appinfo=true&include_played_free_games=true&format=json",
+        apiKey, steamId);
+
+    printf("Fetching Steam library for user %s...\n", steamId);
+
+    CurlFetch fetch = {0};
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        free(url);
+        return NULL;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+    CURLcode res = curl_easy_perform(curl);
+    free(url);
+
+    if (res != CURLE_OK) {
+        printf("Steam API error: %s\n", curl_easy_strerror(res));
+        curl_easy_cleanup(curl);
+        if (fetch.data) free(fetch.data);
+        return NULL;
+    }
+
+    curl_easy_cleanup(curl);
+
+    // Null-terminate the response
+    fetch.data = realloc(fetch.data, fetch.size + 1);
+    fetch.data[fetch.size] = '\0';
+
+    // Parse JSON response
+    json_object *root = json_tokener_parse((char *)fetch.data);
+    free(fetch.data);
+
+    if (!root) {
+        printf("Failed to parse Steam API response\n");
+        return NULL;
+    }
+
+    json_object *response;
+    if (!json_object_object_get_ex(root, "response", &response)) {
+        printf("Invalid Steam API response format\n");
+        json_object_put(root);
+        return NULL;
+    }
+
+    json_object *games_array;
+    if (!json_object_object_get_ex(response, "games", &games_array)) {
+        printf("No games found in Steam API response\n");
+        json_object_put(root);
+        return NULL;
+    }
+
+    size_t game_count = json_object_array_length(games_array);
+    printf("Steam API returned %zu games\n", game_count);
+
+    SteamGameList *list = calloc(1, sizeof(SteamGameList));
+    list->games = calloc(game_count, sizeof(SteamGame));
+    list->allocated = game_count;
+    list->count = 0;
+
+    for (size_t i = 0; i < game_count; i++) {
+        json_object *game = json_object_array_get_idx(games_array, i);
+
+        json_object *appid_obj, *name_obj, *playtime_obj;
+        json_object_object_get_ex(game, "appid", &appid_obj);
+        json_object_object_get_ex(game, "name", &name_obj);
+        json_object_object_get_ex(game, "playtime_forever", &playtime_obj);
+
+        const char *name = name_obj ? json_object_get_string(name_obj) : "";
+
+        // Filter out tools/runtimes
+        if (isSteamTool(name)) {
+            continue;
+        }
+
+        SteamGame *sg = &list->games[list->count];
+        sg->appid = appid_obj ? json_object_get_int(appid_obj) : 0;
+        strncpy(sg->name, name, 255);
+        sg->name[255] = '\0';
+        sg->playtime_forever = playtime_obj ? json_object_get_int(playtime_obj) : 0;
+        sg->installed = 0; // Will be set by checkSteamInstallStatus
+
+        list->count++;
+    }
+
+    json_object_put(root);
+    printf("Filtered to %u games (excluded tools/runtimes)\n", list->count);
+    return list;
+}
+
+// Check which Steam games are installed by scanning appmanifest files
+void checkSteamInstallStatus(SteamGameList *list) {
+    if (!list || !list->games) return;
+
+    char *homePath = getenv("HOME");
+    char *steamRoot;
+    asprintf(&steamRoot, "%s/.steam/root", homePath);
+
+    // Check if steamRoot is a symlink and resolve it
+    char resolvedPath[PATH_MAX];
+    if (realpath(steamRoot, resolvedPath) == NULL) {
+        printf("Could not resolve Steam root path\n");
+        free(steamRoot);
+        return;
+    }
+    free(steamRoot);
+
+    // Read libraryfolders.vdf to get all library paths
+    char *libFoldersPath;
+    asprintf(&libFoldersPath, "%s/config/libraryfolders.vdf", resolvedPath);
+
+    // Collect library paths (start with default)
+    char libraryPaths[10][PATH_MAX];
+    int numLibraries = 0;
+
+    if (snprintf(libraryPaths[numLibraries], PATH_MAX, "%s/steamapps", resolvedPath) < PATH_MAX) {
+        numLibraries++;
+    }
+
+    FILE *fp = fopen(libFoldersPath, "r");
+    if (fp) {
+        char line[1024];
+        while (fgets(line, sizeof(line), fp) && numLibraries < 10) {
+            // Look for "path" entries
+            char *pathStart = strstr(line, "\"path\"");
+            if (pathStart) {
+                pathStart = strchr(pathStart + 6, '"');
+                if (pathStart) {
+                    pathStart++;
+                    char *pathEnd = strchr(pathStart, '"');
+                    if (pathEnd) {
+                        *pathEnd = '\0';
+                        if (snprintf(libraryPaths[numLibraries], PATH_MAX, "%s/steamapps", pathStart) >= PATH_MAX) {
+                            continue;  // Path too long, skip
+                        }
+                        // Don't add duplicates
+                        int isDupe = 0;
+                        for (int i = 0; i < numLibraries; i++) {
+                            if (strcmp(libraryPaths[i], libraryPaths[numLibraries]) == 0) {
+                                isDupe = 1;
+                                break;
+                            }
+                        }
+                        if (!isDupe) numLibraries++;
+                    }
+                }
+            }
+        }
+        fclose(fp);
+    }
+    free(libFoldersPath);
+
+    printf("Checking %d Steam library locations for installed games\n", numLibraries);
+
+    // Check each game's install status
+    for (uint32_t i = 0; i < list->count; i++) {
+        char manifestName[64];
+        snprintf(manifestName, sizeof(manifestName), "appmanifest_%u.acf", list->games[i].appid);
+
+        for (int lib = 0; lib < numLibraries; lib++) {
+            char manifestPath[PATH_MAX];
+            if (snprintf(manifestPath, PATH_MAX, "%s/%s", libraryPaths[lib], manifestName) >= PATH_MAX) {
+                continue;  // Path too long, skip
+            }
+
+            if (access(manifestPath, F_OK) == 0) {
+                list->games[i].installed = 1;
+                break;
+            }
+        }
+    }
+
+    // Count installed
+    uint32_t installedCount = 0;
+    for (uint32_t i = 0; i < list->count; i++) {
+        if (list->games[i].installed) installedCount++;
+    }
+    printf("Found %u installed games out of %u owned\n", installedCount, list->count);
+}
+
+void freeSteamGameList(SteamGameList *list) {
+    if (list) {
+        if (list->games) free(list->games);
+        free(list);
+    }
+}
 
 void importFromSteam(Launcher *theLauncher) {
+    // Check if Steam API is configured
+    if (offblast->steamApiKey[0] && offblast->steamId[0]) {
+        // Use Steam Web API
+        SteamGameList *steamGames = fetchSteamLibrary(
+            offblast->steamApiKey, offblast->steamId);
 
-    RomFoundList *list = newRomList();
+        if (!steamGames) {
+            printf("Failed to fetch Steam library from API, trying local fallback\n");
+            goto local_fallback;
+        }
+
+        // Check install status
+        checkSteamInstallStatus(steamGames);
+
+        // Process each game
+        for (uint32_t i = 0; i < steamGames->count; i++) {
+            SteamGame *sg = &steamGames->games[i];
+
+            // Create ID string
+            char appIdStr[32];
+            snprintf(appIdStr, sizeof(appIdStr), "%u", sg->appid);
+
+            // Check if we already have this game
+            int32_t indexOfEntry = launchTargetIndexByIdMatch(
+                offblast->launchTargetFile, appIdStr, theLauncher->platform);
+
+            LaunchTarget *target;
+
+            if (indexOfEntry >= 0) {
+                // Update existing entry
+                target = &offblast->launchTargetFile->entries[indexOfEntry];
+            } else {
+                // Create new entry
+                LaunchTargetFile *ltFile = offblast->launchTargetFile;
+
+                // Generate target signature
+                char *gameSeed;
+                asprintf(&gameSeed, "%s_%s", theLauncher->platform, appIdStr);
+                uint64_t targetSignature[2] = {0, 0};
+                lmmh_x86_128(gameSeed, strlen(gameSeed), 33, (uint32_t*)targetSignature);
+                free(gameSeed);
+
+                target = &ltFile->entries[ltFile->nEntries];
+                memset(target, 0, sizeof(LaunchTarget));
+                target->targetSignature = targetSignature[0];
+
+                // Set platform
+                strncpy(target->platform, theLauncher->platform, 255);
+                target->platform[255] = '\0';
+
+                // Set ID
+                strncpy(target->id, appIdStr, OFFBLAST_NAME_MAX - 1);
+                target->id[OFFBLAST_NAME_MAX - 1] = '\0';
+
+                ltFile->nEntries++;
+                printf("Added new Steam game: %s (%s)\n", sg->name, appIdStr);
+            }
+
+            // Update name from API (always fresh)
+            strncpy(target->name, sg->name, OFFBLAST_NAME_MAX - 1);
+            target->name[OFFBLAST_NAME_MAX - 1] = '\0';
+
+            // Set cover URL
+            char coverUrl[PATH_MAX];
+            snprintf(coverUrl, PATH_MAX,
+                "https://steamcdn-a.akamaihd.net/steam/apps/%u/library_600x900.jpg",
+                sg->appid);
+            strncpy(target->coverUrl, coverUrl, PATH_MAX - 1);
+            target->coverUrl[PATH_MAX - 1] = '\0';
+
+            // Set launcher signature based on install status
+            if (sg->installed) {
+                target->launcherSignature = theLauncher->signature;
+            } else {
+                target->launcherSignature = 0;
+            }
+        }
+
+        freeSteamGameList(steamGames);
+        return;
+    }
+
+local_fallback:
+    // Fallback: scan local appmanifest files (improved from old registry method)
+    printf("Using local Steam detection (no API key configured)\n");
+
     char *homePath = getenv("HOME");
+    char *steamRoot;
+    asprintf(&steamRoot, "%s/.steam/root", homePath);
 
-    char *registryPath = NULL;
-    asprintf(&registryPath, "%s/.steam/registry.vdf", homePath);
+    char resolvedPath[PATH_MAX];
+    if (realpath(steamRoot, resolvedPath) == NULL) {
+        printf("Could not find Steam installation\n");
+        free(steamRoot);
+        return;
+    }
+    free(steamRoot);
 
-    FILE *fp = fopen(registryPath, "r");
-    if (fp == NULL) {
-        perror("Couldn't open steam registry\n");
+    char steamAppsPath[PATH_MAX];
+    if (snprintf(steamAppsPath, PATH_MAX, "%s/steamapps", resolvedPath) >= PATH_MAX) {
+        printf("Steam path too long\n");
         return;
     }
 
-    char *lineBuffer = calloc(512, sizeof(char));
-    assert(lineBuffer);
-    uint32_t inAppsSection = 0;
-    int32_t depth = 0;
-    char *idStr = NULL;
-    char *currentId = calloc(64, sizeof(char));
-    char *currentIdCursor;
-
-    while(fgets(lineBuffer, 512, fp)) {
-        if (inAppsSection) {
-
-            if (strstr(lineBuffer, "{")) ++depth;
-            if (strstr(lineBuffer, "}")) --depth;
-            if (depth < 0) break;
-
-            if (depth == 1 && strstr(lineBuffer, "\"")) {
-
-
-                idStr = lineBuffer;
-                memset(currentId, 0, 64);
-
-                while (isspace(*idStr) || *idStr == '\"') ++idStr;
-                currentIdCursor = currentId;
-                while (isdigit(*idStr)) {
-                    memcpy(currentIdCursor++, idStr++, sizeof(char));
-                }
-            }
-            if (depth == 2) {
-                if (strstr(lineBuffer, "Installed") 
-                        && strstr(lineBuffer, "1")) 
-                {
-                    //printf("New steam game %s\n", currentId);
-                    pushToRomList(list, NULL, NULL, currentId);
-                }
-            }
-        }
-        else if (strcasestr(lineBuffer, "\"apps\"") != NULL) {
-            inAppsSection = 1;
-        }
-    }
-
-    fclose(fp);
-    free(registryPath);
-    free(lineBuffer);
-    free(currentId);
-
-    if (list->numItems == 0) { 
-        printf("no items found\n");
-        freeRomList(list);
-        list = NULL;
+    DIR *dir = opendir(steamAppsPath);
+    if (!dir) {
+        printf("Could not open Steam apps directory: %s\n", steamAppsPath);
         return;
     }
 
-    uint32_t rescrapeRequired = 0;
-    if (launcherContentsCacheUpdated(theLauncher->signature, romListContentSig(list))) {
-        printf("Launcher targets for %u have changed!\n", 
-                theLauncher->signature);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        // Look for appmanifest_*.acf files
+        if (strncmp(entry->d_name, "appmanifest_", 12) != 0) continue;
+        if (!strstr(entry->d_name, ".acf")) continue;
 
-        rescrapeRequired = 1;
-    }
-    else {
-        printf("Contents unchanged for: %u\n", theLauncher->signature);
-    }
+        // Extract appid from filename
+        char appIdStr[32] = {0};
+        sscanf(entry->d_name, "appmanifest_%31[0-9].acf", appIdStr);
+        if (!appIdStr[0]) continue;
 
+        // Read manifest to get game name
+        char manifestPath[PATH_MAX];
+        if (snprintf(manifestPath, PATH_MAX, "%s/%s", steamAppsPath, entry->d_name) >= PATH_MAX) {
+            continue;  // Path too long, skip
+        }
 
-    if (rescrapeRequired) {
+        FILE *fp = fopen(manifestPath, "r");
+        if (!fp) continue;
 
-        int32_t indexOfEntry = -1;
-
-        for (uint32_t j=0; j < list->numItems; j++) {
-
-            indexOfEntry = launchTargetIndexByIdMatch(
-                    offblast->launchTargetFile, list->items[j].id, theLauncher->platform);
-
-            printf("found by id at index %d\n", indexOfEntry);
-
-            if (indexOfEntry > -1) {
-
-                LaunchTarget *theTarget = 
-                    &offblast->launchTargetFile->entries[indexOfEntry];
-
-                theTarget->launcherSignature = theLauncher->signature;
+        char gameName[256] = {0};
+        char line[1024];
+        while (fgets(line, sizeof(line), fp)) {
+            char *nameStart = strstr(line, "\"name\"");
+            if (nameStart) {
+                nameStart = strchr(nameStart + 6, '"');
+                if (nameStart) {
+                    nameStart++;
+                    char *nameEnd = strchr(nameStart, '"');
+                    if (nameEnd) {
+                        size_t len = nameEnd - nameStart;
+                        if (len > 255) len = 255;
+                        strncpy(gameName, nameStart, len);
+                        gameName[len] = '\0';
+                        break;
+                    }
+                }
             }
-        } 
+        }
+        fclose(fp);
+
+        // Skip tools/runtimes
+        if (isSteamTool(gameName)) continue;
+
+        // Skip if no name found
+        if (!gameName[0]) continue;
+
+        // Find or create entry
+        int32_t indexOfEntry = launchTargetIndexByIdMatch(
+            offblast->launchTargetFile, appIdStr, theLauncher->platform);
+
+        if (indexOfEntry >= 0) {
+            // Update existing - mark as installed
+            LaunchTarget *target = &offblast->launchTargetFile->entries[indexOfEntry];
+            target->launcherSignature = theLauncher->signature;
+        } else {
+            // Create new entry
+            LaunchTargetFile *ltFile = offblast->launchTargetFile;
+
+            char *gameSeed;
+            asprintf(&gameSeed, "%s_%s", theLauncher->platform, appIdStr);
+            uint64_t targetSignature[2] = {0, 0};
+            lmmh_x86_128(gameSeed, strlen(gameSeed), 33, (uint32_t*)targetSignature);
+            free(gameSeed);
+
+            LaunchTarget *target = &ltFile->entries[ltFile->nEntries];
+            memset(target, 0, sizeof(LaunchTarget));
+
+            target->targetSignature = targetSignature[0];
+            strncpy(target->name, gameName, OFFBLAST_NAME_MAX - 1);
+            target->name[OFFBLAST_NAME_MAX - 1] = '\0';
+            strncpy(target->platform, theLauncher->platform, 255);
+            target->platform[255] = '\0';
+            strncpy(target->id, appIdStr, OFFBLAST_NAME_MAX - 1);
+            target->id[OFFBLAST_NAME_MAX - 1] = '\0';
+
+            char coverUrl[PATH_MAX];
+            snprintf(coverUrl, PATH_MAX,
+                "https://steamcdn-a.akamaihd.net/steam/apps/%s/library_600x900.jpg",
+                appIdStr);
+            strncpy(target->coverUrl, coverUrl, PATH_MAX - 1);
+            target->coverUrl[PATH_MAX - 1] = '\0';
+
+            target->launcherSignature = theLauncher->signature;
+            ltFile->nEntries++;
+
+            printf("Added local Steam game: %s (%s)\n", gameName, appIdStr);
+        }
     }
 
-    freeRomList(list);
-    list = NULL;
+    closedir(dir);
 }
 
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Steam Web API integration** for complete library display
+  - Shows all owned Steam games, not just installed ones
+  - Requires `steam.api_key` and `steam.steam_id` in config.json
+  - Get API key at https://steamcommunity.com/dev/apikey
+  - Find Steam ID at https://steamid.io
+  - Uninstalled games appear dimmed (30% desaturated, 70% alpha)
+  - Launching uninstalled game opens Steam install dialog
+  - Filters out tools/runtimes (Proton, Redistributables, etc.)
+  - Falls back to local-only detection if no API key configured
+- **Steam documentation** added to README.md
+
+### Changed
+- Steam games no longer imported from `steam.csv` in OpenGameDB
+  - Game names and metadata now come directly from Steam API
+  - Prevents phantom games from appearing in library
+
 ## [0.7.0] - 2025-11-25
 
 ### Added

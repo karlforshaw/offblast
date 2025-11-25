@@ -164,6 +164,39 @@ Reference any user field in your launcher commands:
 }
 ```
 
+### 4. Steam Integration
+
+OffBlast can show **all your owned Steam games**, not just installed ones. This requires a Steam Web API key.
+
+#### Getting Your Steam API Key
+1. Go to https://steamcommunity.com/dev/apikey
+2. Log in and register for a key (domain name doesn't matter, use anything)
+3. Copy the key
+
+#### Finding Your Steam ID
+Your Steam ID is a 17-digit number (e.g., `76561198012345678`). Find it at https://steamid.io by entering your profile URL.
+
+#### Configuration
+Add the `steam` section to your config.json:
+
+```json
+{
+    "steam": {
+        "api_key": "YOUR_API_KEY_HERE",
+        "steam_id": "76561198012345678"
+    }
+}
+```
+
+#### What This Enables
+- **All owned games** appear in your library (not just installed)
+- **Uninstalled games** appear dimmed
+- Launching an uninstalled game opens the Steam install dialog
+- Game names come directly from Steam (no fuzzy matching needed)
+
+#### Without API Key
+If you don't configure an API key, OffBlast falls back to local-only detection using Steam's appmanifest files. This only shows installed games.
+
 ### Complete Example Configuration
 ```json
 {
@@ -207,7 +240,11 @@ Reference any user field in your launcher commands:
         }
     ],
     "opengamedb": "/path/to/opengamedb",
-    "playtime_path": "/path/to/playtime/data"
+    "playtime_path": "/path/to/playtime/data",
+    "steam": {
+        "api_key": "YOUR_STEAM_API_KEY",
+        "steam_id": "76561198012345678"
+    }
 }
 ```
 

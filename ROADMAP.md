@@ -30,6 +30,9 @@ Check if the OpenGameDB is out of date and automatically download updates. Would
 ### Steam: Detect Removed Games
 When a game is removed from Steam, offblast still thinks it's playable.
 
+### Steam: Per-User Credentials
+Move `steam.api_key` and `steam.steam_id` to user config instead of global. Each user could have their own Steam account.
+
 ### List Caching
 Cache generated lists to files for faster loading.
 
