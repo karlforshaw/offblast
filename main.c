@@ -269,6 +269,11 @@ typedef struct MainUi {
     uint32_t menuScrollOffset;
     uint32_t maxVisibleMenuItems;
 
+    int32_t showContextMenu;
+    MenuItem *contextMenuItems;
+    uint32_t numContextMenuItems;
+    uint32_t contextMenuCursor;
+
     int32_t showSearch;
 
     Animation *horizontalAnimation;
@@ -277,6 +282,8 @@ typedef struct MainUi {
     Animation *rowNameAnimation;
     Animation *menuAnimation;
     Animation *menuNavigateAnimation;
+    Animation *contextMenuAnimation;
+    Animation *contextMenuNavigateAnimation;
 
     GLuint imageVbo;
 
@@ -512,6 +519,15 @@ void killRunningGame();
 void importFromSteam(Launcher *theLauncher);
 void importFromCustom(Launcher *theLauncher);
 
+// Context menu callbacks
+void doRescrapePlatform();
+void doRescrapeGame();
+void doCopyCoverFilename();
+void doRefreshCover();
+void pressContextMenu();
+void contextMenuToggleDone(void *arg);
+void contextMenuNavigationDone(void *arg);
+
 // Steam metadata types and functions
 typedef struct SteamMetadata {
     char date[11];        // "29 Sep 2017" or "2017" - normalized to fit
@@ -556,6 +572,85 @@ void doHome() {
     offblast->mainUi.rowGeometryInvalid = 1;
 }
 
+// Context menu callbacks
+void doRescrapePlatform() {
+    rescrapeCurrentLauncher(1);
+}
+
+void doRescrapeGame() {
+    snprintf(offblast->statusMessage, 256, "Not implemented yet");
+    offblast->statusMessageTick = SDL_GetTicks();
+    offblast->statusMessageDuration = 2000;
+}
+
+void doCopyCoverFilename() {
+    MainUi *ui = &offblast->mainUi;
+    if (!ui->activeRowset || !ui->activeRowset->rowCursor ||
+        !ui->activeRowset->rowCursor->tileCursor) return;
+
+    LaunchTarget *target = ui->activeRowset->rowCursor->tileCursor->target;
+    if (!target) return;
+
+    char filename[64];
+    snprintf(filename, sizeof(filename), "%"PRIu64".jpg", target->targetSignature);
+
+    if (SDL_SetClipboardText(filename) == 0) {
+        snprintf(offblast->statusMessage, 256, "Copied: %s", filename);
+    } else {
+        snprintf(offblast->statusMessage, 256, "Clipboard error: %s", SDL_GetError());
+    }
+    offblast->statusMessageTick = SDL_GetTicks();
+    offblast->statusMessageDuration = 3000;
+}
+
+void doRefreshCover() {
+    MainUi *ui = &offblast->mainUi;
+    if (!ui->activeRowset || !ui->activeRowset->rowCursor ||
+        !ui->activeRowset->rowCursor->tileCursor) return;
+
+    LaunchTarget *target = ui->activeRowset->rowCursor->tileCursor->target;
+    if (!target) return;
+
+    uint64_t sig = target->targetSignature;
+
+    // Find and evict the texture for this game
+    pthread_mutex_lock(&offblast->imageStoreLock);
+    for (uint32_t i = 0; i < IMAGE_STORE_SIZE; i++) {
+        if (offblast->imageStore[i].targetSignature == sig) {
+            // Delete OpenGL texture if loaded
+            if (offblast->imageStore[i].textureHandle != 0) {
+                glDeleteTextures(1, &offblast->imageStore[i].textureHandle);
+                offblast->imageStore[i].textureHandle = 0;
+                offblast->numLoadedTextures--;
+            }
+            // Reset state so it will be re-queued
+            offblast->imageStore[i].state = IMAGE_STATE_COLD;
+            offblast->imageStore[i].targetSignature = 0;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&offblast->imageStoreLock);
+
+    snprintf(offblast->statusMessage, 256, "Cover refreshed");
+    offblast->statusMessageTick = SDL_GetTicks();
+    offblast->statusMessageDuration = 2000;
+}
+
+void contextMenuToggleDone(void *arg) {
+    uint32_t *showIt = (uint32_t*) arg;
+    offblast->mainUi.showContextMenu = *showIt;
+}
+
+void contextMenuNavigationDone(void *arg) {
+    uint32_t *direction = (uint32_t*) arg;
+    MainUi *ui = &offblast->mainUi;
+
+    if (*direction == 0) {
+        ui->contextMenuCursor++;
+    } else {
+        ui->contextMenuCursor--;
+    }
+}
 
 int main(int argc, char** argv) {
 
@@ -1450,8 +1545,11 @@ int main(int argc, char** argv) {
     mainUi->rowNameAnimation = calloc(1, sizeof(Animation));
     mainUi->menuAnimation = calloc(1, sizeof(Animation));
     mainUi->menuNavigateAnimation = calloc(1, sizeof(Animation));
+    mainUi->contextMenuAnimation = calloc(1, sizeof(Animation));
+    mainUi->contextMenuNavigateAnimation = calloc(1, sizeof(Animation));
 
     mainUi->showMenu = 0;
+    mainUi->showContextMenu = 0;
     mainUi->showSearch = 0;
 
     // Init Menu
@@ -1501,6 +1599,18 @@ int main(int argc, char** argv) {
         mainUi->numMenuItems++;
     }
 
+    // Init Context Menu (right-side game menu)
+    mainUi->contextMenuItems = calloc(4, sizeof(MenuItem));
+    mainUi->contextMenuItems[0].label = "Rescrape Platform";
+    mainUi->contextMenuItems[0].callback = doRescrapePlatform;
+    mainUi->contextMenuItems[1].label = "Rescrape Game";
+    mainUi->contextMenuItems[1].callback = doRescrapeGame;
+    mainUi->contextMenuItems[2].label = "Copy Cover Filename";
+    mainUi->contextMenuItems[2].callback = doCopyCoverFilename;
+    mainUi->contextMenuItems[3].label = "Refresh Cover";
+    mainUi->contextMenuItems[3].callback = doRefreshCover;
+    mainUi->numContextMenuItems = 4;
+    mainUi->contextMenuCursor = 0;
 
     // Missing Cover texture init
     {
@@ -1804,6 +1914,9 @@ int main(int argc, char** argv) {
                         break;
                     case SDL_CONTROLLER_BUTTON_GUIDE:
                         pressGuide();
+                        break;
+                    case SDL_CONTROLLER_BUTTON_START:
+                        pressContextMenu();
                         break;
                 }
 
@@ -2260,6 +2373,54 @@ int main(int argc, char** argv) {
                 }
             }
 
+            // § Render Context Menu (right side)
+            if (mainUi->showContextMenu) {
+
+                float menuWidth = offblast->winWidth * 0.16;
+                float xOffset = 0;
+                if (mainUi->contextMenuAnimation->animating == 1) {
+
+                    double change = easeInOutCirc(
+                            (double)SDL_GetTicks() -
+                            mainUi->contextMenuAnimation->startTick,
+                            0.0,
+                            1.0,
+                            (double)mainUi->contextMenuAnimation->durationMs);
+
+                    if (mainUi->contextMenuAnimation->direction == 0) {
+                        change = 1.0 - change;
+                    }
+
+                    // Slide in from right (positive offset to 0)
+                    xOffset = change * menuWidth;
+                }
+
+                Color menuColor = {0.0, 0.0, 0.0, 0.85};
+                renderGradient(offblast->winWidth - menuWidth + xOffset, 0,
+                        menuWidth, offblast->winHeight,
+                        0,
+                        menuColor, menuColor);
+
+                float menuStartY = offblast->winHeight - 133;
+                float itemHeight = offblast->infoPointSize * 1.61;
+                float itemTransparency = 0.6f;
+
+                for (uint32_t mi = 0; mi < mainUi->numContextMenuItems; mi++) {
+                    if (mainUi->contextMenuItems[mi].label != NULL) {
+
+                        if (mi == mainUi->contextMenuCursor) itemTransparency = 1.0f;
+
+                        renderText(offblast,
+                                offblast->winWidth - menuWidth + xOffset + offblast->winWidth * 0.016,
+                                menuStartY - (mi * itemHeight),
+                                OFFBLAST_TEXT_INFO, itemTransparency, 0,
+                                mainUi->contextMenuItems[mi].label);
+
+                        itemTransparency = 0.6f;
+                    }
+                }
+            }
+
             if (mainUi->showSearch) {
                 Color menuColor = {0.0, 0.0, 0.0, 0.8};
                 renderGradient(0, 0, 
@@ -2552,6 +2713,8 @@ int main(int argc, char** argv) {
         animationTick(mainUi->rowNameAnimation);
         animationTick(mainUi->menuAnimation);
         animationTick(mainUi->menuNavigateAnimation);
+        animationTick(mainUi->contextMenuAnimation);
+        animationTick(mainUi->contextMenuNavigateAnimation);
 
         // Render status message (rescrape notification)
         if (offblast->statusMessageTick > 0) {
@@ -2754,6 +2917,21 @@ void changeColumn(uint32_t direction)
 
                 }
             }
+            else if (ui->showContextMenu) {
+                // Close context menu when pressing left (it's on the right side)
+                if (direction == 0) {
+                    ui->contextMenuAnimation->startTick = SDL_GetTicks();
+                    ui->contextMenuAnimation->direction = 1;  // Closing
+                    ui->contextMenuAnimation->durationMs = NAVIGATION_MOVE_DURATION/2;
+                    ui->contextMenuAnimation->animating = 1;
+                    ui->contextMenuAnimation->callback = &contextMenuToggleDone;
+
+                    uint32_t *callbackArg = malloc(sizeof(uint32_t));
+                    *callbackArg = 0;  // Hide
+                    ui->contextMenuAnimation->callbackArgs = callbackArg;
+                    return;
+                }
+            }
             else {
                 if (direction == 0) {
 
@@ -2851,7 +3029,7 @@ void changeColumn(uint32_t direction)
     }
 }
 
-void changeRow(uint32_t direction) 
+void changeRow(uint32_t direction)
 {
     MainUi *ui = &offblast->mainUi;
 
@@ -2871,7 +3049,7 @@ void changeRow(uint32_t direction)
 
                 ui->menuNavigateAnimation->startTick = SDL_GetTicks();
                 ui->menuNavigateAnimation->direction = direction;
-                ui->menuNavigateAnimation->durationMs = 
+                ui->menuNavigateAnimation->durationMs =
                     NAVIGATION_MOVE_DURATION / 2;
                 ui->menuNavigateAnimation->animating = 1;
                 ui->menuNavigateAnimation->callback = &menuNavigationDone;
@@ -2879,6 +3057,26 @@ void changeRow(uint32_t direction)
                 uint32_t *callbackArg = malloc(sizeof(uint32_t));
                 *callbackArg = direction;
                 ui->menuNavigateAnimation->callbackArgs = callbackArg;
+                return;
+            }
+            else if (ui->showContextMenu) {
+
+                if (direction == 0 && ui->contextMenuCursor == ui->numContextMenuItems-1)
+                    return;
+
+                else if (direction == 1 && ui->contextMenuCursor == 0)
+                    return;
+
+                ui->contextMenuNavigateAnimation->startTick = SDL_GetTicks();
+                ui->contextMenuNavigateAnimation->direction = direction;
+                ui->contextMenuNavigateAnimation->durationMs =
+                    NAVIGATION_MOVE_DURATION / 2;
+                ui->contextMenuNavigateAnimation->animating = 1;
+                ui->contextMenuNavigateAnimation->callback = &contextMenuNavigationDone;
+
+                uint32_t *callbackArg = malloc(sizeof(uint32_t));
+                *callbackArg = direction;
+                ui->contextMenuNavigateAnimation->callbackArgs = callbackArg;
                 return;
             }
             else {
@@ -3112,6 +3310,12 @@ uint32_t animationRunning() {
         result++;
     }
     else if (ui->menuNavigateAnimation->animating != 0) {
+        result++;
+    }
+    else if (ui->contextMenuAnimation->animating != 0) {
+        result++;
+    }
+    else if (ui->contextMenuNavigateAnimation->animating != 0) {
         result++;
     }
 
@@ -3730,6 +3934,42 @@ void pressSearch(int32_t joystickIndex) {
     }
 }
 
+void pressContextMenu() {
+    MainUi *ui = &offblast->mainUi;
+
+    // Only available in main browsing mode
+    if (offblast->mode != OFFBLAST_UI_MODE_MAIN) return;
+    if (ui->showMenu) return;      // Left menu is open
+    if (ui->showSearch) return;    // Search is open
+
+    if (ui->showContextMenu) {
+        // Close the context menu
+        ui->contextMenuAnimation->startTick = SDL_GetTicks();
+        ui->contextMenuAnimation->direction = 1;  // Closing
+        ui->contextMenuAnimation->durationMs = NAVIGATION_MOVE_DURATION/2;
+        ui->contextMenuAnimation->animating = 1;
+        ui->contextMenuAnimation->callback = &contextMenuToggleDone;
+
+        uint32_t *callbackArg = malloc(sizeof(uint32_t));
+        *callbackArg = 0;  // Hide
+        ui->contextMenuAnimation->callbackArgs = callbackArg;
+    } else {
+        // Open the context menu
+        ui->showContextMenu = 1;
+        ui->contextMenuCursor = 0;  // Reset cursor to top
+
+        ui->contextMenuAnimation->startTick = SDL_GetTicks();
+        ui->contextMenuAnimation->direction = 0;  // Opening
+        ui->contextMenuAnimation->durationMs = NAVIGATION_MOVE_DURATION/2;
+        ui->contextMenuAnimation->animating = 1;
+        ui->contextMenuAnimation->callback = &contextMenuToggleDone;
+
+        uint32_t *callbackArg = malloc(sizeof(uint32_t));
+        *callbackArg = 1;  // Show
+        ui->contextMenuAnimation->callbackArgs = callbackArg;
+    }
+}
+
 void pressConfirm(int32_t joystickIndex) {
 
     if (offblast->mode == OFFBLAST_UI_MODE_BACKGROUND) {
@@ -3813,12 +4053,12 @@ void pressConfirm(int32_t joystickIndex) {
     }
     else if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
         if (offblast->mainUi.showMenu) {
-            void (*callback)() = 
+            void (*callback)() =
                 offblast->mainUi.menuItems[offblast->mainUi.menuCursor].callback;
-            void *callbackArgs = 
+            void *callbackArgs =
                 offblast->mainUi.menuItems[offblast->mainUi.menuCursor].callbackArgs;
 
-            if (callback == NULL) 
+            if (callback == NULL)
                 printf("menu null callback!\n");
             else {
                 offblast->mainUi.showMenu = 0;
@@ -3826,7 +4066,20 @@ void pressConfirm(int32_t joystickIndex) {
             }
 
         }
-        else 
+        else if (offblast->mainUi.showContextMenu) {
+            void (*callback)() =
+                offblast->mainUi.contextMenuItems[offblast->mainUi.contextMenuCursor].callback;
+            void *callbackArgs =
+                offblast->mainUi.contextMenuItems[offblast->mainUi.contextMenuCursor].callbackArgs;
+
+            if (callback == NULL)
+                printf("context menu null callback!\n");
+            else {
+                offblast->mainUi.showContextMenu = 0;
+                callback(callbackArgs);
+            }
+        }
+        else
             launch();
     }
 }
@@ -3839,7 +4092,20 @@ void changeRowset(UiRowset *rowset) {
 
 void pressCancel() {
     if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
-        if (offblast->mainUi.showSearch) {
+        if (offblast->mainUi.showContextMenu) {
+            // Close context menu with animation
+            MainUi *ui = &offblast->mainUi;
+            ui->contextMenuAnimation->startTick = SDL_GetTicks();
+            ui->contextMenuAnimation->direction = 1;  // Closing
+            ui->contextMenuAnimation->durationMs = NAVIGATION_MOVE_DURATION/2;
+            ui->contextMenuAnimation->animating = 1;
+            ui->contextMenuAnimation->callback = &contextMenuToggleDone;
+
+            uint32_t *callbackArg = malloc(sizeof(uint32_t));
+            *callbackArg = 0;  // Hide
+            ui->contextMenuAnimation->callbackArgs = callbackArg;
+        }
+        else if (offblast->mainUi.showSearch) {
             offblast->mainUi.showSearch = 0;
         }
         else if (offblast->mainUi.activeRowset == offblast->mainUi.searchRowset) {
