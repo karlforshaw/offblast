@@ -655,14 +655,41 @@ int main(int argc, char** argv) {
     condPrintConfigError(configLaunchers, "Your launcher specification is invalid.");
 
     json_object *configForOpenGameDb;
-    json_object_object_get_ex(configObj, "opengamedb", 
+    json_object_object_get_ex(configObj, "opengamedb",
             &configForOpenGameDb);
 
-    condPrintConfigError(configForOpenGameDb, "Open game DB parameter invalid.");
-    const char *openGameDbPath = 
-        json_object_get_string(configForOpenGameDb);
+    char *openGameDbPath = NULL;
+    if (configForOpenGameDb) {
+        openGameDbPath = strdup(json_object_get_string(configForOpenGameDb));
+        printf("Found OpenGameDb at %s (from config)\n", openGameDbPath);
+    }
+    else {
+        // Fallback: check ~/.offblast/opengamedb
+        char *homePath = getenv("HOME");
+        char *fallbackPath;
+        asprintf(&fallbackPath, "%s/.offblast/opengamedb", homePath);
 
-    printf("Found OpenGameDb at %s\n", openGameDbPath);
+        if (access(fallbackPath, F_OK) == 0) {
+            openGameDbPath = fallbackPath;
+            printf("Found OpenGameDb at %s (default location)\n", openGameDbPath);
+        }
+        else {
+            free(fallbackPath);
+            // Fallback: check current directory
+            if (access("opengamedb", F_OK) == 0) {
+                openGameDbPath = strdup("opengamedb");
+                printf("Found OpenGameDb at ./opengamedb (current directory)\n");
+            }
+            else {
+                printf("ERROR: OpenGameDB not found.\n");
+                printf("       Checked: config.json 'opengamedb' field\n");
+                printf("       Checked: %s/.offblast/opengamedb\n", homePath);
+                printf("       Checked: ./opengamedb\n");
+                printf("       Please download OpenGameDB from: https://github.com/karlforshaw/opengamedb\n");
+                exit(1);
+            }
+        }
+    }
 
     // Load platform display names from names.csv
     loadPlatformNames(openGameDbPath);

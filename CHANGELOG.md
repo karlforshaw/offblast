@@ -8,6 +8,10 @@
   - Format: `key,name` (e.g., `playstation_vita,Playstation Vita`)
   - Adding new platforms no longer requires code changes in offblast
   - Falls back to "Unknown Platform" if key not found
+- **OpenGameDB path fallback logic**
+  - No longer requires `opengamedb` in config.json
+  - Automatically checks: config.json → `~/.offblast/opengamedb` → `./opengamedb`
+  - Helpful error message lists all checked locations if not found
 - **Flexible game matching system** with `match_field` config option
   - New `match_field` parameter allows matching against different database fields
   - Supports `"title"` (default) for name-based fuzzy matching
