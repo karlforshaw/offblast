@@ -50,7 +50,10 @@ Both now implemented in launch().
 - Early SDL/OpenGL init allows loading screen to appear immediately
 
 ### CSV Corruption Checking
-Validate CSV files on load.
+**PARTIALLY SOLVED:** Basic validation implemented:
+- Score fields validated (must be numeric, in valid ranges)
+- Empty name filtering prevents blank entries
+- More comprehensive validation (field count, format, etc.) deferred to 0.7.2
 
 ### Multi-Region Game Deduplication
 **SOLVED:** Essential lists now deduplicate regional variants:
