@@ -4,10 +4,11 @@
 
 ### Added
 - **Animated loading screen with threaded initialization**
-  - Beautiful breathing rocket animation during startup
+  - Beautiful breathing rocket animation during startup (sin² curve with pauses at extremes)
   - Real-time status updates showing exactly what's initializing
   - Progress counters for Steam library fetching and game metadata loading
   - Smooth 0.61 second exit animation (logo shrinks to dot, text fades out)
+  - Seamless 0.41 second fade-in transition to user select screen
   - Heavy initialization runs in background thread to keep UI responsive
   - Proper separation of OpenGL and non-GL initialization for thread safety
   - Early SDL/OpenGL init allows loading screen to appear immediately

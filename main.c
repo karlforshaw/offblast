@@ -245,6 +245,9 @@ typedef struct PlayerSelectUi {
     float *widthForAvatar;
     float *xOffsetForAvatar;
 
+    uint32_t fadeInActive;       // 1 = fade-in animation in progress
+    uint32_t fadeInStartTick;    // When fade-in started
+
 } PlayerSelectUi;
 
 typedef struct UiRowset {
@@ -574,6 +577,8 @@ OffblastUi *offblast;
 
 void openPlayerSelect() {
     offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
+    offblast->playerSelectUi.fadeInActive = 1;
+    offblast->playerSelectUi.fadeInStartTick = SDL_GetTicks();
 }
 void setExit() {
     offblast->running = 0;
@@ -2052,6 +2057,10 @@ int main(int argc, char** argv) {
 
     updateHomeLists();
 
+    // Start fade-in animation for initial screen
+    playerSelectUi->fadeInActive = 1;
+    playerSelectUi->fadeInStartTick = SDL_GetTicks();
+
     // § Main loop
     while (offblast->running) {
 
@@ -2729,6 +2738,19 @@ int main(int argc, char** argv) {
         }
         else if (offblast->mode == OFFBLAST_UI_MODE_PLAYER_SELECT) {
 
+            // Calculate fade-in progress
+            float fadeAlpha = 1.0f;
+            if (playerSelectUi->fadeInActive) {
+                uint32_t elapsed = SDL_GetTicks() - playerSelectUi->fadeInStartTick;
+                float progress = (float)elapsed / 410.0f;  // 0.41 seconds (33% faster)
+                if (progress >= 1.0f) {
+                    fadeAlpha = 1.0f;
+                    playerSelectUi->fadeInActive = 0;  // Animation complete
+                } else {
+                    fadeAlpha = progress;  // 0.0 -> 1.0
+                }
+            }
+
             // TODO cache all these golden ratio calls they are expensive
             // to calculate
             // cache all the x positions of the text perhaps too?
@@ -2740,7 +2762,7 @@ int main(int argc, char** argv) {
                     offblast->winWidth / 2 - titleWidth / 2,
                     offblast->winHeight -
                         goldenRatioLarge(offblast->winHeight, 3),
-                    OFFBLAST_TEXT_TITLE, 1.0, 0,
+                    OFFBLAST_TEXT_TITLE, fadeAlpha, 0,
                     titleText);
 
             if (offblast->nUsers == 0) {
@@ -2752,7 +2774,7 @@ int main(int argc, char** argv) {
                 renderText(offblast,
                         offblast->winWidth / 2 - messageWidth / 2,
                         offblast->winHeight / 2 - offblast->infoPointSize / 2,
-                        OFFBLAST_TEXT_INFO, 0.7, 0,
+                        OFFBLAST_TEXT_INFO, 0.7 * fadeAlpha, 0,
                         messageText);
 
                 char *helpText = "Please add users to ~/.offblast/config.json";
@@ -2762,7 +2784,7 @@ int main(int argc, char** argv) {
                 renderText(offblast,
                         offblast->winWidth / 2 - helpWidth / 2,
                         offblast->winHeight / 2 + offblast->infoPointSize * 2,
-                        OFFBLAST_TEXT_INFO, 0.5, 0,
+                        OFFBLAST_TEXT_INFO, 0.5 * fadeAlpha, 0,
                         helpText);
             }
 
@@ -2791,21 +2813,21 @@ int main(int argc, char** argv) {
                 }
 
                 renderImage(
-                        xStart + playerSelectUi->xOffsetForAvatar[i],  
-                        offblast->winHeight /2 -0.5* offblast->mainUi.boxHeight, 
-                        0, offblast->mainUi.boxHeight, 
-                        image, 0.0f, alpha);
+                        xStart + playerSelectUi->xOffsetForAvatar[i],
+                        offblast->winHeight /2 -0.5* offblast->mainUi.boxHeight,
+                        0, offblast->mainUi.boxHeight,
+                        image, 0.0f, alpha * fadeAlpha);
 
                 uint32_t nameWidth = getTextLineWidth(
                         offblast->users[i].name,
                         offblast->infoCharData);
 
-                renderText(offblast, 
-                        xStart + playerSelectUi->xOffsetForAvatar[i] 
+                renderText(offblast,
+                        xStart + playerSelectUi->xOffsetForAvatar[i]
                         + playerSelectUi->widthForAvatar[i] / 2 - nameWidth / 2,
-                        offblast->winHeight/2 - 0.5*offblast->mainUi.boxHeight - 
-                            offblast->mainUi.boxPad - offblast->infoPointSize, 
-                        OFFBLAST_TEXT_INFO, alpha, 0,
+                        offblast->winHeight/2 - 0.5*offblast->mainUi.boxHeight -
+                            offblast->mainUi.boxPad - offblast->infoPointSize,
+                        OFFBLAST_TEXT_INFO, alpha * fadeAlpha, 0,
                         offblast->users[i].name);
             }
     
