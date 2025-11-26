@@ -57,6 +57,17 @@
   - Added missing writeDescriptionBlob() call in OpenGameDB rescrape
   - Descriptions now properly persist through rescrape operations
   - Note: Description file will grow on rescrapes (orphaned blobs not reclaimed)
+- **Fixed Essential lists showing incorrect games and wrong scores**
+  - Essential lists now collect ALL platform games, sort by ranking, deduplicate, then take top 25
+  - Previous behavior: took first 25 games found, then sorted those (missed high-rated games)
+  - Added case-insensitive title deduplication to handle regional variants
+  - Prioritization: owned version > highest score > first entry
+  - Skip games with empty names to prevent blank entries
+- **Fixed score calculation treating "n/a" as zero**
+  - Added validation to reject non-numeric scores (gfScore > 0, metaScore > 0)
+  - Games with "n/a" for metascore no longer averaged with 0
+  - Example: Sonic 2 (gf_score=4.32, metascore="n/a") now shows 86% instead of 43%
+  - Invalid scores properly trigger sentinel value (999) instead of corrupting averages
 
 ## [0.7.0] - 2025-11-25
 

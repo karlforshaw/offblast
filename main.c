@@ -1069,14 +1069,22 @@ void *initThreadFunc(void *arg) {
 
                         float score = -1;
                         if (strlen(scoreString) != 0) {
-                            score = atof(scoreString) * 2 * 10;
+                            float gfScore = atof(scoreString);
+                            // Validate: must be numeric and in valid range
+                            if (gfScore > 0 && gfScore <= 5.0) {
+                                score = gfScore * 2 * 10;
+                            }
                         }
                         if (strlen(metaScoreString) != 0) {
-                            if (score == -1) {
-                                score = atof(metaScoreString);
-                            }
-                            else {
-                                score = (score + atof(metaScoreString)) / 2;
+                            float metaScore = atof(metaScoreString);
+                            // Validate: must be numeric and in valid range
+                            if (metaScore > 0 && metaScore <= 100) {
+                                if (score == -1) {
+                                    score = metaScore;
+                                }
+                                else {
+                                    score = (score + metaScore) / 2;
+                                }
                             }
                         }
 
@@ -4458,13 +4466,13 @@ int lastPlayedSort(const void *a, const void *b) {
 
 int rankingSort(const void *a, const void *b) {
 
-    LaunchTarget *ra = (LaunchTarget*) a;
-    LaunchTarget *rb = (LaunchTarget*) b;
+    LaunchTarget **ra = (LaunchTarget**) a;
+    LaunchTarget **rb = (LaunchTarget**) b;
 
     // Higher ranking comes first (descending order)
-    if (ra->ranking > rb->ranking)
+    if ((*ra)->ranking > (*rb)->ranking)
         return -1;
-    else if (ra->ranking < rb->ranking)
+    else if ((*ra)->ranking < (*rb)->ranking)
         return +1;
     else
         return 0;
@@ -5134,17 +5142,15 @@ void updateHomeLists(){
     // __ROWS__ Essentials per platform
     for (uint32_t iPlatform = 0; iPlatform < offblast->nPlatforms; iPlatform++) {
 
-        uint32_t topRatedMax = 25;
-        UiTile *tiles = calloc(topRatedMax, sizeof(UiTile));
-        assert(tiles);
+        // Step 1: Collect ALL games for this platform into temporary array
+        uint32_t maxPlatformGames = 2000;
+        LaunchTarget **platformGames = calloc(maxPlatformGames, sizeof(LaunchTarget*));
+        uint32_t numPlatformGames = 0;
 
-        uint32_t numTiles = 0;
         for (uint32_t i = 0; i < launchTargetFile->nEntries; ++i) {
-
             LaunchTarget *target = &launchTargetFile->entries[i];
 
             if (strcmp(target->platform, offblast->platforms[iPlatform]) == 0) {
-
                 // Skip uninstalled games if filter is enabled
                 if (offblast->showInstalledOnly && strlen(target->path) == 0) {
                     continue;
@@ -5155,18 +5161,67 @@ void updateHomeLists(){
                     continue;
                 }
 
-                tiles[numTiles].target = target;
-                numTiles++;
-            }
+                // Skip games with empty names
+                if (strlen(target->name) == 0) {
+                    continue;
+                }
 
-            if (numTiles >= topRatedMax) break;
+                platformGames[numPlatformGames++] = target;
+                if (numPlatformGames >= maxPlatformGames) break;
+            }
         }
 
-        if (numTiles > 0) {
-            // Sort tiles by ranking (highest first)
-            qsort(tiles, numTiles, sizeof(UiTile), tileRankingSort);
+        // Step 2: Sort ALL platform games by ranking (highest first)
+        if (numPlatformGames > 1) {
+            qsort(platformGames, numPlatformGames, sizeof(LaunchTarget*), rankingSort);
+        }
 
-            // Now link the sorted tiles together
+        // Step 3: Deduplicate by exact title, keeping owned > highest score
+        LaunchTarget **dedupedGames = calloc(numPlatformGames, sizeof(LaunchTarget*));
+        uint32_t numDeduped = 0;
+
+        for (uint32_t i = 0; i < numPlatformGames; i++) {
+            LaunchTarget *candidate = platformGames[i];
+            int isDuplicate = 0;
+
+            // Check if we already have this title (case-insensitive)
+            for (uint32_t j = 0; j < numDeduped; j++) {
+                if (strcasecmp(dedupedGames[j]->name, candidate->name) == 0) {
+                    // Same title - keep owned version over unowned
+                    int existingOwned = (strlen(dedupedGames[j]->path) > 0);
+                    int candidateOwned = (strlen(candidate->path) > 0);
+
+                    if (candidateOwned && !existingOwned) {
+                        // Replace with owned version
+                        dedupedGames[j] = candidate;
+                    }
+                    // else keep existing (owned version or equal ownership with higher score)
+                    isDuplicate = 1;
+                    break;
+                }
+            }
+
+            if (!isDuplicate) {
+                dedupedGames[numDeduped++] = candidate;
+            }
+        }
+
+        free(platformGames);
+
+        // Step 4: Take top 25 and build tiles
+        uint32_t topRatedMax = 25;
+        uint32_t numTiles = numDeduped < topRatedMax ? numDeduped : topRatedMax;
+        UiTile *tiles = calloc(topRatedMax, sizeof(UiTile));
+        assert(tiles);
+
+        for (uint32_t i = 0; i < numTiles; i++) {
+            tiles[i].target = dedupedGames[i];
+        }
+
+        free(dedupedGames);
+
+        if (numTiles > 0) {
+            // Link the tiles together
             for (uint32_t i = 0; i < numTiles; i++) {
                 tiles[i].next = (i < numTiles - 1) ? &tiles[i + 1] : NULL;
                 tiles[i].previous = (i > 0) ? &tiles[i - 1] : NULL;
@@ -5881,13 +5936,21 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
                 // Update score/ranking
                 float score = -1;
                 if (scoreString && strlen(scoreString) != 0) {
-                    score = atof(scoreString) * 2 * 10;
+                    float gfScore = atof(scoreString);
+                    // Validate: must be numeric and in valid range
+                    if (gfScore > 0 && gfScore <= 5.0) {
+                        score = gfScore * 2 * 10;
+                    }
                 }
                 if (metaScoreString && strlen(metaScoreString) != 0) {
-                    if (score == -1) {
-                        score = atof(metaScoreString);
-                    } else {
-                        score = (score + atof(metaScoreString)) / 2;
+                    float metaScore = atof(metaScoreString);
+                    // Validate: must be numeric and in valid range
+                    if (metaScore > 0 && metaScore <= 100) {
+                        if (score == -1) {
+                            score = metaScore;
+                        } else {
+                            score = (score + metaScore) / 2;
+                        }
                     }
                 }
                 // Set sentinel value if no valid score
