@@ -105,6 +105,33 @@ What happens when Steam is configured but there's no internet connection? Curren
 ### Search Keyboard Input
 Support keyboard input for search (currently controller-only).
 
+### Resume Functionality on Wayland
+**ISSUE:** Resume button doesn't work on KDE Plasma Wayland (tested on Bazzite):
+- Current implementation uses X11 APIs (`XSendEvent`, `_NET_ACTIVE_WINDOW`)
+- X11 window manipulation calls ignored/unsupported on native Wayland
+- Works fine on X11 sessions (i3, GNOME X11)
+- Game process continues running, just can't raise/focus window
+
+**Potential Solutions to Test:**
+1. **KWin D-Bus API** - Use `qdbus org.kde.KWin` to raise window by PID
+   - Already tracking `runningPid`
+   - May raise but not focus (Wayland security limitation)
+2. **KWin Scripting** - Load KWin script via D-Bus to manipulate windows
+   - More complex but potentially more powerful
+3. **SDL Window Raising** - Use `SDL_RaiseWindow()` instead of X11
+   - Would need to track game's SDL_Window (different process, may not work)
+4. **wmctrl alternatives** - Tools like `wlrctl` for wlroots compositors
+   - May not work on KDE
+5. **Accept limitation** - Document Wayland limitation, improve UX
+   - Show different message on Wayland
+   - Provide instructions to manually switch
+
+**Detection:**
+- Check `$XDG_SESSION_TYPE` for "wayland" vs "x11"
+- Check `$XDG_CURRENT_DESKTOP` for "KDE" vs "GNOME" vs "i3"
+
+**Test each solution systematically on Bazzite to find what works.**
+
 ---
 
 ## Planned Features
