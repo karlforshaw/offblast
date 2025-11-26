@@ -337,6 +337,16 @@ typedef struct LoaderContext {
     pthread_mutex_t lock;
 } LoaderContext;
 
+typedef struct LoadingState {
+    pthread_mutex_t mutex;
+    char status[256];           // "Loading Steam library..."
+    uint32_t progress;          // Current item (0 if N/A)
+    uint32_t progressTotal;     // Total items (0 if N/A)
+    uint32_t complete;          // 1 when init done
+    uint32_t error;             // 1 if fatal error
+    char errorMsg[256];         // Error description
+} LoadingState;
+
 typedef struct OffblastUi {
 
     uint32_t running;
@@ -372,6 +382,12 @@ typedef struct OffblastUi {
     GLuint debugTextTexture;
 
     Image missingCoverImage;
+    Image logoImage;              // For offblast_loading.png loading screen
+
+    LoadingState loadingState;
+    uint32_t loadingMode;         // 1 = showing loading screen
+    uint32_t exitAnimating;       // 1 = exit animation in progress
+    uint32_t exitAnimationStartTick;  // When exit animation started
 
     GLuint textVbo;
 
@@ -428,6 +444,10 @@ typedef struct OffblastUi {
     pthread_mutex_t imageStoreLock;
     uint32_t numLoadedTextures;
 
+    // Image loader worker threads
+    pthread_t *imageLoadThreads;
+    uint32_t numImageLoadThreads;
+
     // Rescrape status notification
     char statusMessage[256];
     uint32_t statusMessageTick;
@@ -480,8 +500,9 @@ char *getCoverPath(LaunchTarget *);
 char *getCoverUrl(LaunchTarget *);
 GLint loadShaderFile(const char *path, GLenum shaderType);
 GLuint createShaderProgram(GLint vertShader, GLint fragShader);
+void renderLoadingScreen(OffblastUi *offblast);
 void launch();
-void imageToGlTexture(GLuint *textureHandle, unsigned char *pixelData, 
+void imageToGlTexture(GLuint *textureHandle, unsigned char *pixelData,
         uint32_t newWidth, uint32_t newHeight);
 void changeRow(uint32_t direction);
 void changeColumn(uint32_t direction);
@@ -652,42 +673,33 @@ void contextMenuNavigationDone(void *arg) {
     }
 }
 
-int main(int argc, char** argv) {
+void *initThreadFunc(void *arg) {
+    OffblastUi *offblast = (OffblastUi *)arg;
+    LoadingState *state = &offblast->loadingState;
+    char *configPath = offblast->configPath;
 
-    printf("\nStarting up OffBlast with %d args.\n\n", argc);
-    offblast = calloc(1, sizeof(OffblastUi));
+    // Helper macros for status updates
+    #define SET_STATUS(msg) do { \
+        pthread_mutex_lock(&state->mutex); \
+        snprintf(state->status, 256, "%s", msg); \
+        state->progress = 0; state->progressTotal = 0; \
+        pthread_mutex_unlock(&state->mutex); \
+    } while(0)
 
+    #define SET_PROGRESS(cur, total) do { \
+        pthread_mutex_lock(&state->mutex); \
+        state->progress = cur; state->progressTotal = total; \
+        pthread_mutex_unlock(&state->mutex); \
+    } while(0)
 
-    char *homePath = getenv("HOME");
-    assert(homePath);
+    #define SET_ERROR(msg) do { \
+        pthread_mutex_lock(&state->mutex); \
+        snprintf(state->errorMsg, 256, "%s", msg); \
+        state->error = 1; \
+        pthread_mutex_unlock(&state->mutex); \
+    } while(0)
 
-    char *configPath;
-    asprintf(&configPath, "%s/.offblast", homePath);
-    offblast->configPath = configPath;
-
-    char *coverPath;
-    asprintf(&coverPath, "%s/covers/", configPath);
-
-    int madeConfigDir;
-    madeConfigDir = mkdir(configPath, S_IRWXU);
-    madeConfigDir = mkdir(coverPath, S_IRWXU);
-
-    free(coverPath);
-    
-    if (madeConfigDir == 0) {
-        printf("Created offblast directory\n");
-    }
-    else {
-        switch (errno) {
-            case EEXIST:
-                break;
-
-            default:
-                printf("Couldn't create offblast dir %d\n", errno);
-                return errno;
-        }
-    }
-
+    SET_STATUS("Loading configuration...");
 
     char *configFilePath;
     asprintf(&configFilePath, "%s/config.json", configPath);
@@ -696,7 +708,8 @@ int main(int argc, char** argv) {
 
     if (configFile == NULL) {
         printf("Config file config.json is missing, exiting..\n");
-        return 1;
+        SET_ERROR("Initialization error");
+        return NULL;
     }
 
     fseek(configFile, 0, SEEK_END);
@@ -759,6 +772,7 @@ int main(int argc, char** argv) {
     }
 
     // Load platform display names from names.csv
+    SET_STATUS("Loading platform names...");
     loadPlatformNames(openGameDbPath);
 
     json_object *configForPlaytimePath;
@@ -809,11 +823,13 @@ int main(int argc, char** argv) {
     char *launchTargetDbPath;
     asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
     OffblastDbFile launchTargetDb = {0};
+    SET_STATUS("Initializing game database...");
     if (!InitDbFile(launchTargetDbPath, &launchTargetDb, 
                 sizeof(LaunchTarget))) 
     {
         printf("couldn't initialize path db, exiting\n");
-        return 1;
+        SET_ERROR("Initialization error");
+        return NULL;
     }
     LaunchTargetFile *launchTargetFile = 
         (LaunchTargetFile*) launchTargetDb.memory;
@@ -827,7 +843,8 @@ int main(int argc, char** argv) {
                 1))
     {
         printf("couldn't initialize the descriptions file, exiting\n");
-        return 1;
+        SET_ERROR("Initialization error");
+        return NULL;
     }
     offblast->descriptionFile =
         (OffblastBlobFile*) offblast->descriptionDb.memory;
@@ -877,6 +894,7 @@ int main(int argc, char** argv) {
 #endif 
 
 
+    SET_STATUS("Loading game metadata...");
     // § Scrape the opengamedb
     struct dirent *openGameDbEntry;
     DIR *openGameDbDir = opendir(openGameDbPath);
@@ -884,7 +902,8 @@ int main(int argc, char** argv) {
         printf("ERROR: Cannot access OpenGameDB directory: '%s'\n", openGameDbPath);
         printf("       Please check that the 'opengamedb' path in config.json is correct\n");
         printf("       You can download OpenGameDB from: https://github.com/karlforshaw/opengamedb\n");
-        return 1;
+        SET_ERROR("Initialization error");
+        return NULL;
     }
 
     while ((openGameDbEntry = readdir(openGameDbDir)) != NULL) {
@@ -920,6 +939,10 @@ int main(int argc, char** argv) {
 
         if (!platformScraped) {
 
+            char statusMsg[256];
+            snprintf(statusMsg, 256, "Loading %s games...", fileNameSplit);
+            SET_STATUS(statusMsg);
+
             printf("Pulling data in from the opengamedb.\n");
             char *openGameDbPlatformPath;
             asprintf(&openGameDbPlatformPath, "%s/%s.csv", 
@@ -943,9 +966,17 @@ int main(int argc, char** argv) {
 
 
             while ((csvBytesRead = getline(
-                            &csvLine, &csvLineLength, openGameDbFile)) != -1) 
+                            &csvLine, &csvLineLength, openGameDbFile)) != -1)
             {
                 if (onRow > 0) {
+
+                    // Update progress every 10 games to reduce mutex overhead
+                    if (onRow % 10 == 0) {
+                        pthread_mutex_lock(&offblast->loadingState.mutex);
+                        offblast->loadingState.progress = onRow;
+                        offblast->loadingState.progressTotal = 0;  // Unknown total
+                        pthread_mutex_unlock(&offblast->loadingState.mutex);
+                    }
 
                     char *gameName = getCsvField(csvLine, 1);
                     char *gameDate = getCsvField(csvLine, 2);
@@ -983,7 +1014,8 @@ int main(int argc, char** argv) {
                         if(pLaunchTargetMemory == NULL) {
                             printf("Couldn't expand the db file to accomodate"
                                     " all the targets\n");
-                            return 1;
+                            SET_ERROR("Initialization error");
+                            return NULL;
                         }
                         else {
                             launchTargetFile =
@@ -1053,7 +1085,8 @@ int main(int argc, char** argv) {
                         if(pDescriptionFile == NULL) {
                             printf("Couldn't expand the description file to "
                                     "accomodate all the descriptions\n");
-                            return 1;
+                            SET_ERROR("Initialization error");
+                            return NULL;
                         }
                         else { 
                             offblast->descriptionFile = 
@@ -1121,6 +1154,7 @@ int main(int argc, char** argv) {
     uint32_t nConfigLaunchers = json_object_array_length(configLaunchers);
     uint32_t configLauncherSignatures[nConfigLaunchers];
 
+    SET_STATUS("Setting up launchers...");
     printf("Setting up launchers.\n");
     offblast->launchers = calloc(nConfigLaunchers, sizeof(Launcher));
 
@@ -1330,11 +1364,16 @@ int main(int argc, char** argv) {
 
         // Import games based on launcher type
         if (strcmp(theLauncher->type, "steam") == 0) {
+            SET_STATUS("Fetching Steam library...");
             importFromSteam(theLauncher);
         }
         else {
             // All directory-based launchers use the same import logic
             // This includes: standard, custom, retroarch, cemu, rpcs3, scummvm
+            char statusMsg[256];
+            snprintf(statusMsg, 256, "Scanning %s games...",
+                     strlen(theLauncher->name) > 0 ? theLauncher->name : theLauncher->platform);
+            SET_STATUS(statusMsg);
             importFromCustom(theLauncher);
         }
 
@@ -1379,6 +1418,8 @@ int main(int argc, char** argv) {
 
     close(launchTargetDb.fd);
 
+
+    SET_STATUS("Loading user profiles...");
 
     json_object *usersObject = NULL;
     json_object_object_get_ex(configObj, "users", &usersObject);
@@ -1443,65 +1484,10 @@ int main(int argc, char** argv) {
 
     json_tokener_free(tokener);
 
+    SET_STATUS("Loading playtime data...");
     loadPlaytimeFile();
-    
 
-    // § START SDL HERE
-    if (SDL_Init(SDL_INIT_VIDEO |
-                SDL_INIT_JOYSTICK | 
-                SDL_INIT_GAMECONTROLLER) != 0) 
-    {
-        printf("SDL initialization Failed, exiting..\n");
-        return 1;
-    }
-
-
-    // CREATE IMAGE STORE
-    pthread_mutex_init(&offblast->imageStoreLock, NULL);
-    offblast->imageStore = calloc(IMAGE_STORE_SIZE, sizeof(Image));
-    offblast->numLoadedTextures = 0;
-    for (uint32_t i = 0; i < IMAGE_STORE_SIZE; ++i) {
-        offblast->imageStore[i].lastUsedTick = SDL_GetTicks();
-    }
-    assert(offblast->imageStore);
-
-
-    // CREATE WORKER THREADS
-    uint32_t totalLoaderThreads = sysconf(_SC_NPROCESSORS_CONF);
-    printf("THREADS: %d\n", totalLoaderThreads);
-    --totalLoaderThreads;
-    pthread_t imageLoadThreads[totalLoaderThreads];
-
-    for (uint32_t i = 0; i < totalLoaderThreads; ++i) {
-        pthread_create(
-                &imageLoadThreads[i], 
-                NULL, 
-                imageLoadMain, 
-                (void*)offblast);
-    }
-
-
-    // Let's create the window
-    //SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, 
-            //SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-
-    SDL_Window* window = SDL_CreateWindow("OffBlast", 
-            SDL_WINDOWPOS_UNDEFINED, 
-            SDL_WINDOWPOS_UNDEFINED,
-            640,
-            480,
-            SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP | 
-                SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_ALLOW_HIGHDPI);
-
-    if (window == NULL) {
-        printf("SDL window creation failed, exiting..\n");
-        return 1;
-    }
-    offblast->window = window;
-    
+    // Window manager setup (after window already created early)
     char *windowManager = getenv("XDG_CURRENT_DESKTOP");
     assert(windowManager);
 
@@ -1516,29 +1502,45 @@ int main(int argc, char** argv) {
         perror("Your window manager is not yet supported\n");
     }
 
-
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-
-    SDL_GLContext glContext = SDL_GL_CreateContext(window);
-    glewInit();
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    glFrontFace(GL_CW);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     offblast->XDisplay = XOpenDisplay(NULL);
     if(offblast->XDisplay == NULL){
         printf("Couldn't connect to Xserver\n");
-        return 0;
+        SET_ERROR("X11 connection failed");
+        return NULL;
     }
 
+    SET_STATUS("Setting up image system...");
+    // CREATE IMAGE STORE
+    pthread_mutex_init(&offblast->imageStoreLock, NULL);
+    offblast->imageStore = calloc(IMAGE_STORE_SIZE, sizeof(Image));
+    offblast->numLoadedTextures = 0;
+    for (uint32_t i = 0; i < IMAGE_STORE_SIZE; ++i) {
+        offblast->imageStore[i].lastUsedTick = SDL_GetTicks();
+    }
+    assert(offblast->imageStore);
 
+    SET_STATUS("Starting worker threads...");
+    // CREATE WORKER THREADS
+    offblast->numImageLoadThreads = sysconf(_SC_NPROCESSORS_CONF);
+    printf("THREADS: %d\n", offblast->numImageLoadThreads);
+    --offblast->numImageLoadThreads;
+    offblast->imageLoadThreads = calloc(offblast->numImageLoadThreads, sizeof(pthread_t));
+
+    for (uint32_t i = 0; i < offblast->numImageLoadThreads; ++i) {
+        pthread_create(
+                &offblast->imageLoadThreads[i],
+                NULL,
+                imageLoadMain,
+                (void*)offblast);
+    }
+
+    SET_STATUS("Initializing interface...");
     // § Init UI
     MainUi *mainUi = &offblast->mainUi;
-    PlayerSelectUi *playerSelectUi = &offblast->playerSelectUi;
 
-    needsReRender(window);
+    needsReRender(offblast->window);
     mainUi->horizontalAnimation = calloc(1, sizeof(Animation));
     mainUi->verticalAnimation = calloc(1, sizeof(Animation));
     mainUi->infoAnimation = calloc(1, sizeof(Animation));
@@ -1612,6 +1614,237 @@ int main(int argc, char** argv) {
     mainUi->numContextMenuItems = 4;
     mainUi->contextMenuCursor = 0;
 
+
+    // Signal completion
+    pthread_mutex_lock(&state->mutex);
+    state->complete = 1;
+    pthread_mutex_unlock(&state->mutex);
+
+    return NULL;
+}
+
+int main(int argc, char** argv) {
+
+    printf("\nStarting up OffBlast with %d args.\n\n", argc);
+    offblast = calloc(1, sizeof(OffblastUi));
+
+
+    char *homePath = getenv("HOME");
+    assert(homePath);
+
+    char *configPath;
+    asprintf(&configPath, "%s/.offblast", homePath);
+    offblast->configPath = configPath;
+
+    char *coverPath;
+    asprintf(&coverPath, "%s/covers/", configPath);
+
+    int madeConfigDir;
+    madeConfigDir = mkdir(configPath, S_IRWXU);
+    madeConfigDir = mkdir(coverPath, S_IRWXU);
+
+    free(coverPath);
+    
+    if (madeConfigDir == 0) {
+        printf("Created offblast directory\n");
+    }
+    else {
+        switch (errno) {
+            case EEXIST:
+                break;
+
+            default:
+                printf("Couldn't create offblast dir %d\n", errno);
+                return errno;
+        }
+    }
+
+    // § EARLY SDL/OpenGL INIT FOR LOADING SCREEN
+    printf("Initializing SDL for loading screen...\n");
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
+        printf("SDL initialization failed: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+
+    offblast->window = SDL_CreateWindow("OffBlast",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        1920, 1080,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP);
+
+    if (offblast->window == NULL) {
+        printf("SDL window creation failed: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    SDL_GLContext glContext = SDL_GL_CreateContext(offblast->window);
+    if (glContext == NULL) {
+        printf("OpenGL context creation failed: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    glewInit();
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Get actual window size
+    SDL_GetWindowSize(offblast->window, &offblast->winWidth, &offblast->winHeight);
+    printf("Window size: %dx%d\n", offblast->winWidth, offblast->winHeight);
+
+    offblast->running = 1;
+
+    // § LOAD MINIMAL ASSETS FOR LOADING SCREEN
+    printf("Loading loading screen assets...\n");
+
+    // Calculate point sizes for fonts
+    offblast->infoPointSize = goldenRatioLarge(offblast->winWidth, 9);
+    offblast->textBitmapHeight = 1024;
+    offblast->textBitmapWidth = 2048;
+
+    // Load logo image
+    int w, h, n;
+    stbi_set_flip_vertically_on_load(1);
+    unsigned char *logoData = stbi_load("offblast_loading.png", &w, &h, &n, 4);
+    if (logoData) {
+        glGenTextures(1, &offblast->logoImage.textureHandle);
+        imageToGlTexture(&offblast->logoImage.textureHandle, logoData, w, h);
+        offblast->logoImage.width = w;
+        offblast->logoImage.height = h;
+        stbi_image_free(logoData);
+        printf("Loaded logo: %dx%d\n", w, h);
+    } else {
+        printf("Warning: Could not load offblast_loading.png for loading screen\n");
+    }
+
+    // Load info font for status text
+    FILE *fontFd = fopen("./fonts/Roboto-Regular.ttf", "r");
+    if (fontFd) {
+        fseek(fontFd, 0, SEEK_END);
+        long fontBytes = ftell(fontFd);
+        fseek(fontFd, 0, SEEK_SET);
+        unsigned char *fontContents = malloc(fontBytes);
+        fread(fontContents, fontBytes, 1, fontFd);
+        fclose(fontFd);
+
+        unsigned char *infoAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
+        stbtt_BakeFontBitmap(fontContents, 0, offblast->infoPointSize,
+            infoAtlas, offblast->textBitmapWidth, offblast->textBitmapHeight,
+            32, 95, offblast->infoCharData);
+
+        glGenTextures(1, &offblast->infoTextTexture);
+        glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RED,
+            offblast->textBitmapWidth, offblast->textBitmapHeight,
+            0, GL_RED, GL_UNSIGNED_BYTE, infoAtlas);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+        free(infoAtlas);
+        free(fontContents);
+        printf("Loaded font atlas\n");
+    } else {
+        printf("Warning: Could not load font for loading screen\n");
+    }
+
+    // Load shaders for rendering
+    GLuint vao;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+
+    GLint textVertShader = loadShaderFile("shaders/text.vert", GL_VERTEX_SHADER);
+    GLint textFragShader = loadShaderFile("shaders/text.frag", GL_FRAGMENT_SHADER);
+    if (textVertShader && textFragShader) {
+        offblast->textProgram = createShaderProgram(textVertShader, textFragShader);
+        offblast->textAlphaUni = glGetUniformLocation(offblast->textProgram, "myAlpha");
+    }
+
+    GLint imageVertShader = loadShaderFile("shaders/image.vert", GL_VERTEX_SHADER);
+    GLint imageFragShader = loadShaderFile("shaders/image.frag", GL_FRAGMENT_SHADER);
+    if (imageVertShader && imageFragShader) {
+        offblast->imageProgram = createShaderProgram(imageVertShader, imageFragShader);
+        offblast->imageTranslateUni = glGetUniformLocation(offblast->imageProgram, "myOffset");
+        offblast->imageAlphaUni = glGetUniformLocation(offblast->imageProgram, "myAlpha");
+        offblast->imageDesaturateUni = glGetUniformLocation(offblast->imageProgram, "whiteMix");
+    }
+
+    printf("Shaders loaded\n");
+
+    // § START LOADING SCREEN
+    printf("Starting loading screen...\n");
+    pthread_mutex_init(&offblast->loadingState.mutex, NULL);
+    offblast->loadingMode = 1;
+
+    // Set initial status
+    pthread_mutex_lock(&offblast->loadingState.mutex);
+    snprintf(offblast->loadingState.status, 256, "Initializing...");
+    offblast->loadingState.progress = 0;
+    offblast->loadingState.progressTotal = 0;
+    offblast->loadingState.complete = 0;
+    offblast->loadingState.error = 0;
+    pthread_mutex_unlock(&offblast->loadingState.mutex);
+
+    // Spawn init thread
+    pthread_t initThread;
+    pthread_create(&initThread, NULL, initThreadFunc, offblast);
+
+    // Loading screen render loop
+    while (offblast->loadingMode && offblast->running) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) {
+                offblast->running = 0;
+                offblast->loadingMode = 0;
+            }
+        }
+
+        renderLoadingScreen(offblast);
+
+        // Check if init complete
+        pthread_mutex_lock(&offblast->loadingState.mutex);
+        if (offblast->loadingState.complete && !offblast->exitAnimating) {
+            // Start exit animation
+            offblast->exitAnimating = 1;
+            offblast->exitAnimationStartTick = SDL_GetTicks();
+        }
+        if (offblast->loadingState.error) {
+            // Handle error - display message and exit
+            printf("Error during initialization: %s\n", offblast->loadingState.errorMsg);
+            offblast->running = 0;
+            offblast->loadingMode = 0;
+        }
+        pthread_mutex_unlock(&offblast->loadingState.mutex);
+
+        // Check if exit animation complete (0.61 seconds = 610ms)
+        if (offblast->exitAnimating) {
+            uint32_t elapsed = SDL_GetTicks() - offblast->exitAnimationStartTick;
+            if (elapsed >= 610) {
+                offblast->loadingMode = 0;
+            }
+        }
+
+        SDL_Delay(16);  // ~60 FPS
+    }
+
+    pthread_join(initThread, NULL);
+    pthread_mutex_destroy(&offblast->loadingState.mutex);
+
+    printf("Loading screen complete\n");
+
+    // Heavy non-GL init is done in thread above.
+    // Now run GL-dependent initialization in main thread:
+
+    // Additional GL setup
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CW);
+
+    // Set up convenience pointers for GL init
+    MainUi *mainUi = &offblast->mainUi;
+    PlayerSelectUi *playerSelectUi = &offblast->playerSelectUi;
+
     // Missing Cover texture init
     {
         // TODO assets dir
@@ -1659,8 +1892,13 @@ int main(int argc, char** argv) {
     offblast->textBitmapHeight = 1024;
     offblast->textBitmapWidth = 2048;
 
+    // Calculate all font point sizes
+    offblast->titlePointSize = goldenRatioLarge(offblast->winWidth, 7);
+    offblast->infoPointSize = goldenRatioLarge(offblast->winWidth, 9);
+    offblast->debugPointSize = goldenRatioLarge(offblast->winWidth, 11);
+
     // TODO this should be a function karl
-    
+
     unsigned char *titleAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
 
     stbtt_BakeFontBitmap(fontContents, 0, offblast->titlePointSize, 
@@ -1721,12 +1959,21 @@ int main(int argc, char** argv) {
 
     offblast->player.jsIndex = -1;
     playerSelectUi->images = calloc(offblast->nUsers, sizeof(Image));
-    playerSelectUi->widthForAvatar = 
+    playerSelectUi->widthForAvatar =
         calloc(offblast->nUsers+1, sizeof(float));
     assert(playerSelectUi->widthForAvatar);
-    playerSelectUi->xOffsetForAvatar = 
+    playerSelectUi->xOffsetForAvatar =
         calloc(offblast->nUsers+1, sizeof(float));
     assert(playerSelectUi->xOffsetForAvatar);
+
+    // Set up UI dimensions needed for avatar sizing
+    // (These must match what needsReRender() calculates)
+    offblast->winFold = offblast->winHeight * 0.5;
+    offblast->winMargin = goldenRatioLarge((double) offblast->winWidth, 5);
+    mainUi->boxHeight = goldenRatioLarge(offblast->winWidth, 4);
+    mainUi->boxPad = goldenRatioLarge((double) offblast->winWidth, 9);
+    mainUi->descriptionWidth = goldenRatioLarge((double) offblast->winWidth, 1) - offblast->winMargin;
+    mainUi->descriptionHeight = goldenRatioLarge(offblast->winWidth, 3);
 
     for (uint32_t i = 0; i < offblast->nUsers; ++i) {
 
@@ -1767,56 +2014,21 @@ int main(int argc, char** argv) {
 
     }
 
-    GLuint vao;
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
-
-    // Text Pipeline
-    GLint textVertShader = loadShaderFile("shaders/text.vert", 
+    // Gradient Pipeline (text and image pipelines already loaded early for loading screen)
+    GLint gradientVertShader = loadShaderFile("shaders/gradient.vert",
             GL_VERTEX_SHADER);
-    GLint textFragShader = loadShaderFile("shaders/text.frag", 
-            GL_FRAGMENT_SHADER);
-    assert(textVertShader);
-    assert(textFragShader);
-
-    offblast->textProgram = 
-        createShaderProgram(textVertShader, textFragShader);
-    assert(offblast->textProgram);
-
-    offblast->textAlphaUni = glGetUniformLocation(
-            offblast->textProgram, "myAlpha");
-
-
-    // Image Pipeline
-    GLint imageVertShader = loadShaderFile("shaders/image.vert", 
-            GL_VERTEX_SHADER);
-    GLint imageFragShader = loadShaderFile("shaders/image.frag", 
-            GL_FRAGMENT_SHADER);
-    assert(imageVertShader);
-    assert(imageFragShader);
-
-    offblast->imageProgram = createShaderProgram(imageVertShader, imageFragShader);
-    assert(offblast->imageProgram);
-    offblast->imageTranslateUni = glGetUniformLocation(
-            offblast->imageProgram, "myOffset");
-    offblast->imageAlphaUni = glGetUniformLocation(
-            offblast->imageProgram, "myAlpha");
-    offblast->imageDesaturateUni = glGetUniformLocation(
-            offblast->imageProgram, "whiteMix");
-
-    // Gradient Pipeline
-    GLint gradientVertShader = loadShaderFile("shaders/gradient.vert", 
-            GL_VERTEX_SHADER);
-    GLint gradientFragShader = loadShaderFile("shaders/gradient.frag", 
+    GLint gradientFragShader = loadShaderFile("shaders/gradient.frag",
             GL_FRAGMENT_SHADER);
     assert(gradientVertShader);
     assert(gradientFragShader);
-    offblast->gradientProgram = createShaderProgram(gradientVertShader, 
+    offblast->gradientProgram = createShaderProgram(gradientVertShader,
             gradientFragShader);
     assert(offblast->gradientProgram);
+    offblast->gradientColorStartUniform = glGetUniformLocation(
+            offblast->gradientProgram, "colorStart");
+    offblast->gradientColorEndUniform = glGetUniformLocation(
+            offblast->gradientProgram, "colorEnd");
 
-
-    offblast->running = 1;
     uint32_t lastTick = SDL_GetTicks();
     uint32_t renderFrequency = 1000/60;
 
@@ -1840,11 +2052,10 @@ int main(int argc, char** argv) {
 
     updateHomeLists();
 
-
     // § Main loop
     while (offblast->running) {
 
-        if (needsReRender(window) == 1) {
+        if (needsReRender(offblast->window) == 1) {
             printf("Window size changed, sizes updated.\n");
             mainUi->rowGeometryInvalid = 1;
         }
@@ -1970,10 +2181,10 @@ int main(int argc, char** argv) {
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
                     pressConfirm(-1);
-                    SDL_RaiseWindow(window);
+                    SDL_RaiseWindow(offblast->window);
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_F) {
-                    SDL_SetWindowFullscreen(window, 
+                    SDL_SetWindowFullscreen(offblast->window,
                             SDL_WINDOW_FULLSCREEN_DESKTOP);
                 }
                 else if (
@@ -2758,7 +2969,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        SDL_GL_SwapWindow(window);
+        SDL_GL_SwapWindow(offblast->window);
 
         if (SDL_GetTicks() - lastTick < renderFrequency) {
             SDL_Delay(renderFrequency - (SDL_GetTicks() - lastTick));
@@ -2767,11 +2978,9 @@ int main(int argc, char** argv) {
         lastTick = SDL_GetTicks();
     }
 
-    free(launcherContentsHashFilePath);
     XCloseDisplay(offblast->XDisplay);
 
-    SDL_GL_DeleteContext(glContext);
-    SDL_DestroyWindow(window);
+    SDL_DestroyWindow(offblast->window);
     SDL_Quit();
 
     if (offblast->shutdownFlag) {
@@ -2779,9 +2988,10 @@ int main(int argc, char** argv) {
         system("systemctl poweroff");
     }
 
-    for (uint32_t i = 0; i < totalLoaderThreads; ++i) {
-        pthread_kill(imageLoadThreads[i], SIGTERM);
+    for (uint32_t i = 0; i < offblast->numImageLoadThreads; ++i) {
+        pthread_kill(offblast->imageLoadThreads[i], SIGTERM);
     }
+    free(offblast->imageLoadThreads);
     pthread_mutex_destroy(&offblast->imageStoreLock);
 
 
@@ -4559,6 +4769,93 @@ void renderImage(float x, float y, float w, float h, Image* image,
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
+void renderLoadingScreen(OffblastUi *offblast) {
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Check if exit animation is active
+    float exitProgress = 0.0f;
+    float textAlpha = 1.0f;
+    if (offblast->exitAnimating) {
+        uint32_t elapsed = SDL_GetTicks() - offblast->exitAnimationStartTick;
+        exitProgress = (float)elapsed / 610.0f;  // 0.61 seconds
+        if (exitProgress > 1.0f) exitProgress = 1.0f;
+        textAlpha = 1.0f - exitProgress;  // Fade out text
+    }
+
+    // Calculate breathing scale with natural pause at peaks
+    float t = (float)SDL_GetTicks() / 1000.0f;
+    float rawSin = sinf(t * 0.75f);  // 0.75Hz (50% slower)
+    // Square the sine to create pauses at extremes (±1) and fast through middle (0)
+    // sin² has derivative = sin(2t), which is 0 at the peaks
+    float breathCurve = rawSin * rawSin;  // [0, 1] with pauses at 0 and 1
+    float breathScale = 0.95f + 0.10f * breathCurve;  // Map to [0.95, 1.05]
+
+    // Render centered logo with breathing effect
+    // Size logo to 8% of widest screen dimension
+    float maxDimension = offblast->winWidth > offblast->winHeight ?
+                         offblast->winWidth : offblast->winHeight;
+
+    // Calculate base size without breathing for static positioning
+    float baseSize = maxDimension * 0.08f;
+    float baseScale = baseSize / offblast->logoImage.width;
+    float baseLogoW = offblast->logoImage.width * baseScale;
+    float baseLogoH = offblast->logoImage.height * baseScale;
+
+    // Apply breathing to the actual rendered size
+    float logoW = baseLogoW * breathScale;
+    float logoH = baseLogoH * breathScale;
+
+    // Apply exit animation shrink
+    if (offblast->exitAnimating) {
+        float shrinkScale = 1.0f - exitProgress;  // Shrink from 1 to 0
+        logoW *= shrinkScale;
+        logoH *= shrinkScale;
+    }
+
+    // Center logo (breathing happens around this center point)
+    float logoX = (offblast->winWidth - logoW) / 2.0f;
+    float logoY = (offblast->winHeight - logoH) / 2.0f + 50;  // Slightly above center
+
+    renderImage(logoX, logoY, logoW, logoH, &offblast->logoImage, 0.0f, 1.0f);
+
+    // Get current status (mutex protected)
+    char status[256];
+    uint32_t progress = 0, total = 0;
+    pthread_mutex_lock(&offblast->loadingState.mutex);
+    strncpy(status, offblast->loadingState.status, 256);
+    progress = offblast->loadingState.progress;
+    total = offblast->loadingState.progressTotal;
+    pthread_mutex_unlock(&offblast->loadingState.mutex);
+
+    // Render status text centered below logo (using static base position)
+    char displayText[300];
+    if (total > 0) {
+        snprintf(displayText, 300, "%s (%u/%u)", status, progress, total);
+    } else if (progress > 0) {
+        snprintf(displayText, 300, "%s (%u)", status, progress);
+    } else {
+        snprintf(displayText, 300, "%s", status);
+    }
+
+    // Position text below logo using golden ratio spacing
+    // Calculate base logo position (without breathing)
+    float baseLogoY = (offblast->winHeight - baseLogoH) / 2.0f + 50;
+
+    // The logo top edge is at baseLogoY + baseLogoH
+    // Position text below the logo bottom with golden ratio spacing
+    float spacing = goldenRatioLargef(baseLogoH, 1);
+    float textY = baseLogoY - spacing;
+
+    // Center text horizontally
+    uint32_t textWidth = getTextLineWidth(displayText, offblast->infoCharData);
+    float textX = (offblast->winWidth - textWidth) / 2.0f;
+
+    renderText(offblast, textX, textY, OFFBLAST_TEXT_INFO, textAlpha, 0, displayText);
+
+    SDL_GL_SwapWindow(offblast->window);
+}
+
 void updateHomeLists(){
 
     LaunchTargetFile *launchTargetFile = offblast->launchTargetFile;
@@ -6137,6 +6434,14 @@ void importFromSteam(Launcher *theLauncher) {
         // Process each game
         for (uint32_t i = 0; i < steamGames->count; i++) {
             SteamGame *sg = &steamGames->games[i];
+
+            // Update progress
+            if (offblast->loadingMode) {
+                pthread_mutex_lock(&offblast->loadingState.mutex);
+                offblast->loadingState.progress = i + 1;
+                offblast->loadingState.progressTotal = steamGames->count;
+                pthread_mutex_unlock(&offblast->loadingState.mutex);
+            }
 
             // Create ID string
             char appIdStr[32];

@@ -31,10 +31,19 @@ Both now implemented in launch().
 Rescrape functionality seems to corrupt or break game descriptions.
 
 ### Manual Cover Adding
-Some Steam games don't have 600x900 covers on Steam's CDN (e.g., delisted games like Tales of Symphonia).
-- Add a way to copy the expected cover filename to clipboard (e.g., `{targetSignature}.jpg`)
-- User can then download cover from LaunchBox/SteamGridDB, rename it, and add to `~/.offblast/covers/`
-- Maybe a keyboard shortcut on a game tile to trigger this
+**SOLVED:** Context menu (Start button) provides:
+- "Copy Cover Filename" - copies `{targetSignature}.jpg` to clipboard
+- "Refresh Cover" - reloads texture without restarting
+- User downloads cover from LaunchBox/SteamGridDB, renames it, adds to `~/.offblast/covers/`
+
+### Loading Screen
+**SOLVED:** Animated loading screen with threaded initialization:
+- Breathing rocket animation during startup
+- Real-time status updates showing initialization progress
+- Progress counters for Steam library fetching and game metadata loading
+- Smooth exit animation (logo shrinks to dot, text fades out over 0.61s)
+- Heavy initialization runs in background thread for responsive UI
+- Early SDL/OpenGL init allows loading screen to appear immediately
 
 ### CSV Corruption Checking
 Validate CSV files on load.
@@ -65,13 +74,6 @@ Support keyboard input for search (currently controller-only).
 ---
 
 ## Planned Features
-
-### Loading/Status Window
-Replace console output with a visual loading window for startup operations:
-- Steam API fetching progress
-- OpenGameDB scanning
-- Cover art downloading
-Move away from dumping everything to console.
 
 ### Discord Rich Presence
 Show currently playing game in Discord status.

@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Added
+- **Animated loading screen with threaded initialization**
+  - Beautiful breathing rocket animation during startup
+  - Real-time status updates showing exactly what's initializing
+  - Progress counters for Steam library fetching and game metadata loading
+  - Smooth 0.61 second exit animation (logo shrinks to dot, text fades out)
+  - Heavy initialization runs in background thread to keep UI responsive
+  - Proper separation of OpenGL and non-GL initialization for thread safety
+  - Early SDL/OpenGL init allows loading screen to appear immediately
 - **Steam Web API integration** for complete library display
   - Shows all owned Steam games, not just installed ones
   - Requires `steam.api_key` and `steam.steam_id` in config.json
