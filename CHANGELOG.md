@@ -12,6 +12,12 @@
   - Heavy initialization runs in background thread to keep UI responsive
   - Proper separation of OpenGL and non-GL initialization for thread safety
   - Early SDL/OpenGL init allows loading screen to appear immediately
+- **Playtime display in game info panel**
+  - Shows total hours/minutes played for games in your playtime file
+  - Displays as "15.2 hrs" for games played over 1 hour
+  - Displays as "45 mins" for games played under 1 hour
+  - Rendered at 81% opacity to visually de-emphasize from core metadata
+  - Only appears if game has been played (not shown for unplayed games)
 - **Steam Web API integration** for complete library display
   - Shows all owned Steam games, not just installed ones
   - Requires `steam.api_key` and `steam.steam_id` in config.json

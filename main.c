@@ -300,6 +300,7 @@ typedef struct MainUi {
 
     char *titleText;
     char *infoText;
+    char *playtimeText;
     char *descriptionText;
 
     char *rowNameText;
@@ -2527,8 +2528,15 @@ int main(int argc, char** argv) {
 
 
                 pixelY -= offblast->infoPointSize * 1.4;
-                renderText(offblast, offblast->winMargin, pixelY, 
+                renderText(offblast, offblast->winMargin, pixelY,
                         OFFBLAST_TEXT_INFO, alpha, 0, mainUi->infoText);
+
+                // Render playtime text (if any) right after infoText with reduced alpha
+                if (mainUi->playtimeText != NULL) {
+                    uint32_t infoWidth = getTextLineWidth(mainUi->infoText, offblast->infoCharData);
+                    renderText(offblast, offblast->winMargin + infoWidth, pixelY,
+                            OFFBLAST_TEXT_INFO, alpha * 0.81f, 0, mainUi->playtimeText);
+                }
 
 
                 pixelY -= offblast->infoPointSize + mainUi->boxPad;
@@ -4391,6 +4399,16 @@ void updateInfoText() {
         return;
     }
 
+    // Look up playtime for this game
+    PlayTime *pt = NULL;
+    for (uint32_t i = 0; i < offblast->playTimeFile->nEntries; ++i) {
+        if (offblast->playTimeFile->entries[i].targetSignature == target->targetSignature) {
+            pt = &offblast->playTimeFile->entries[i];
+            break;
+        }
+    }
+
+    // Build base info string (without playtime)
     if (target->ranking == 999) {
         asprintf(&infoString, "%.4s  |  %s  |  No score",
                 target->date,
@@ -4401,8 +4419,29 @@ void updateInfoText() {
                 platformString(target->platform),
                 target->ranking);
     }
-
     offblast->mainUi.infoText = infoString;
+
+    // Build playtime string separately (will be rendered with reduced alpha)
+    if (offblast->mainUi.playtimeText != NULL) {
+        free(offblast->mainUi.playtimeText);
+        offblast->mainUi.playtimeText = NULL;
+    }
+
+    if (pt && pt->msPlayed > 0) {
+        // Convert ms to hours or minutes
+        float hours = pt->msPlayed / (1000.0f * 60.0f * 60.0f);
+        char *timeStr;
+
+        if (hours < 1.0f) {
+            // Show in minutes if less than 1 hour
+            int mins = (int)(pt->msPlayed / (1000.0f * 60.0f));
+            asprintf(&timeStr, "  |  %d mins", mins);
+        } else {
+            asprintf(&timeStr, "  |  %.1f hrs", hours);
+        }
+
+        offblast->mainUi.playtimeText = timeStr;
+    }
 }
 
 void updateDescriptionText() {

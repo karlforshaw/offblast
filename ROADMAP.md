@@ -79,7 +79,11 @@ Refactor animation system - queue animations instead of repeating code. Need to 
 Games with poor match scores should be logged to the missing games log. Currently allowing bad matches through as long as the proper game isn't present.
 
 ### Hours Played in Info Panel
-Show total playtime in the game info display.
+**SOLVED:** Playtime now displayed in game info panel:
+- Shows hours (1 decimal) for games played > 1 hour: "15.2 hrs"
+- Shows minutes for games played < 1 hour: "45 mins"
+- Rendered at 81% opacity to de-emphasize from core metadata
+- Only shown for games with recorded playtime
 
 ### Steam Playtime Integration
 Steam API returns `playtime_forever` for each game. Either:
