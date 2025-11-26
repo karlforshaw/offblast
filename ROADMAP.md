@@ -53,17 +53,15 @@ Both now implemented in launch().
 Validate CSV files on load.
 
 ### Multi-Region Game Deduplication
-Handle platforms with multiple regional entries per game (PS Vita, etc.):
-- OpenGameDB contains separate entries for US/EU/JP versions of same game
-- Regional variants often have identical titles (e.g., 4 "Uncharted: Golden Abyss" entries)
-- "Essential" and other curated lists show duplicates (2-4 entries per game)
-- Solution: Deduplicate by exact title match when building curated lists
+**SOLVED:** Essential lists now deduplicate regional variants:
+- Case-insensitive title matching catches duplicates like "Persona 4 Golden" (US/EU/JP)
 - When duplicates found, prioritize:
   1. Owned version (has path set) - show the version user actually has
-  2. Highest score (if neither or both owned)
+  2. Highest score (if neither or both owned - already sorted)
   3. First entry (fallback)
-- All Games view can still show all regional variants
-- No OpenGameDB schema changes needed
+- Essential lists collect ALL platform games, sort by ranking, deduplicate, then take top 25
+- All Games view still shows all regional variants
+- Note: Some regional variants have different titles in OpenGameDB (e.g., "The GOLDEN") - data quality issue
 
 ### Missing Score Handling
 **SOLVED:** Games without scores now properly handled:
