@@ -604,9 +604,7 @@ void doRescrapePlatform() {
 }
 
 void doRescrapeGame() {
-    snprintf(offblast->statusMessage, 256, "Not implemented yet");
-    offblast->statusMessageTick = SDL_GetTicks();
-    offblast->statusMessageDuration = 2000;
+    rescrapeCurrentLauncher(0);  // 0 = single game only
 }
 
 void doCopyCoverFilename() {
