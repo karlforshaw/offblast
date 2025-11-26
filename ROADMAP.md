@@ -58,18 +58,21 @@ Handle platforms with multiple regional entries per game (PS Vita, etc.):
 - Regional variants often have identical titles (e.g., 4 "Uncharted: Golden Abyss" entries)
 - "Essential" and other curated lists show duplicates (2-4 entries per game)
 - Solution: Deduplicate by exact title match when building curated lists
-- When duplicates found, prioritize: owned version > highest score > first entry
+- When duplicates found, prioritize:
+  1. Owned version (has path set) - show the version user actually has
+  2. Highest score (if neither or both owned)
+  3. First entry (fallback)
 - All Games view can still show all regional variants
 - No OpenGameDB schema changes needed
 
 ### Missing Score Handling
-Improve handling of games without scores:
-- Currently games missing both gf_score and metascore from CSV may get score of 0 or undefined value
-- Set ranking to sentinel value (999) when no valid score available
-- UI should filter games with score=999 from Essential/Top Rated lists
-- UI should hide or show "No score" for games with score=999 when browsing
-- Prevents unrated games from appearing in curated lists
-- Makes score display more honest (no fake zeros)
+**SOLVED:** Games without scores now properly handled:
+- Ranking set to sentinel value (999) when no valid score available
+- Essential lists filter out games with ranking=999
+- Essential lists now sorted by ranking (highest-rated first)
+- Info display shows "No score" instead of "999%" when browsing unscored games
+- Prevents unrated games from polluting curated lists
+- Honest score display (no fake zeros)
 
 ### Animation System Improvements
 Refactor animation system - queue animations instead of repeating code. Need to rethink input modes and the system in general.
