@@ -47,6 +47,7 @@ appimage: ${PROG}
 	@echo "Copying resource files..."
 	cp guest-512.jpg AppImageBuild/offblast.AppDir/usr/bin/
 	cp missingcover.png AppImageBuild/offblast.AppDir/usr/bin/
+	cp offblast_loading.png AppImageBuild/offblast.AppDir/usr/bin/
 
 	@echo "Fetching OpenGameDB from GitHub..."
 	@if [ ! -d "AppImageBuild/opengamedb" ]; then \
