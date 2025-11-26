@@ -86,9 +86,12 @@ Games with poor match scores should be logged to the missing games log. Currentl
 - Only shown for games with recorded playtime
 
 ### Steam Playtime Integration
-Steam API returns `playtime_forever` for each game. Either:
-- Translate Steam playtime to our PlayTime format, or
-- Bypass our playtime tracking entirely for Steam games and use Steam's data directly
+**SOLVED:** Steam playtime data now syncs to offblast playtime file:
+- Converts Steam's `playtime_forever` (minutes) to offblast format (milliseconds)
+- Syncs automatically on every app startup
+- Overwrites local data with Steam's authoritative playtime
+- Steam games appear in Most Played lists with accurate hours
+- Reordered initialization to load users → playtime file → launchers
 
 ### Steam Offline Handling
 What happens when Steam is configured but there's no internet connection? Currently the API call will fail and fall back to local appmanifest scanning, but need to verify this gracefully handles:

@@ -18,6 +18,12 @@
   - Displays as "45 mins" for games played under 1 hour
   - Rendered at 81% opacity to visually de-emphasize from core metadata
   - Only appears if game has been played (not shown for unplayed games)
+- **Steam playtime integration**
+  - Steam's `playtime_forever` data automatically synced to offblast playtime file
+  - Syncs on every app startup for up-to-date Steam playtime
+  - Converts Steam minutes to offblast milliseconds format
+  - Overwrites local playtime with Steam's authoritative data
+  - Steam games now show accurate playtime in info panel and Most Played lists
 - **Steam Web API integration** for complete library display
   - Shows all owned Steam games, not just installed ones
   - Requires `steam.api_key` and `steam.steam_id` in config.json

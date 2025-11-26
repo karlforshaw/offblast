@@ -1166,6 +1166,73 @@ void *initThreadFunc(void *arg) {
     }
 
 
+    SET_STATUS("Loading user profiles...");
+
+    json_object *usersObject = NULL;
+    json_object_object_get_ex(configObj, "users", &usersObject);
+
+    offblast->nUsers = json_object_array_length(usersObject);
+
+    offblast->users = calloc(offblast->nUsers, sizeof(User));
+
+    uint32_t iUser;
+    for (iUser = 0; iUser < offblast->nUsers; iUser++) {
+        json_object *workingUserNode = json_object_array_get_idx(usersObject, iUser);
+        User *pUser = &offblast->users[iUser];
+
+        // Initialize custom field arrays
+        pUser->numCustomFields = 0;
+        pUser->customKeys = NULL;
+        pUser->customValues = NULL;
+
+        // Count custom fields first (to allocate arrays)
+        int customFieldCount = 0;
+        json_object_object_foreach(workingUserNode, key, val) {
+            if (strcmp(key, "name") != 0 &&
+                strcmp(key, "email") != 0 &&
+                strcmp(key, "avatar") != 0) {
+                customFieldCount++;
+            }
+        }
+
+        // Allocate arrays for custom fields
+        if (customFieldCount > 0) {
+            pUser->customKeys = calloc(customFieldCount, sizeof(char*));
+            pUser->customValues = calloc(customFieldCount, sizeof(char*));
+        }
+
+        // Parse all fields dynamically
+        json_object_object_foreach(workingUserNode, key2, val2) {
+            const char *value = json_object_get_string(val2);
+            if (value == NULL) continue;
+
+            if (strcmp(key2, "name") == 0) {
+                uint32_t len = (strlen(value) < 256) ? strlen(value) : 255;
+                memcpy(&pUser->name, value, len);
+            }
+            else if (strcmp(key2, "email") == 0) {
+                uint32_t len = (strlen(value) < 512) ? strlen(value) : 511;
+                memcpy(&pUser->email, value, len);
+            }
+            else if (strcmp(key2, "avatar") == 0) {
+                uint32_t len = (strlen(value) < PATH_MAX) ? strlen(value) : PATH_MAX - 1;
+                memcpy(&pUser->avatarPath, value, len);
+            }
+            else {
+                // Store as custom field
+                pUser->customKeys[pUser->numCustomFields] = strdup(key2);
+                pUser->customValues[pUser->numCustomFields] = strdup(value);
+                printf("User %s has custom field: %s = %s\n",
+                       pUser->name, key2, value);
+                pUser->numCustomFields++;
+            }
+        }
+    }
+
+    json_tokener_free(tokener);
+
+    SET_STATUS("Loading playtime data...");
+    loadPlaytimeFile();
 
     offblast->platforms = calloc(MAX_PLATFORMS, 256 * sizeof(char));
 
@@ -1437,73 +1504,6 @@ void *initThreadFunc(void *arg) {
     close(launchTargetDb.fd);
 
 
-    SET_STATUS("Loading user profiles...");
-
-    json_object *usersObject = NULL;
-    json_object_object_get_ex(configObj, "users", &usersObject);
-
-    offblast->nUsers = json_object_array_length(usersObject);
-
-    offblast->users = calloc(offblast->nUsers, sizeof(User));
-
-    uint32_t iUser;
-    for (iUser = 0; iUser < offblast->nUsers; iUser++) {
-        json_object *workingUserNode = json_object_array_get_idx(usersObject, iUser);
-        User *pUser = &offblast->users[iUser];
-
-        // Initialize custom field arrays
-        pUser->numCustomFields = 0;
-        pUser->customKeys = NULL;
-        pUser->customValues = NULL;
-
-        // Count custom fields first (to allocate arrays)
-        int customFieldCount = 0;
-        json_object_object_foreach(workingUserNode, key, val) {
-            if (strcmp(key, "name") != 0 &&
-                strcmp(key, "email") != 0 &&
-                strcmp(key, "avatar") != 0) {
-                customFieldCount++;
-            }
-        }
-
-        // Allocate arrays for custom fields
-        if (customFieldCount > 0) {
-            pUser->customKeys = calloc(customFieldCount, sizeof(char*));
-            pUser->customValues = calloc(customFieldCount, sizeof(char*));
-        }
-
-        // Parse all fields dynamically
-        json_object_object_foreach(workingUserNode, key2, val2) {
-            const char *value = json_object_get_string(val2);
-            if (value == NULL) continue;
-
-            if (strcmp(key2, "name") == 0) {
-                uint32_t len = (strlen(value) < 256) ? strlen(value) : 255;
-                memcpy(&pUser->name, value, len);
-            }
-            else if (strcmp(key2, "email") == 0) {
-                uint32_t len = (strlen(value) < 512) ? strlen(value) : 511;
-                memcpy(&pUser->email, value, len);
-            }
-            else if (strcmp(key2, "avatar") == 0) {
-                uint32_t len = (strlen(value) < PATH_MAX) ? strlen(value) : PATH_MAX - 1;
-                memcpy(&pUser->avatarPath, value, len);
-            }
-            else {
-                // Store as custom field
-                pUser->customKeys[pUser->numCustomFields] = strdup(key2);
-                pUser->customValues[pUser->numCustomFields] = strdup(value);
-                printf("User %s has custom field: %s = %s\n",
-                       pUser->name, key2, value);
-                pUser->numCustomFields++;
-            }
-        }
-    }
-
-    json_tokener_free(tokener);
-
-    SET_STATUS("Loading playtime data...");
-    loadPlaytimeFile();
 
     // Window manager setup (after window already created early)
     char *windowManager = getenv("XDG_CURRENT_DESKTOP");
@@ -6713,6 +6713,42 @@ void importFromSteam(Launcher *theLauncher) {
                 target->launcherSignature = theLauncher->signature;
             } else {
                 target->launcherSignature = 0;
+            }
+
+            // Sync Steam playtime to our playtime file
+            if (sg->playtime_forever > 0) {
+                // Convert Steam minutes to our milliseconds
+                uint32_t msPlayed = sg->playtime_forever * 60 * 1000;
+
+                // Find or create PlayTime entry
+                PlayTime *pt = NULL;
+                for (uint32_t j = 0; j < offblast->playTimeFile->nEntries; ++j) {
+                    if (offblast->playTimeFile->entries[j].targetSignature == target->targetSignature) {
+                        pt = &offblast->playTimeFile->entries[j];
+                        break;
+                    }
+                }
+
+                if (pt == NULL) {
+                    // Create new entry
+                    void *growState = growDbFileIfNecessary(
+                            &offblast->playTimeDb,
+                            sizeof(PlayTime),
+                            OFFBLAST_DB_TYPE_FIXED);
+
+                    if (growState != NULL) {
+                        offblast->playTimeFile = (PlayTimeFile*) growState;
+                        pt = &offblast->playTimeFile->entries[offblast->playTimeFile->nEntries++];
+                        pt->targetSignature = target->targetSignature;
+                        pt->lastPlayed = 0;  // Steam doesn't provide this
+                    }
+                }
+
+                if (pt != NULL) {
+                    // Update playtime from Steam (overwrite with Steam's authoritative data)
+                    pt->msPlayed = msPlayed;
+                    // Keep existing lastPlayed - Steam API doesn't provide this
+                }
             }
 
             // Fetch metadata if missing (date is empty means no metadata yet)
