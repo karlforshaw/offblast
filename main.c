@@ -525,6 +525,8 @@ void initQuad(Quad* quad);
 size_t curlWrite(void *contents, size_t size, size_t nmemb, void *userP);
 int playTimeSort(const void *a, const void *b);
 int lastPlayedSort(const void *a, const void *b);
+int rankingSort(const void *a, const void *b);
+int tileRankingSort(const void *a, const void *b);
 uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata);
 void renderText(OffblastUi *offblast, float x, float y, 
         uint32_t textMode, float alpha, uint32_t lineMaxW, char *string);
@@ -1078,6 +1080,10 @@ void *initThreadFunc(void *arg) {
                             }
                         }
 
+                        // If no valid score, use sentinel value
+                        if (score == -1) {
+                            score = 999;
+                        }
 
                         void *pDescriptionFile = growDbFileIfNecessary(
                                     &offblast->descriptionDb,
@@ -4377,10 +4383,16 @@ void updateInfoText() {
         return;
     }
 
-    asprintf(&infoString, "%.4s  |  %s  |  %u%%", 
-            target->date, 
-            platformString(target->platform),
-            target->ranking);
+    if (target->ranking == 999) {
+        asprintf(&infoString, "%.4s  |  %s  |  No score",
+                target->date,
+                platformString(target->platform));
+    } else {
+        asprintf(&infoString, "%.4s  |  %s  |  %u%%",
+                target->date,
+                platformString(target->platform),
+                target->ranking);
+    }
 
     offblast->mainUi.infoText = infoString;
 }
@@ -4439,6 +4451,34 @@ int lastPlayedSort(const void *a, const void *b) {
     if (ra->lastPlayed < rb->lastPlayed)
         return -1;
     else if (ra->lastPlayed > rb->lastPlayed)
+        return +1;
+    else
+        return 0;
+}
+
+int rankingSort(const void *a, const void *b) {
+
+    LaunchTarget *ra = (LaunchTarget*) a;
+    LaunchTarget *rb = (LaunchTarget*) b;
+
+    // Higher ranking comes first (descending order)
+    if (ra->ranking > rb->ranking)
+        return -1;
+    else if (ra->ranking < rb->ranking)
+        return +1;
+    else
+        return 0;
+}
+
+int tileRankingSort(const void *a, const void *b) {
+
+    UiTile *ta = (UiTile*) a;
+    UiTile *tb = (UiTile*) b;
+
+    // Higher ranking comes first (descending order)
+    if (ta->target->ranking > tb->target->ranking)
+        return -1;
+    else if (ta->target->ranking < tb->target->ranking)
         return +1;
     else
         return 0;
@@ -5110,12 +5150,12 @@ void updateHomeLists(){
                     continue;
                 }
 
+                // Skip games with no score (sentinel value)
+                if (target->ranking == 999) {
+                    continue;
+                }
+
                 tiles[numTiles].target = target;
-                tiles[numTiles].next = &tiles[numTiles+1];
-
-                if (numTiles != 0)
-                    tiles[numTiles].previous = &tiles[numTiles-1];
-
                 numTiles++;
             }
 
@@ -5123,8 +5163,14 @@ void updateHomeLists(){
         }
 
         if (numTiles > 0) {
-            tiles[numTiles-1].next = NULL;
-            tiles[0].previous = NULL;
+            // Sort tiles by ranking (highest first)
+            qsort(tiles, numTiles, sizeof(UiTile), tileRankingSort);
+
+            // Now link the sorted tiles together
+            for (uint32_t i = 0; i < numTiles; i++) {
+                tiles[i].next = (i < numTiles - 1) ? &tiles[i + 1] : NULL;
+                tiles[i].previous = (i > 0) ? &tiles[i - 1] : NULL;
+            }
 
             if (mainUi->homeRowset->rows[mainUi->homeRowset->numRows].tiles 
                     != NULL) {
@@ -5589,6 +5635,8 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
                 }
                 if (meta->score > 0) {
                     target->ranking = meta->score;
+                } else {
+                    target->ranking = 999;  // No score available
                 }
                 if (meta->description) {
                     target->descriptionOffset = writeDescriptionBlob(target, meta->description);
@@ -5596,6 +5644,9 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
                 printf("  Date: %s, Score: %u\n", meta->date, meta->score);
                 freeSteamMetadata(meta);
                 updated++;
+            } else {
+                // API fetch failed, set sentinel
+                target->ranking = 999;
             }
 
             offblast->rescrapeProcessed = updated;
@@ -5839,7 +5890,10 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
                         score = (score + atof(metaScoreString)) / 2;
                     }
                 }
-                if (score > 0) {
+                // Set sentinel value if no valid score
+                if (score == -1) {
+                    target->ranking = 999;
+                } else {
                     target->ranking = (uint32_t)round(score);
                 }
 
@@ -6572,6 +6626,8 @@ void importFromSteam(Launcher *theLauncher) {
                     // Set score (Metacritic)
                     if (meta->score > 0) {
                         target->ranking = meta->score;
+                    } else {
+                        target->ranking = 999;  // No score available
                     }
 
                     // Write description blob
@@ -6584,6 +6640,9 @@ void importFromSteam(Launcher *theLauncher) {
 
                     printf("  Date: %s, Score: %u\n", meta->date, meta->score);
                     freeSteamMetadata(meta);
+                } else {
+                    // API fetch failed, set sentinel
+                    target->ranking = 999;
                 }
             }
         }
