@@ -52,6 +52,14 @@ Both now implemented in launch().
 ### CSV Corruption Checking
 Validate CSV files on load.
 
+### Multi-Region Game Deduplication
+Handle platforms with multiple regional entries per game (PS Vita, etc.):
+- OpenGameDB contains separate entries for US/EU/JP versions of same game
+- "Essential" and other curated lists show duplicates (2-3 entries per game)
+- Need smart deduplication logic to show only one entry per unique game
+- Could prioritize by region preference, user's owned version, or highest-rated variant
+- May need OpenGameDB schema changes to link regional variants
+
 ### Animation System Improvements
 Refactor animation system - queue animations instead of repeating code. Need to rethink input modes and the system in general.
 
