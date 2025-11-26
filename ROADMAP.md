@@ -38,10 +38,11 @@ Rescrape functionality seems to corrupt or break game descriptions.
 
 ### Loading Screen
 **SOLVED:** Animated loading screen with threaded initialization:
-- Breathing rocket animation during startup
+- Breathing rocket animation during startup (sin² curve with pauses at extremes)
 - Real-time status updates showing initialization progress
 - Progress counters for Steam library fetching and game metadata loading
-- Smooth exit animation (logo shrinks to dot, text fades out over 0.61s)
+- Smooth 0.61s exit animation (logo shrinks to dot, text fades out)
+- Seamless 0.41s fade-in transition to user select screen
 - Heavy initialization runs in background thread for responsive UI
 - Early SDL/OpenGL init allows loading screen to appear immediately
 
