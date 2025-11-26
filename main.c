@@ -5682,22 +5682,14 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
             }
         }
 
-        // Still clear metadata for all games (will be re-populated from CSV)
-        for (uint32_t i = 0; i < targetFile->nEntries; i++) {
-            if (targetFile->entries[i].launcherSignature == currentTarget->launcherSignature) {
-                LaunchTarget *target = &targetFile->entries[i];
+        // Clear metadata for ONLY the current game
+        memset(currentTarget->coverUrl, 0, PATH_MAX);
+        memset(currentTarget->date, 0, sizeof(currentTarget->date));
+        currentTarget->ranking = 0;
+        currentTarget->descriptionOffset = 0;
+        printf("  Cleared metadata for: %s\n", currentTarget->name);
 
-                // Clear cover URL - this will force re-download
-                memset(target->coverUrl, 0, PATH_MAX);
-
-                // Clear other metadata that comes from OpenGameDB
-                memset(target->date, 0, sizeof(target->date));
-                target->ranking = 0;
-                target->descriptionOffset = 0;
-
-                printf("  Cleared metadata for: %s\n", target->name);
-            }
-        }
+        affectedCount = 1;  // Only updating one game
     }
 
     // Now rescrape from OpenGameDB for this platform
@@ -5802,6 +5794,15 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
 
             // Only update if it's from our launcher
             if (target->launcherSignature == currentTarget->launcherSignature) {
+
+                // If single-game mode, only update the current game
+                if (!deleteAllCovers && target->targetSignature != currentTarget->targetSignature) {
+                    // Skip this game - we only want to update the current one
+                    free(gameName);
+                    rowCount++;
+                    continue;
+                }
+
                 printf("  Match found by signature: %s -> %s (sig: %"PRIu64")\n",
                        target->name, gameName, targetSignature[0]);
 
@@ -5865,6 +5866,17 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
 
                 matchCount++;
                 offblast->rescrapeProcessed = matchCount; // Update progress
+
+                // If single-game mode, we found our game - stop processing
+                if (!deleteAllCovers) {
+                    printf("Found and updated current game, stopping CSV scan\n");
+                    free(gameSeed);
+                    free(gameName);
+                    free(csvLine);
+                    fclose(csvFile);
+                    json_object_put(configObj);
+                    goto skip_csv_cleanup;
+                }
             }
         }
 
@@ -5876,6 +5888,8 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
     free(csvLine);
     fclose(csvFile);
     json_object_put(configObj); // Free the config object
+
+skip_csv_cleanup:
 
     printf("\nRescrape complete: %u/%u games updated from OpenGameDB\n",
            matchCount, affectedCount);
