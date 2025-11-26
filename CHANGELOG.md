@@ -80,6 +80,13 @@
   - Games with "n/a" for metascore no longer averaged with 0
   - Example: Sonic 2 (gf_score=4.32, metascore="n/a") now shows 86% instead of 43%
   - Invalid scores properly trigger sentinel value (999) instead of corrupting averages
+- **Fixed Resume functionality on KDE Plasma Wayland**
+  - Implemented KWin scripting via D-Bus to activate game windows on Wayland
+  - Creates temporary KWin script that searches for game window (excluding offblast)
+  - Uses qdbus instead of dbus-send to avoid AppImage library conflicts
+  - Detects session type (Wayland vs X11) and window manager (KDE vs GNOME vs i3)
+  - Automatically uses KWin scripting on KDE Wayland, X11 APIs elsewhere
+  - Tested and working on Bazzite (KDE Plasma Wayland)
 
 ## [0.7.0] - 2025-11-25
 

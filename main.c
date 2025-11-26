@@ -13,6 +13,10 @@
 
 #define WINDOW_MANAGER_I3 1
 #define WINDOW_MANAGER_GNOME 2
+#define WINDOW_MANAGER_KDE 3
+
+#define SESSION_TYPE_X11 1
+#define SESSION_TYPE_WAYLAND 2
 
 #define IMAGE_STORE_SIZE 2000
 #define MAX_LOADED_TEXTURES 150
@@ -436,7 +440,9 @@ typedef struct OffblastUi {
 
     SDL_Window *window;
     uint32_t windowManager;
+    uint32_t sessionType;
     Window resumeWindow;
+    char resumeWindowUuid[64];  // KWin window UUID for Wayland
 
     pid_t runningPid;
     LaunchTarget *playingTarget;
@@ -542,7 +548,12 @@ void pressSearch();
 void loadPlaytimeFile();
 Window getActiveWindowRaw();
 void raiseWindow();
-void killRunningGame(); 
+void killRunningGame();
+void getActiveKWinWindowUuid(char *uuidOut, size_t uuidSize);
+void getKWinWindowUuids(char *output, size_t outputSize);
+int getKWinWindowUuidByPid(pid_t pid, char *uuidOut, size_t uuidSize);
+void activateWindowByPid(pid_t gamePid);
+void raiseWindowByUuid(const char *uuid);
 void importFromSteam(Launcher *theLauncher);
 void importFromCustom(Launcher *theLauncher);
 
@@ -1505,19 +1516,38 @@ void *initThreadFunc(void *arg) {
 
 
 
-    // Window manager setup (after window already created early)
+    // Window manager and session type detection
     char *windowManager = getenv("XDG_CURRENT_DESKTOP");
-    assert(windowManager);
+    char *sessionType = getenv("XDG_SESSION_TYPE");
 
-    if (strcmp(windowManager, "i3") == 0) {
-        offblast->windowManager = WINDOW_MANAGER_I3;
-        system("i3-msg move to workspace offblast && i3-msg workspace offblast");
+    if (windowManager) {
+        printf("Detected desktop: %s\n", windowManager);
+        if (strcmp(windowManager, "i3") == 0) {
+            offblast->windowManager = WINDOW_MANAGER_I3;
+            system("i3-msg move to workspace offblast && i3-msg workspace offblast");
+        }
+        else if (strcmp(windowManager, "GNOME") == 0 || strstr(windowManager, "GNOME") != NULL) {
+            offblast->windowManager = WINDOW_MANAGER_GNOME;
+        }
+        else if (strcmp(windowManager, "KDE") == 0 || strstr(windowManager, "KDE") != NULL) {
+            offblast->windowManager = WINDOW_MANAGER_KDE;
+            printf("KDE Plasma detected\n");
+        }
+        else {
+            printf("Warning: Window manager '%s' not explicitly supported, using defaults\n", windowManager);
+            offblast->windowManager = WINDOW_MANAGER_GNOME;  // Fallback
+        }
     }
-    if (strcmp(windowManager, "GNOME") >= 0) {
-        offblast->windowManager = WINDOW_MANAGER_GNOME;
-    }
-    else {
-        perror("Your window manager is not yet supported\n");
+
+    if (sessionType) {
+        printf("Session type: %s\n", sessionType);
+        if (strcmp(sessionType, "wayland") == 0) {
+            offblast->sessionType = SESSION_TYPE_WAYLAND;
+        } else {
+            offblast->sessionType = SESSION_TYPE_X11;
+        }
+    } else {
+        offblast->sessionType = SESSION_TYPE_X11;  // Assume X11 if not set
     }
 
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
@@ -4259,7 +4289,14 @@ void pressConfirm(int32_t joystickIndex) {
             else {
                 printf("Resume the current game on window %lu \n",
                     offblast->resumeWindow);
-                raiseWindow(offblast->resumeWindow);
+
+                // Use KWin PID-based activation on Wayland/KDE, otherwise use X11
+                if (offblast->sessionType == SESSION_TYPE_WAYLAND &&
+                    offblast->windowManager == WINDOW_MANAGER_KDE) {
+                    activateWindowByPid(offblast->runningPid);
+                } else {
+                    raiseWindow(offblast->resumeWindow);
+                }
             }
         }
     }
@@ -5629,6 +5666,14 @@ void pressGuide() {
             offblast->resumeWindow = getActiveWindowRaw();
             offblast->uiStopButtonHot = 0;
 
+            // On KDE Wayland, we'll use PID-based activation (no need to capture UUID)
+            // Just verify we have the PID
+            if (offblast->sessionType == SESSION_TYPE_WAYLAND &&
+                offblast->windowManager == WINDOW_MANAGER_KDE) {
+                printf("KDE Wayland session - will use PID-based window activation (PID: %d)\n",
+                       offblast->runningPid);
+            }
+
             if (offblast->windowManager == WINDOW_MANAGER_I3) {
                 system("i3-msg workspace offblast");
             }
@@ -6122,6 +6167,140 @@ WindowInfo getOffblastWindowInfo() {
     //printf("OFFBLAST WINDOW ID %d\n", (int)windowInfo.window);
 
     return windowInfo;
+}
+
+// Get window UUID by PID using KWin scripting (for Wayland/KDE)
+// This creates and runs a KWin script to find the window
+void getActiveKWinWindowUuid(char *uuidOut, size_t uuidSize) {
+    // Not needed with PID-based activation
+    uuidOut[0] = '\0';
+}
+
+// Dummy implementation for compatibility
+void getKWinWindowUuids(char *output, size_t outputSize) {
+    output[0] = '\0';
+}
+
+// Get currently active window UUID (game window should be active when this is called)
+int getKWinWindowUuidByPid(pid_t pid, char *uuidOut, size_t uuidSize) {
+    // When Guide is pressed, the game window is currently active
+    // Just get the active window's UUID
+    getActiveKWinWindowUuid(uuidOut, uuidSize);
+    return (strlen(uuidOut) > 0) ? 1 : 0;
+}
+
+// Activate window by PID using KWin scripting (for Wayland/KDE)
+void activateWindowByPid(pid_t gamePid) {
+    if (offblast->sessionType != SESSION_TYPE_WAYLAND ||
+        offblast->windowManager != WINDOW_MANAGER_KDE) {
+        return;  // Not applicable
+    }
+
+    if (gamePid <= 0) {
+        printf("No valid PID to activate\n");
+        return;
+    }
+
+    char *homePath = getenv("HOME");
+    if (!homePath) return;
+
+    // Create script directory
+    char scriptDir[PATH_MAX];
+    snprintf(scriptDir, sizeof(scriptDir), "%s/.config/offblast-kwin", homePath);
+    mkdir(scriptDir, 0755);
+
+    // Create KWin script to activate window by PID
+    char scriptPath[PATH_MAX];
+    snprintf(scriptPath, sizeof(scriptPath), "%s/activate_%d.js", scriptDir, gamePid);
+
+    FILE *scriptFile = fopen(scriptPath, "w");
+    if (!scriptFile) {
+        printf("Could not create KWin script\n");
+        return;
+    }
+
+    fprintf(scriptFile,
+        "// Find and activate game window (not offblast)\n"
+        "var clients = workspace.stackingOrder;\n"
+        "for (var i = clients.length - 1; i >= 0; i--) {\n"
+        "    var client = clients[i];\n"
+        "    // Skip offblast window itself\n"
+        "    if (client.resourceClass && client.resourceClass.toString().indexOf('offblast') >= 0) {\n"
+        "        continue;\n"
+        "    }\n"
+        "    // Skip desktop/panel windows\n"
+        "    if (client.skipTaskbar || client.skipSwitcher) {\n"
+        "        continue;\n"
+        "    }\n"
+        "    // This should be the game window\n"
+        "    if (client.normalWindow || client.dialog) {\n"
+        "        workspace.activeWindow = client;\n"
+        "        print('Activated: ' + client.caption + ' (class: ' + client.resourceClass + ')');\n"
+        "        break;\n"
+        "    }\n"
+        "}\n");
+    fclose(scriptFile);
+
+    // Load script via D-Bus using qdbus (avoids AppImage library conflicts)
+    char cmd[PATH_MAX + 256];
+    snprintf(cmd, sizeof(cmd),
+        "qdbus org.kde.KWin /Scripting loadScript \"%s\" \"offblast_activate_%d\" 2>&1",
+        scriptPath, gamePid);
+
+    printf("Activating window for PID %d via KWin scripting...\n", gamePid);
+
+    FILE *pipe = popen(cmd, "r");
+    if (!pipe) {
+        printf("Could not execute qdbus command\n");
+        unlink(scriptPath);
+        return;
+    }
+
+    // Parse script ID from qdbus output (just returns the integer)
+    int scriptId = -1;
+    char buffer[256];
+    if (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        scriptId = atoi(buffer);
+    }
+    pclose(pipe);
+
+    if (scriptId >= 0) {
+        printf("Loaded script with ID: %d, running...\n", scriptId);
+
+        // Run the loaded script
+        snprintf(cmd, sizeof(cmd),
+            "qdbus org.kde.KWin /Scripting/Script%d run", scriptId);
+
+        pipe = popen(cmd, "r");
+        if (pipe) {
+            // Check output for our debug message
+            while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+                printf("  Script output: %s", buffer);
+            }
+            pclose(pipe);
+        }
+
+        // Give it a moment to execute
+        usleep(100000);
+
+        // Unload the script
+        snprintf(cmd, sizeof(cmd),
+            "qdbus org.kde.KWin /Scripting unloadScript \"offblast_activate_%d\"",
+            gamePid);
+        system(cmd);
+
+        printf("Window activation complete\n");
+    } else {
+        printf("Could not load KWin script (script ID: %d)\n", scriptId);
+    }
+
+    unlink(scriptPath);
+}
+
+// Wrapper for compatibility
+void raiseWindowByUuid(const char *uuid) {
+    // UUID approach not needed - we use PID directly
+    activateWindowByPid(offblast->runningPid);
 }
 
 
