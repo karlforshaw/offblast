@@ -28,7 +28,10 @@ Both now implemented in launch().
 - Pressing Return goes back to offblast main UI; Steam manages the game lifecycle
 
 ### Bug: Rescrape Borks Descriptions
-Rescrape functionality seems to corrupt or break game descriptions.
+**SOLVED:** Fixed missing writeDescriptionBlob() call in OpenGameDB rescrape:
+- Rescrape was clearing descriptionOffset but never writing new descriptions
+- Now properly writes descriptions from CSV back to description file
+- Note: Description file will grow on rescrapes (orphaned blobs not reclaimed, but infrequent use makes this acceptable)
 
 ### Manual Cover Adding
 **SOLVED:** Context menu (Start button) provides:
