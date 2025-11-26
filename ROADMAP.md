@@ -110,3 +110,15 @@ Cache generated lists to files for faster loading.
 
 ### Collections
 Curated game collections (e.g., YouTuber lists like Metal Jesus). This is more of an OpenGameDB feature.
+
+### Regional Variant Architecture
+Formulate a full plan for how to deal with different regional versions of the same game:
+- Current solution (case-insensitive deduplication) is a workaround for display
+- Proper solution may require OpenGameDB schema changes
+- Need to consider:
+  - Linking regional variants (canonical_id or parent_id in database)
+  - User's region preference configuration
+  - Showing which region is owned vs available
+  - UI for switching between owned regional variants
+  - Handling cases where user owns multiple regions of same game
+- May need collaboration with OpenGameDB maintainers for schema design
