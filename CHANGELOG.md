@@ -46,6 +46,18 @@
   - Game names and metadata now come directly from Steam API
   - Prevents phantom games from appearing in library
 
+### Fixed
+- **Fixed controller not working after loading screen implementation**
+  - Added SDL_INIT_JOYSTICK flag to early SDL initialization
+  - Controller events now processed during loading screen
+  - Supports controllers connected before, during, or after loading screen
+  - Controller hot-plugging works throughout application lifecycle
+- **Fixed rescrape losing game descriptions**
+  - Rescrape was clearing descriptionOffset but never writing new descriptions
+  - Added missing writeDescriptionBlob() call in OpenGameDB rescrape
+  - Descriptions now properly persist through rescrape operations
+  - Note: Description file will grow on rescrapes (orphaned blobs not reclaimed)
+
 ## [0.7.0] - 2025-11-25
 
 ### Added

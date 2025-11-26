@@ -1666,7 +1666,7 @@ int main(int argc, char** argv) {
 
     // § EARLY SDL/OpenGL INIT FOR LOADING SCREEN
     printf("Initializing SDL for loading screen...\n");
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) {
         printf("SDL initialization failed: %s\n", SDL_GetError());
         return 1;
     }
@@ -1777,6 +1777,10 @@ int main(int argc, char** argv) {
 
     printf("Shaders loaded\n");
 
+    // Initialize player controller state before loading screen
+    offblast->player.jsIndex = -1;
+    offblast->player.usingController = NULL;
+
     // § START LOADING SCREEN
     printf("Starting loading screen...\n");
     pthread_mutex_init(&offblast->loadingState.mutex, NULL);
@@ -1802,6 +1806,20 @@ int main(int argc, char** argv) {
             if (event.type == SDL_QUIT) {
                 offblast->running = 0;
                 offblast->loadingMode = 0;
+            }
+            else if (event.type == SDL_CONTROLLERDEVICEADDED) {
+                // Handle controller connection during loading screen
+                SDL_ControllerDeviceEvent *devEvent = (SDL_ControllerDeviceEvent*)&event;
+                printf("Controller added during loading: %d\n", devEvent->which);
+                if (SDL_IsGameController(devEvent->which) == SDL_TRUE &&
+                    offblast->player.jsIndex == -1) {
+                    SDL_GameController *controller = SDL_GameControllerOpen(devEvent->which);
+                    if (controller) {
+                        offblast->player.jsIndex = devEvent->which;
+                        offblast->player.usingController = controller;
+                        printf("Controller connected during loading\n");
+                    }
+                }
             }
         }
 
@@ -1962,7 +1980,6 @@ int main(int argc, char** argv) {
     fontContents = NULL;
     debugAtlas = NULL;
 
-    offblast->player.jsIndex = -1;
     playerSelectUi->images = calloc(offblast->nUsers, sizeof(Image));
     playerSelectUi->widthForAvatar =
         calloc(offblast->nUsers+1, sizeof(float));
@@ -5830,6 +5847,12 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
                 // Update game ID
                 if (gameId && strlen(gameId) > 0) {
                     strncpy(target->id, gameId, OFFBLAST_NAME_MAX - 1);
+                }
+
+                // Update description
+                if (description && strlen(description) > 0) {
+                    target->descriptionOffset = writeDescriptionBlob(target, description);
+                    printf("    Updated description (%zu bytes)\n", strlen(description));
                 }
 
                 // Clean up
