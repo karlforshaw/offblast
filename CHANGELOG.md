@@ -36,7 +36,7 @@
 - **Game context menu** accessible via Start button on controller
   - Slides in from right side of screen (mirrors left navigation menu)
   - "Rescrape Platform" - re-fetch all covers and metadata for current platform
-  - "Rescrape Game" - placeholder for future single-game rescrape
+  - "Rescrape Game" - re-fetch cover and metadata for selected game only
   - "Copy Cover Filename" - copies expected cover filename to clipboard for manual cover adding
   - "Refresh Cover" - reload cover texture without restarting (for manually added covers)
   - Works on both X11 and Wayland via SDL clipboard
