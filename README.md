@@ -197,6 +197,42 @@ Add the `steam` section to your config.json:
 #### Without API Key
 If you don't configure an API key, OffBlast falls back to local-only detection using Steam's appmanifest files. This only shows installed games.
 
+### 5. SteamGridDB Cover Browser (Optional)
+
+Browse and select custom game covers from SteamGridDB's extensive community artwork collection.
+
+#### Getting Your SteamGridDB API Key
+1. Create a free account at https://www.steamgriddb.com
+2. Go to https://www.steamgriddb.com/profile/preferences/api
+3. Generate your API key (free, no credit card required)
+
+#### Configuration
+Add to your config.json:
+
+```json
+{
+    "steamgriddb_api_key": "your-api-key-here"
+}
+```
+
+#### How to Use
+1. Navigate to any game
+2. Press **Start** to open the context menu
+3. Select **"Browse Covers"**
+4. Browse available covers (5×2 grid with thumbnails)
+5. Select a cover with **A button**
+6. Cover downloads in background and updates immediately
+
+#### What This Enables
+- **Browse cover options** - See 30-50+ covers per game with thumbnails
+- **All platforms** - Works for Steam, RetroArch, emulators, any game
+- **Reconstructed artwork** - Access community-created high-quality covers
+- **Multiple styles** - Official art, minimal designs, regional variants, fan art
+- **Persistent** - Selected covers save locally and persist across restarts
+
+#### Without API Key
+The "Browse Covers" option will show an error message. Cover browsing is completely optional - games will still use OpenGameDB covers by default.
+
 ### Complete Example Configuration
 ```json
 {
@@ -244,7 +280,8 @@ If you don't configure an API key, OffBlast falls back to local-only detection u
     "steam": {
         "api_key": "YOUR_STEAM_API_KEY",
         "steam_id": "76561198012345678"
-    }
+    },
+    "steamgriddb_api_key": "your-steamgriddb-api-key"
 }
 ```
 
