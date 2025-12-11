@@ -44,6 +44,19 @@
   - Metadata fetched automatically for games missing data on startup
   - Steam rescrape (r/Shift+R) now fetches from Store API instead of OpenGameDB
   - Dates converted from Steam format ("29 Sep, 2017") to standard format ("2017-09-29")
+- **SteamGridDB cover browser integration**
+  - Browse and select custom covers from SteamGridDB.com for any game
+  - Access via "Browse Covers" option in context menu (Start button)
+  - Shows grid of available 600x900 covers with thumbnail previews
+  - 5 columns × 2 rows with scrollable navigation for large collections
+  - Works for Steam games (matches by AppID) and non-Steam games (searches by name)
+  - Multiple match handling: prompts user to select correct game before showing covers
+  - Downloads selected cover and saves directly to local cache
+  - Covers persist across restarts and take precedence over database URLs
+  - Requires free API key from https://www.steamgriddb.com/profile/preferences/api
+  - Configure in config.json: `"steamgriddb_api_key": "your-key-here"`
+  - Tile sizing matches main game browser for visual consistency
+  - Golden ratio spacing throughout for professional appearance
 - **Steam documentation** added to README.md
 - **Game context menu** accessible via Start button on controller
   - Slides in from right side of screen (mirrors left navigation menu)

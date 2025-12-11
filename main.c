@@ -162,6 +162,34 @@ typedef struct Image {
     size_t atlasSize;
 } Image;
 
+// SteamGridDB types
+#define MAX_SGDB_COVERS 50
+#define MAX_SGDB_GAMES 10
+
+typedef struct SgdbCover {
+	uint32_t id;
+	char url[PATH_MAX];        // Full resolution image URL
+	char thumb[PATH_MAX];      // Thumbnail URL (for grid display)
+	uint32_t width;
+	uint32_t height;
+	uint32_t score;            // Community upvotes
+} SgdbCover;
+
+typedef struct SgdbGame {
+	uint32_t id;
+	char name[256];
+} SgdbGame;
+
+typedef struct SgdbSearchResult {
+	uint32_t numGames;
+	SgdbGame games[MAX_SGDB_GAMES];
+} SgdbSearchResult;
+
+typedef struct SgdbCoverList {
+	uint32_t numCovers;
+	SgdbCover covers[MAX_SGDB_COVERS];
+} SgdbCoverList;
+
 typedef struct RomFound {
     char path[256];
     char name[OFFBLAST_NAME_MAX];
@@ -291,6 +319,33 @@ typedef struct MainUi {
     Animation *menuNavigateAnimation;
     Animation *contextMenuAnimation;
     Animation *contextMenuNavigateAnimation;
+
+	// Cover Browser state
+	int32_t showCoverBrowser;
+	uint32_t coverBrowserState;  // 0=game_select, 1=cover_grid
+	Animation *coverBrowserAnimation;
+
+	// Game selection (for non-Steam games with multiple matches)
+	SgdbSearchResult *coverBrowserGames;
+	uint32_t coverBrowserGameCursor;
+
+	// Cover grid
+	SgdbCoverList *coverBrowserCovers;
+	uint32_t coverBrowserCoverCursor;
+	uint32_t coverBrowserScrollOffset;
+	uint32_t coverBrowserCoversPerRow;
+	uint32_t coverBrowserVisibleRows;
+
+	// Cached title text and width
+	char coverBrowserTitle[128];
+	uint32_t coverBrowserTitleWidth;
+
+	// Temporary images for cover thumbnails
+	Image coverBrowserThumbs[MAX_SGDB_COVERS];
+	pthread_mutex_t coverBrowserThumbsLock;
+
+	// Error/status messages
+	char coverBrowserError[256];
 
     GLuint imageVbo;
 
@@ -472,6 +527,9 @@ typedef struct OffblastUi {
     // Steam API config
     char steamApiKey[64];
     char steamId[32];
+
+	// SteamGridDB API config
+	char steamGridDbApiKey[128];
 } OffblastUi;
 
 typedef struct CurlFetch {
@@ -575,6 +633,17 @@ typedef struct SteamMetadata {
 SteamMetadata *fetchSteamGameMetadata(uint32_t appid);
 void freeSteamMetadata(SteamMetadata *meta);
 off_t writeDescriptionBlob(LaunchTarget *target, const char *description);
+
+// SteamGridDB functions
+SgdbSearchResult *sgdbSearchGames(const char *gameName);
+uint32_t sgdbGetGameBySteamId(uint32_t steamAppId);
+SgdbCoverList *sgdbGetCovers(uint32_t gameId);
+void doBrowseCovers();
+void closeCoverBrowser();
+void coverBrowserSelectCover();
+void coverBrowserSetTitle();
+void coverBrowserQueueThumbnails();
+
 WindowInfo getOffblastWindowInfo();
 uint32_t activeWindowIsOffblast();
 uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature, 
@@ -672,6 +741,365 @@ void doRefreshCover() {
     snprintf(offblast->statusMessage, 256, "Cover refreshed");
     offblast->statusMessageTick = SDL_GetTicks();
     offblast->statusMessageDuration = 2000;
+}
+
+// Cover Browser functions
+
+void closeCoverBrowser() {
+	MainUi *ui = &offblast->mainUi;
+
+	// Free allocated data
+	if (ui->coverBrowserGames) {
+		free(ui->coverBrowserGames);
+		ui->coverBrowserGames = NULL;
+	}
+	if (ui->coverBrowserCovers) {
+		free(ui->coverBrowserCovers);
+		ui->coverBrowserCovers = NULL;
+	}
+
+	// Free thumbnail textures
+	pthread_mutex_lock(&ui->coverBrowserThumbsLock);
+	for (int i = 0; i < MAX_SGDB_COVERS; i++) {
+		if (ui->coverBrowserThumbs[i].textureHandle) {
+			glDeleteTextures(1, &ui->coverBrowserThumbs[i].textureHandle);
+			ui->coverBrowserThumbs[i].textureHandle = 0;
+		}
+		if (ui->coverBrowserThumbs[i].atlas) {
+			free(ui->coverBrowserThumbs[i].atlas);
+			ui->coverBrowserThumbs[i].atlas = NULL;
+		}
+	}
+	pthread_mutex_unlock(&ui->coverBrowserThumbsLock);
+	pthread_mutex_destroy(&ui->coverBrowserThumbsLock);
+
+	ui->showCoverBrowser = 0;
+}
+
+void coverBrowserSelectCover() {
+	MainUi *ui = &offblast->mainUi;
+
+	if (ui->coverBrowserState != 1) return;  // 1 = COVER_GRID
+	if (!ui->coverBrowserCovers) return;
+
+	// Get current game
+	if (!ui->activeRowset || !ui->activeRowset->rowCursor ||
+		!ui->activeRowset->rowCursor->tileCursor) return;
+
+	LaunchTarget *target = ui->activeRowset->rowCursor->tileCursor->target;
+	if (!target) return;
+
+	// Get selected cover
+	SgdbCover *cover = &ui->coverBrowserCovers->covers[ui->coverBrowserCoverCursor];
+
+	printf("=== Cover Selection ===\n");
+	printf("Game: %s (signature: %"PRIu64")\n", target->name, target->targetSignature);
+	printf("Downloading cover from: %s\n", cover->url);
+
+	// Download the cover directly
+	CurlFetch fetch = {0};
+	CURL *curl = curl_easy_init();
+	if (!curl) {
+		printf("Failed to initialize curl\n");
+		return;
+	}
+
+	curl_easy_setopt(curl, CURLOPT_URL, cover->url);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+	CURLcode res = curl_easy_perform(curl);
+	curl_easy_cleanup(curl);
+
+	if (res != CURLE_OK) {
+		printf("Failed to download cover: %s\n", curl_easy_strerror(res));
+		if (fetch.data) free(fetch.data);
+		snprintf(offblast->statusMessage, 256, "Failed to download cover");
+		offblast->statusMessageTick = SDL_GetTicks();
+		offblast->statusMessageDuration = 3000;
+		return;
+	}
+
+	printf("Downloaded %zu bytes\n", fetch.size);
+
+	// Decode the image
+	int width, height, channels;
+	unsigned char *pixels = stbi_load_from_memory(fetch.data, fetch.size,
+												   &width, &height, &channels, 4);
+	free(fetch.data);
+
+	if (!pixels) {
+		printf("Failed to decode downloaded image\n");
+		snprintf(offblast->statusMessage, 256, "Failed to decode cover image");
+		offblast->statusMessageTick = SDL_GetTicks();
+		offblast->statusMessageDuration = 3000;
+		return;
+	}
+
+	printf("Decoded image: %dx%d\n", width, height);
+
+	// Resize if needed (same as downloadMain does)
+	if (height > 660) {
+		float scale = (float)660 / height;
+		int newHeight = 660;
+		int newWidth = (int)(width * scale);
+		printf("Resizing cover from %dx%d to %dx%d (%.1f%% scale)\n",
+			   width, height, newWidth, newHeight, scale * 100);
+
+		unsigned char *resized = (unsigned char*)malloc(newWidth * newHeight * 4);
+		if (resized) {
+			stbir_resize(pixels, width, height, 0,
+						resized, newWidth, newHeight, 0,
+						STBIR_RGBA, STBIR_TYPE_UINT8,
+						STBIR_EDGE_CLAMP, STBIR_FILTER_DEFAULT);
+			stbi_image_free(pixels);
+			pixels = resized;
+			width = newWidth;
+			height = newHeight;
+		} else {
+			printf("Warning: Couldn't allocate memory for resize, using original\n");
+		}
+	}
+
+	// Save as JPG to covers directory
+	char *homePath = getenv("HOME");
+	char coverPath[PATH_MAX];
+	snprintf(coverPath, PATH_MAX, "%s/.offblast/covers/%"PRIu64".jpg",
+			 homePath, target->targetSignature);
+
+	printf("Saving cover to: %s\n", coverPath);
+	stbi_flip_vertically_on_write(1);
+	int saveResult = stbi_write_jpg(coverPath, width, height, 4, pixels, 90);
+	stbi_image_free(pixels);
+
+	if (!saveResult) {
+		printf("Failed to save cover file\n");
+		snprintf(offblast->statusMessage, 256, "Failed to save cover file");
+		offblast->statusMessageTick = SDL_GetTicks();
+		offblast->statusMessageDuration = 3000;
+		return;
+	}
+
+	printf("Cover saved successfully\n");
+
+	// Evict texture from imageStore to force reload
+	pthread_mutex_lock(&offblast->imageStoreLock);
+	for (uint32_t i = 0; i < IMAGE_STORE_SIZE; i++) {
+		if (offblast->imageStore[i].targetSignature == target->targetSignature) {
+			if (offblast->imageStore[i].textureHandle != 0) {
+				glDeleteTextures(1, &offblast->imageStore[i].textureHandle);
+				offblast->imageStore[i].textureHandle = 0;
+				offblast->numLoadedTextures--;
+			}
+			offblast->imageStore[i].state = IMAGE_STATE_COLD;
+			offblast->imageStore[i].targetSignature = 0;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&offblast->imageStoreLock);
+
+	// Show status message
+	snprintf(offblast->statusMessage, 256, "Cover updated");
+	offblast->statusMessageTick = SDL_GetTicks();
+	offblast->statusMessageDuration = 2000;
+
+	// Close browser
+	closeCoverBrowser();
+
+	// Invalidate row geometry to trigger re-request
+	offblast->mainUi.rowGeometryInvalid = 1;
+}
+
+void *downloadThumbnailMain(void *arg) {
+	Image *image = (Image *)arg;
+
+	CurlFetch fetch = {0};
+	CURL *curl = curl_easy_init();
+	if (!curl) {
+		image->state = IMAGE_STATE_DEAD;
+		return NULL;
+	}
+
+	curl_easy_setopt(curl, CURLOPT_URL, image->url);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+	CURLcode res = curl_easy_perform(curl);
+	curl_easy_cleanup(curl);
+
+	if (res != CURLE_OK) {
+		printf("Thumbnail download failed: %s\n", curl_easy_strerror(res));
+		if (fetch.data) free(fetch.data);
+		image->state = IMAGE_STATE_DEAD;
+		return NULL;
+	}
+
+	// Load image from memory
+	int width, height, channels;
+	unsigned char *pixels = stbi_load_from_memory(fetch.data, fetch.size,
+												   &width, &height, &channels, 4);
+	free(fetch.data);
+
+	if (!pixels) {
+		printf("Failed to decode thumbnail\n");
+		image->state = IMAGE_STATE_DEAD;
+		return NULL;
+	}
+
+	// Store the pixel data
+	image->width = width;
+	image->height = height;
+	image->atlasSize = width * height * 4;
+	image->atlas = pixels;
+	image->state = IMAGE_STATE_READY;
+
+	return NULL;
+}
+
+void coverBrowserSetTitle() {
+	MainUi *ui = &offblast->mainUi;
+	if (ui->coverBrowserCovers) {
+		snprintf(ui->coverBrowserTitle, sizeof(ui->coverBrowserTitle),
+				"Select Cover: (%u available)", ui->coverBrowserCovers->numCovers);
+	} else {
+		snprintf(ui->coverBrowserTitle, sizeof(ui->coverBrowserTitle), "Select Cover:");
+	}
+	ui->coverBrowserTitleWidth = getTextLineWidth(ui->coverBrowserTitle, offblast->titleCharData);
+}
+
+void coverBrowserQueueThumbnails() {
+	MainUi *ui = &offblast->mainUi;
+	if (!ui->coverBrowserCovers) return;
+
+	// Calculate visible range based on scroll offset
+	uint32_t startIdx = ui->coverBrowserScrollOffset * ui->coverBrowserCoversPerRow;
+	uint32_t endIdx = startIdx + (ui->coverBrowserVisibleRows * ui->coverBrowserCoversPerRow);
+	if (endIdx > ui->coverBrowserCovers->numCovers) {
+		endIdx = ui->coverBrowserCovers->numCovers;
+	}
+
+	// Queue thumbnails for visible covers
+	pthread_mutex_lock(&ui->coverBrowserThumbsLock);
+	for (uint32_t i = startIdx; i < endIdx; i++) {
+		if (ui->coverBrowserThumbs[i].state == IMAGE_STATE_COLD) {
+			// Set up for download
+			ui->coverBrowserThumbs[i].state = IMAGE_STATE_DOWNLOADING;
+			strncpy(ui->coverBrowserThumbs[i].url,
+					ui->coverBrowserCovers->covers[i].thumb, PATH_MAX-1);
+			ui->coverBrowserThumbs[i].url[PATH_MAX-1] = '\0';
+
+			// Spawn download thread
+			pthread_t downloadThread;
+			pthread_create(&downloadThread, NULL, downloadThumbnailMain,
+						   &ui->coverBrowserThumbs[i]);
+			pthread_detach(downloadThread);
+		}
+	}
+	pthread_mutex_unlock(&ui->coverBrowserThumbsLock);
+}
+
+void doBrowseCovers() {
+	MainUi *ui = &offblast->mainUi;
+
+	// Check if API key is configured
+	if (!offblast->steamGridDbApiKey[0]) {
+		snprintf(offblast->statusMessage, 256,
+			"SteamGridDB API key not configured");
+		offblast->statusMessageTick = SDL_GetTicks();
+		offblast->statusMessageDuration = 3000;
+		return;
+	}
+
+	// Get current game
+	if (!ui->activeRowset || !ui->activeRowset->rowCursor ||
+		!ui->activeRowset->rowCursor->tileCursor) return;
+
+	LaunchTarget *target = ui->activeRowset->rowCursor->tileCursor->target;
+	if (!target) return;
+
+	// Initialize cover browser state
+	ui->showCoverBrowser = 1;
+	ui->coverBrowserError[0] = '\0';
+	ui->coverBrowserGames = NULL;
+	ui->coverBrowserCovers = NULL;
+	ui->coverBrowserGameCursor = 0;
+	ui->coverBrowserCoverCursor = 0;
+	ui->coverBrowserScrollOffset = 0;
+
+	// Initialize thumbnail images
+	pthread_mutex_init(&ui->coverBrowserThumbsLock, NULL);
+	for (int i = 0; i < MAX_SGDB_COVERS; i++) {
+		ui->coverBrowserThumbs[i].state = IMAGE_STATE_COLD;
+		ui->coverBrowserThumbs[i].targetSignature = 0;
+		ui->coverBrowserThumbs[i].textureHandle = 0;
+		ui->coverBrowserThumbs[i].atlas = NULL;
+	}
+
+	// Determine if this is a Steam game
+	uint32_t sgdbGameId = 0;
+	if (strcmp(target->platform, "steam") == 0) {
+		// Steam game - extract appid from target->id
+		uint32_t steamAppId = atoi(target->id);
+		printf("Looking up SteamGridDB game for Steam AppID %u\n", steamAppId);
+		sgdbGameId = sgdbGetGameBySteamId(steamAppId);
+
+		if (sgdbGameId == 0) {
+			snprintf(ui->coverBrowserError, 256,
+				"Could not find game on SteamGridDB");
+			ui->coverBrowserState = 0;  // game_select state
+		}
+	} else {
+		// Non-Steam game - search by name
+		printf("Searching SteamGridDB for: %s\n", target->name);
+		ui->coverBrowserGames = sgdbSearchGames(target->name);
+
+		if (!ui->coverBrowserGames || ui->coverBrowserGames->numGames == 0) {
+			snprintf(ui->coverBrowserError, 256,
+				"No games found for '%s'", target->name);
+			ui->coverBrowserState = 0;
+			if (ui->coverBrowserGames) free(ui->coverBrowserGames);
+			ui->coverBrowserGames = NULL;
+		} else if (ui->coverBrowserGames->numGames == 1) {
+			// Only one match, proceed directly to covers
+			sgdbGameId = ui->coverBrowserGames->games[0].id;
+			free(ui->coverBrowserGames);
+			ui->coverBrowserGames = NULL;
+		} else {
+			// Multiple matches, let user choose
+			ui->coverBrowserState = 0;  // game_select state
+			return;
+		}
+	}
+
+	// If we have a game ID, fetch covers
+	if (sgdbGameId > 0) {
+		printf("Fetching covers for SteamGridDB game %u\n", sgdbGameId);
+		ui->coverBrowserCovers = sgdbGetCovers(sgdbGameId);
+
+		if (!ui->coverBrowserCovers || ui->coverBrowserCovers->numCovers == 0) {
+			snprintf(ui->coverBrowserError, 256,
+				"No 600x900 covers found for this game");
+			ui->coverBrowserState = 0;
+			if (ui->coverBrowserCovers) free(ui->coverBrowserCovers);
+			ui->coverBrowserCovers = NULL;
+		} else {
+			ui->coverBrowserState = 1;  // cover_grid state
+			coverBrowserSetTitle();  // Cache title text and width
+			coverBrowserQueueThumbnails();
+		}
+	}
+
+	// Start animation
+	ui->coverBrowserAnimation->startTick = SDL_GetTicks();
+	ui->coverBrowserAnimation->direction = 0;  // Opening
+	ui->coverBrowserAnimation->durationMs = NAVIGATION_MOVE_DURATION/2;
+	ui->coverBrowserAnimation->animating = 1;
 }
 
 void contextMenuToggleDone(void *arg) {
@@ -836,6 +1264,18 @@ void *initThreadFunc(void *arg) {
             printf("Steam API configured for user %s\n", offblast->steamId);
         }
     }
+
+	// Parse SteamGridDB API key
+	json_object *sgdbApiKey;
+	offblast->steamGridDbApiKey[0] = '\0';
+	if (json_object_object_get_ex(configObj, "steamgriddb_api_key", &sgdbApiKey)) {
+		const char *keyStr = json_object_get_string(sgdbApiKey);
+		if (keyStr && strlen(keyStr) > 0) {
+			strncpy(offblast->steamGridDbApiKey, keyStr, 127);
+			offblast->steamGridDbApiKey[127] = '\0';
+			printf("SteamGridDB API configured\n");
+		}
+	}
 
     char *launchTargetDbPath;
     asprintf(&launchTargetDbPath, "%s/launchtargets.bin", configPath);
@@ -1597,10 +2037,16 @@ void *initThreadFunc(void *arg) {
     mainUi->menuNavigateAnimation = calloc(1, sizeof(Animation));
     mainUi->contextMenuAnimation = calloc(1, sizeof(Animation));
     mainUi->contextMenuNavigateAnimation = calloc(1, sizeof(Animation));
+	mainUi->coverBrowserAnimation = calloc(1, sizeof(Animation));
 
     mainUi->showMenu = 0;
     mainUi->showContextMenu = 0;
     mainUi->showSearch = 0;
+	mainUi->showCoverBrowser = 0;
+
+	// Initialize cover browser grid dimensions
+	mainUi->coverBrowserCoversPerRow = 5;
+	mainUi->coverBrowserVisibleRows = 2;
 
     // Init Menu
     uint32_t iItem = 0;
@@ -1650,16 +2096,18 @@ void *initThreadFunc(void *arg) {
     }
 
     // Init Context Menu (right-side game menu)
-    mainUi->contextMenuItems = calloc(4, sizeof(MenuItem));
-    mainUi->contextMenuItems[0].label = "Rescrape Platform";
-    mainUi->contextMenuItems[0].callback = doRescrapePlatform;
-    mainUi->contextMenuItems[1].label = "Rescrape Game";
-    mainUi->contextMenuItems[1].callback = doRescrapeGame;
-    mainUi->contextMenuItems[2].label = "Copy Cover Filename";
-    mainUi->contextMenuItems[2].callback = doCopyCoverFilename;
-    mainUi->contextMenuItems[3].label = "Refresh Cover";
-    mainUi->contextMenuItems[3].callback = doRefreshCover;
-    mainUi->numContextMenuItems = 4;
+    mainUi->contextMenuItems = calloc(5, sizeof(MenuItem));
+    mainUi->contextMenuItems[0].label = "Browse Covers";
+    mainUi->contextMenuItems[0].callback = doBrowseCovers;
+    mainUi->contextMenuItems[1].label = "Rescrape Platform";
+    mainUi->contextMenuItems[1].callback = doRescrapePlatform;
+    mainUi->contextMenuItems[2].label = "Rescrape Game";
+    mainUi->contextMenuItems[2].callback = doRescrapeGame;
+    mainUi->contextMenuItems[3].label = "Copy Cover Filename";
+    mainUi->contextMenuItems[3].callback = doCopyCoverFilename;
+    mainUi->contextMenuItems[4].label = "Refresh Cover";
+    mainUi->contextMenuItems[4].callback = doRefreshCover;
+    mainUi->numContextMenuItems = 5;
     mainUi->contextMenuCursor = 0;
 
 
@@ -2708,6 +3156,189 @@ int main(int argc, char** argv) {
                 }
             }
 
+			// § Render Cover Browser
+			if (mainUi->showCoverBrowser) {
+				// Dark background overlay
+				Color overlayColor = {0.0, 0.0, 0.0, 0.9};
+				renderGradient(0, 0, offblast->winWidth, offblast->winHeight, 0,
+							   overlayColor, overlayColor);
+
+				if (mainUi->coverBrowserError[0] != '\0') {
+					// Show error message
+					renderText(offblast,
+							   offblast->winWidth * 0.5 - 200,
+							   offblast->winHeight * 0.5,
+							   OFFBLAST_TEXT_INFO, 1.0, 0,
+							   mainUi->coverBrowserError);
+
+					renderText(offblast,
+							   offblast->winWidth * 0.5 - 100,
+							   offblast->winHeight * 0.5 - 50,
+							   OFFBLAST_TEXT_INFO, 0.7, 0,
+							   "Press B to close");
+				}
+				else if (mainUi->coverBrowserState == 0) {  // game_select
+					// Render game selection list
+					renderText(offblast,
+							   offblast->winWidth * 0.3,
+							   offblast->winHeight * 0.8,
+							   OFFBLAST_TEXT_TITLE, 1.0, 0,
+							   "Select Game:");
+
+					if (mainUi->coverBrowserGames) {
+						float startY = offblast->winHeight * 0.7;
+						float itemHeight = offblast->infoPointSize * 1.8;
+
+						for (uint32_t i = 0; i < mainUi->coverBrowserGames->numGames; i++) {
+							float alpha = (i == mainUi->coverBrowserGameCursor) ? 1.0 : 0.6;
+							renderText(offblast,
+									   offblast->winWidth * 0.3,
+									   startY - (i * itemHeight),
+									   OFFBLAST_TEXT_INFO, alpha, 0,
+									   mainUi->coverBrowserGames->games[i].name);
+						}
+					}
+				}
+				else if (mainUi->coverBrowserState == 1) {  // cover_grid
+					if (mainUi->coverBrowserCovers) {
+						// Calculate grid dimensions first
+						float coverHeight = mainUi->boxHeight;
+						float coverWidth = coverHeight / 1.5;  // 600x900 aspect ratio
+						float gridPadding = mainUi->boxPad;
+
+						// Calculate grid layout
+						float totalGridWidth = (mainUi->coverBrowserCoversPerRow * coverWidth) +
+											   ((mainUi->coverBrowserCoversPerRow - 1) * gridPadding);
+						float gridStartX = (offblast->winWidth - totalGridWidth) / 2;  // Center the grid
+
+						// Calculate how much vertical space we need for 2 rows
+						float totalGridHeight = (mainUi->coverBrowserVisibleRows * coverHeight) +
+											   ((mainUi->coverBrowserVisibleRows - 1) * gridPadding);
+
+						// Center the grid vertically on screen
+						float gridStartY = (offblast->winHeight / 2) + (totalGridHeight / 2) - coverHeight;
+
+						// Calculate title position with golden ratio bottom margin from title to top of grid
+						float titleBottomMargin = goldenRatioLarge(offblast->titlePointSize, 1);
+						float titleY = gridStartY + coverHeight + titleBottomMargin;
+
+						// Render title centered above grid (using cached width)
+						renderText(offblast,
+								   offblast->winWidth / 2 - mainUi->coverBrowserTitleWidth / 2,
+								   titleY,
+								   OFFBLAST_TEXT_TITLE, 1.0, 0,
+								   mainUi->coverBrowserTitle);
+
+						// Render visible covers
+						uint32_t startIdx = mainUi->coverBrowserScrollOffset * mainUi->coverBrowserCoversPerRow;
+						uint32_t endIdx = startIdx + (mainUi->coverBrowserVisibleRows * mainUi->coverBrowserCoversPerRow);
+						if (endIdx > mainUi->coverBrowserCovers->numCovers) {
+							endIdx = mainUi->coverBrowserCovers->numCovers;
+						}
+
+						for (uint32_t i = startIdx; i < endIdx; i++) {
+							uint32_t displayRow = (i / mainUi->coverBrowserCoversPerRow) - mainUi->coverBrowserScrollOffset;
+							uint32_t displayCol = i % mainUi->coverBrowserCoversPerRow;
+
+							float x = gridStartX + displayCol * (coverWidth + gridPadding);
+							float y = gridStartY - displayRow * (coverHeight + gridPadding);
+
+							// Upload texture if ready
+							pthread_mutex_lock(&mainUi->coverBrowserThumbsLock);
+							if (mainUi->coverBrowserThumbs[i].state == IMAGE_STATE_READY) {
+								// Upload to OpenGL
+								glGenTextures(1, &mainUi->coverBrowserThumbs[i].textureHandle);
+								glBindTexture(GL_TEXTURE_2D, mainUi->coverBrowserThumbs[i].textureHandle);
+								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+								glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+											mainUi->coverBrowserThumbs[i].width,
+											mainUi->coverBrowserThumbs[i].height,
+											0, GL_RGBA, GL_UNSIGNED_BYTE,
+											mainUi->coverBrowserThumbs[i].atlas);
+
+								// Free the pixel data, keep only the texture
+								free(mainUi->coverBrowserThumbs[i].atlas);
+								mainUi->coverBrowserThumbs[i].atlas = NULL;
+								mainUi->coverBrowserThumbs[i].state = IMAGE_STATE_COMPLETE;
+							}
+							pthread_mutex_unlock(&mainUi->coverBrowserThumbsLock);
+
+							// Render the thumbnail or placeholder
+							if (mainUi->coverBrowserThumbs[i].state == IMAGE_STATE_COMPLETE) {
+								// Render actual thumbnail
+								float alpha = (i == mainUi->coverBrowserCoverCursor) ? 1.0f : 0.85f;
+								renderImage(x, y, coverWidth, coverHeight,
+										   &mainUi->coverBrowserThumbs[i], 0.0, alpha);
+							} else {
+								// Render placeholder while loading
+								Color placeholderColor;
+								if (i == mainUi->coverBrowserCoverCursor) {
+									placeholderColor = (Color){0.4, 0.4, 0.4, 0.9};
+								} else {
+									placeholderColor = (Color){0.2, 0.2, 0.2, 0.8};
+								}
+								renderGradient(x, y, coverWidth, coverHeight, 0,
+											  placeholderColor, placeholderColor);
+							}
+
+							// Highlight selected cover with border
+							if (i == mainUi->coverBrowserCoverCursor) {
+								Color highlightColor = {1.0, 1.0, 1.0, 0.5};
+								// Top border
+								renderGradient(x, y + coverHeight - 3, coverWidth, 3, 0,
+											  highlightColor, highlightColor);
+								// Bottom border
+								renderGradient(x, y, coverWidth, 3, 0,
+											  highlightColor, highlightColor);
+								// Left border
+								renderGradient(x, y, 3, coverHeight, 0,
+											  highlightColor, highlightColor);
+								// Right border
+								renderGradient(x + coverWidth - 3, y, 3, coverHeight, 0,
+											  highlightColor, highlightColor);
+							}
+						}
+
+						// Render scroll indicators with golden ratio spacing from grid
+						float moreMargin = goldenRatioLarge(offblast->infoPointSize, 1);
+
+						if (mainUi->coverBrowserScrollOffset > 0) {
+							// Top "More" - above the top row
+							char *moreText = "↑ More";
+							uint32_t moreWidth = getTextLineWidth(moreText, offblast->infoCharData);
+							renderText(offblast,
+									   offblast->winWidth / 2 - moreWidth / 2,
+									   gridStartY + coverHeight + moreMargin,
+									   OFFBLAST_TEXT_INFO, 0.8, 0,
+									   moreText);
+						}
+						uint32_t totalRows = (mainUi->coverBrowserCovers->numCovers + mainUi->coverBrowserCoversPerRow - 1) / mainUi->coverBrowserCoversPerRow;
+						if (mainUi->coverBrowserScrollOffset + mainUi->coverBrowserVisibleRows < totalRows) {
+							// Bottom "More" - below the bottom row with top margin
+							float bottomRowBottomY = gridStartY - totalGridHeight;
+							char *moreText = "↓ More";
+							uint32_t moreWidth = getTextLineWidth(moreText, offblast->infoCharData);
+							renderText(offblast,
+									   offblast->winWidth / 2 - moreWidth / 2,
+									   bottomRowBottomY - moreMargin,
+									   OFFBLAST_TEXT_INFO, 0.8, 0,
+									   moreText);
+						}
+
+						// Instructions at bottom
+						char *instructionsText = "D-Pad: Navigate  |  A: Select  |  B: Cancel";
+						uint32_t instructionsWidth = getTextLineWidth(instructionsText, offblast->infoCharData);
+						float instructionsMargin = goldenRatioLarge(offblast->infoPointSize, 1);
+						renderText(offblast,
+								   offblast->winWidth / 2 - instructionsWidth / 2,
+								   instructionsMargin,
+								   OFFBLAST_TEXT_INFO, 0.7, 0,
+								   instructionsText);
+					}
+				}
+			}
+
             if (mainUi->showSearch) {
                 Color menuColor = {0.0, 0.0, 0.0, 0.8};
                 renderGradient(0, 0, 
@@ -3199,6 +3830,26 @@ void changeColumn(uint32_t direction)
 
             if (ui->showSearch) return;
 
+			if (ui->showCoverBrowser) {
+				if (ui->coverBrowserState == 1 && ui->coverBrowserCovers) {  // cover_grid
+					// Navigate cover grid (horizontal movement)
+					uint32_t currentRow = ui->coverBrowserCoverCursor / ui->coverBrowserCoversPerRow;
+					uint32_t currentCol = ui->coverBrowserCoverCursor % ui->coverBrowserCoversPerRow;
+
+					if (direction == 1) {  // Right
+						if (currentCol < ui->coverBrowserCoversPerRow - 1 &&
+							ui->coverBrowserCoverCursor + 1 < ui->coverBrowserCovers->numCovers) {
+							ui->coverBrowserCoverCursor++;
+						}
+					} else if (direction == 0) {  // Left
+						if (currentCol > 0) {
+							ui->coverBrowserCoverCursor--;
+						}
+					}
+				}
+				return;
+			}
+
             if (ui->showMenu) {
                 if (direction == 1) {
 
@@ -3333,6 +3984,45 @@ void changeRow(uint32_t direction)
     MainUi *ui = &offblast->mainUi;
 
     if (ui->showSearch) return;
+
+	if (ui->showCoverBrowser) {
+		if (ui->coverBrowserState == 0 && ui->coverBrowserGames) {  // game_select
+			// Navigate game selection list
+			if (direction == 0 && ui->coverBrowserGameCursor < ui->coverBrowserGames->numGames - 1) {
+				ui->coverBrowserGameCursor++;
+			} else if (direction == 1 && ui->coverBrowserGameCursor > 0) {
+				ui->coverBrowserGameCursor--;
+			}
+			return;
+		} else if (ui->coverBrowserState == 1 && ui->coverBrowserCovers) {  // cover_grid
+			// Navigate cover grid (vertical movement)
+			uint32_t oldCursor = ui->coverBrowserCoverCursor;
+
+			if (direction == 0) {  // Down
+				uint32_t newCursor = ui->coverBrowserCoverCursor + ui->coverBrowserCoversPerRow;
+				if (newCursor < ui->coverBrowserCovers->numCovers) {
+					ui->coverBrowserCoverCursor = newCursor;
+				}
+			} else if (direction == 1) {  // Up
+				if (ui->coverBrowserCoverCursor >= ui->coverBrowserCoversPerRow) {
+					ui->coverBrowserCoverCursor -= ui->coverBrowserCoversPerRow;
+				}
+			}
+
+			// Update scroll offset if needed
+			uint32_t cursorRow = ui->coverBrowserCoverCursor / ui->coverBrowserCoversPerRow;
+			if (cursorRow < ui->coverBrowserScrollOffset) {
+				ui->coverBrowserScrollOffset = cursorRow;
+				coverBrowserQueueThumbnails();
+			} else if (cursorRow >= ui->coverBrowserScrollOffset + ui->coverBrowserVisibleRows) {
+				ui->coverBrowserScrollOffset = cursorRow - ui->coverBrowserVisibleRows + 1;
+				coverBrowserQueueThumbnails();
+			}
+
+			return;
+		}
+		return;
+	}
 
     if (animationRunning() == 0)
     {
@@ -4358,7 +5048,32 @@ void pressConfirm(int32_t joystickIndex) {
 
     }
     else if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
-        if (offblast->mainUi.showMenu) {
+		if (offblast->mainUi.showCoverBrowser) {
+			MainUi *ui = &offblast->mainUi;
+
+			if (ui->coverBrowserState == 0) {  // game_select
+				// User selected a game from search results
+				if (ui->coverBrowserGames && ui->coverBrowserGameCursor < ui->coverBrowserGames->numGames) {
+					uint32_t gameId = ui->coverBrowserGames->games[ui->coverBrowserGameCursor].id;
+					ui->coverBrowserCovers = sgdbGetCovers(gameId);
+
+					if (!ui->coverBrowserCovers || ui->coverBrowserCovers->numCovers == 0) {
+						snprintf(ui->coverBrowserError, 256, "No covers found for this game");
+						if (ui->coverBrowserCovers) free(ui->coverBrowserCovers);
+						ui->coverBrowserCovers = NULL;
+					} else {
+						ui->coverBrowserState = 1;  // cover_grid
+						ui->coverBrowserCoverCursor = 0;
+						coverBrowserSetTitle();  // Cache title text and width
+						coverBrowserQueueThumbnails();
+					}
+				}
+			} else if (ui->coverBrowserState == 1) {  // cover_grid
+				// User selected a cover
+				coverBrowserSelectCover();
+			}
+		}
+        else if (offblast->mainUi.showMenu) {
             void (*callback)() =
                 offblast->mainUi.menuItems[offblast->mainUi.menuCursor].callback;
             void *callbackArgs =
@@ -4398,7 +5113,20 @@ void changeRowset(UiRowset *rowset) {
 
 void pressCancel() {
     if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
-        if (offblast->mainUi.showContextMenu) {
+		if (offblast->mainUi.showCoverBrowser) {
+			MainUi *ui = &offblast->mainUi;
+
+			if (ui->coverBrowserState == 1 && ui->coverBrowserGames) {  // cover_grid with multiple games
+				// Go back to game selection
+				ui->coverBrowserState = 0;
+				return;
+			}
+
+			// Otherwise close the browser
+			closeCoverBrowser();
+			return;
+		}
+        else if (offblast->mainUi.showContextMenu) {
             // Close context menu with animation
             MainUi *ui = &offblast->mainUi;
             ui->contextMenuAnimation->startTick = SDL_GetTicks();
@@ -6561,6 +7289,239 @@ void freeSteamMetadata(SteamMetadata *meta) {
         if (meta->description) free(meta->description);
         free(meta);
     }
+}
+
+// SteamGridDB API Functions
+
+/**
+ * Search SteamGridDB for games by name
+ * Returns NULL on error, caller must free result
+ */
+SgdbSearchResult *sgdbSearchGames(const char *gameName) {
+	if (!offblast->steamGridDbApiKey[0]) {
+		printf("SteamGridDB API key not configured\n");
+		return NULL;
+	}
+
+	// URL encode the game name
+	char *encodedName = curl_easy_escape(NULL, gameName, 0);
+	if (!encodedName) return NULL;
+
+	char url[512];
+	snprintf(url, sizeof(url),
+		"https://www.steamgriddb.com/api/v2/search/autocomplete/%s", encodedName);
+	curl_free(encodedName);
+
+	CurlFetch fetch = {0};
+	CURL *curl = curl_easy_init();
+	if (!curl) return NULL;
+
+	struct curl_slist *headers = NULL;
+	char authHeader[256];
+	snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s",
+			 offblast->steamGridDbApiKey);
+	headers = curl_slist_append(headers, authHeader);
+
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+	CURLcode res = curl_easy_perform(curl);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+
+	if (res != CURLE_OK) {
+		printf("SteamGridDB search error: %s\n", curl_easy_strerror(res));
+		if (fetch.data) free(fetch.data);
+		return NULL;
+	}
+
+	// Null-terminate response
+	fetch.data = realloc(fetch.data, fetch.size + 1);
+	fetch.data[fetch.size] = '\0';
+
+	// Parse JSON: {"success":true,"data":[{"id":123,"name":"Game Name"},...]}
+	json_object *root = json_tokener_parse((char *)fetch.data);
+	free(fetch.data);
+
+	if (!root) {
+		printf("Failed to parse SteamGridDB search response\n");
+		return NULL;
+	}
+
+	json_object *dataObj;
+	if (!json_object_object_get_ex(root, "data", &dataObj)) {
+		json_object_put(root);
+		return NULL;
+	}
+
+	SgdbSearchResult *result = calloc(1, sizeof(SgdbSearchResult));
+	size_t numGames = json_object_array_length(dataObj);
+	result->numGames = numGames > MAX_SGDB_GAMES ? MAX_SGDB_GAMES : numGames;
+
+	for (size_t i = 0; i < result->numGames; i++) {
+		json_object *gameObj = json_object_array_get_idx(dataObj, i);
+
+		json_object *idObj, *nameObj;
+		if (json_object_object_get_ex(gameObj, "id", &idObj)) {
+			result->games[i].id = json_object_get_int(idObj);
+		}
+		if (json_object_object_get_ex(gameObj, "name", &nameObj)) {
+			strncpy(result->games[i].name, json_object_get_string(nameObj), 255);
+			result->games[i].name[255] = '\0';
+		}
+	}
+
+	json_object_put(root);
+	return result;
+}
+
+/**
+ * Get SteamGridDB game ID from Steam AppID
+ * Returns 0 on error
+ */
+uint32_t sgdbGetGameBySteamId(uint32_t steamAppId) {
+	if (!offblast->steamGridDbApiKey[0]) return 0;
+
+	char url[256];
+	snprintf(url, sizeof(url),
+		"https://www.steamgriddb.com/api/v2/games/steam/%u", steamAppId);
+
+	CurlFetch fetch = {0};
+	CURL *curl = curl_easy_init();
+	if (!curl) return 0;
+
+	struct curl_slist *headers = NULL;
+	char authHeader[256];
+	snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s",
+			 offblast->steamGridDbApiKey);
+	headers = curl_slist_append(headers, authHeader);
+
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+	CURLcode res = curl_easy_perform(curl);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+
+	if (res != CURLE_OK) {
+		printf("SteamGridDB game lookup error: %s\n", curl_easy_strerror(res));
+		if (fetch.data) free(fetch.data);
+		return 0;
+	}
+
+	fetch.data = realloc(fetch.data, fetch.size + 1);
+	fetch.data[fetch.size] = '\0';
+
+	// Parse JSON: {"success":true,"data":{"id":123,...}}
+	json_object *root = json_tokener_parse((char *)fetch.data);
+	free(fetch.data);
+
+	if (!root) return 0;
+
+	json_object *dataObj;
+	uint32_t gameId = 0;
+	if (json_object_object_get_ex(root, "data", &dataObj)) {
+		json_object *idObj;
+		if (json_object_object_get_ex(dataObj, "id", &idObj)) {
+			gameId = json_object_get_int(idObj);
+		}
+	}
+
+	json_object_put(root);
+	return gameId;
+}
+
+/**
+ * Get 600x900 covers for a SteamGridDB game ID
+ * Returns NULL on error, caller must free result
+ */
+SgdbCoverList *sgdbGetCovers(uint32_t gameId) {
+	if (!offblast->steamGridDbApiKey[0]) return NULL;
+
+	char url[256];
+	snprintf(url, sizeof(url),
+		"https://www.steamgriddb.com/api/v2/grids/game/%u?dimensions=600x900", gameId);
+
+	CurlFetch fetch = {0};
+	CURL *curl = curl_easy_init();
+	if (!curl) return NULL;
+
+	struct curl_slist *headers = NULL;
+	char authHeader[256];
+	snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s",
+			 offblast->steamGridDbApiKey);
+	headers = curl_slist_append(headers, authHeader);
+
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+	CURLcode res = curl_easy_perform(curl);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+
+	if (res != CURLE_OK) {
+		printf("SteamGridDB covers error: %s\n", curl_easy_strerror(res));
+		if (fetch.data) free(fetch.data);
+		return NULL;
+	}
+
+	fetch.data = realloc(fetch.data, fetch.size + 1);
+	fetch.data[fetch.size] = '\0';
+
+	// Parse JSON: {"success":true,"data":[{"id":123,"url":"...","thumb":"..."},...]}
+	json_object *root = json_tokener_parse((char *)fetch.data);
+	free(fetch.data);
+
+	if (!root) return NULL;
+
+	json_object *dataObj;
+	if (!json_object_object_get_ex(root, "data", &dataObj)) {
+		json_object_put(root);
+		return NULL;
+	}
+
+	SgdbCoverList *result = calloc(1, sizeof(SgdbCoverList));
+	size_t numCovers = json_object_array_length(dataObj);
+	result->numCovers = numCovers > MAX_SGDB_COVERS ? MAX_SGDB_COVERS : numCovers;
+
+	for (size_t i = 0; i < result->numCovers; i++) {
+		json_object *coverObj = json_object_array_get_idx(dataObj, i);
+
+		json_object *idObj, *urlObj, *thumbObj, *widthObj, *heightObj;
+
+		if (json_object_object_get_ex(coverObj, "id", &idObj)) {
+			result->covers[i].id = json_object_get_int(idObj);
+		}
+		if (json_object_object_get_ex(coverObj, "url", &urlObj)) {
+			strncpy(result->covers[i].url, json_object_get_string(urlObj), PATH_MAX-1);
+		}
+		if (json_object_object_get_ex(coverObj, "thumb", &thumbObj)) {
+			strncpy(result->covers[i].thumb, json_object_get_string(thumbObj), PATH_MAX-1);
+		}
+		if (json_object_object_get_ex(coverObj, "width", &widthObj)) {
+			result->covers[i].width = json_object_get_int(widthObj);
+		}
+		if (json_object_object_get_ex(coverObj, "height", &heightObj)) {
+			result->covers[i].height = json_object_get_int(heightObj);
+		}
+		// Note: score/likes field name may vary - API may not provide it
+		result->covers[i].score = 0;
+	}
+
+	json_object_put(root);
+	return result;
 }
 
 // Write a description blob and return the offset, or 0 on failure
