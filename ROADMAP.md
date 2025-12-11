@@ -128,6 +128,42 @@ Support keyboard input for search (currently controller-only).
   - Desired: Triangle or chevron textures pointing up/down
   - Could use custom texture assets or render with geometry
 
+### LaunchBox Games Database Integration
+Add support for LaunchBox DB as an alternative/supplementary metadata source:
+
+**What's Available:**
+- Daily updated Metadata.zip (99MB) from https://gamesdb.launchbox-app.com/Metadata.zip
+- Comprehensive XML with game metadata, multiple image types, regional variants
+- Image types: Box - Front, Box - Front - Reconstructed, Box - Back, Box - 3D, Clear Logo, Fanart, Screenshots, etc.
+- URL pattern: `https://images.launchbox-app.com/{FileName}` (filename from XML)
+- No API key required - download once, parse locally, query offline
+
+**Advantages over OpenGameDB:**
+- Reconstructed covers (high-quality community artwork)
+- Multiple image types per game (not just one cover URL)
+- Better regional variant handling
+- More complete metadata (community ratings, alternate names, etc.)
+- 3D box art and clear logos available
+
+**Implementation Considerations:**
+- 99MB download + XML parsing on startup (performance impact)
+- Need to index by game name + platform for fast lookups
+- Could be used alongside OpenGameDB (user chooses preferred source)
+- Daily manual updates vs OpenGameDB's version-controlled CSVs
+
+**CRITICAL - Licensing Unknown:**
+- Must contact LaunchBox team for redistribution/bundling permissions
+- OpenGameDB is CC0 (public domain) - safe to bundle
+- LaunchBox DB license terms not publicly documented
+- Need written permission before bundling Metadata.zip with OffBlast
+- May only be usable as download-on-demand, not pre-bundled
+
+**Potential Use Cases:**
+1. Replace OpenGameDB entirely (if licensing permits)
+2. Supplement OpenGameDB (use LaunchBox for covers, OpenGameDB for scores)
+3. User-selectable metadata source in config
+4. Cover browser: show LaunchBox + SteamGridDB options side-by-side
+
 ### Discord Rich Presence
 Show currently playing game in Discord status.
 
