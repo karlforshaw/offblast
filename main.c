@@ -381,6 +381,11 @@ typedef struct DownloaderContext {
     pthread_mutex_t *lock;
 } DownloaderContext;
 
+typedef struct CoverDownloadContext {
+	char url[PATH_MAX];
+	uint64_t targetSignature;
+} CoverDownloadContext;
+
 #define LOAD_STATE_FREE 0
 #define LOAD_STATE_LOADING 1
 #define LOAD_STATE_READY 2
@@ -643,6 +648,7 @@ void closeCoverBrowser();
 void coverBrowserSelectCover();
 void coverBrowserSetTitle();
 void coverBrowserQueueThumbnails();
+void *downloadCoverMain(void *arg);
 
 WindowInfo getOffblastWindowInfo();
 uint32_t activeWindowIsOffblast();
@@ -776,35 +782,23 @@ void closeCoverBrowser() {
 	ui->showCoverBrowser = 0;
 }
 
-void coverBrowserSelectCover() {
-	MainUi *ui = &offblast->mainUi;
+void *downloadCoverMain(void *arg) {
+	CoverDownloadContext *ctx = (CoverDownloadContext *)arg;
 
-	if (ui->coverBrowserState != 1) return;  // 1 = COVER_GRID
-	if (!ui->coverBrowserCovers) return;
+	printf("=== Background Cover Download ===\n");
+	printf("Downloading from: %s\n", ctx->url);
+	printf("Target signature: %"PRIu64"\n", ctx->targetSignature);
 
-	// Get current game
-	if (!ui->activeRowset || !ui->activeRowset->rowCursor ||
-		!ui->activeRowset->rowCursor->tileCursor) return;
-
-	LaunchTarget *target = ui->activeRowset->rowCursor->tileCursor->target;
-	if (!target) return;
-
-	// Get selected cover
-	SgdbCover *cover = &ui->coverBrowserCovers->covers[ui->coverBrowserCoverCursor];
-
-	printf("=== Cover Selection ===\n");
-	printf("Game: %s (signature: %"PRIu64")\n", target->name, target->targetSignature);
-	printf("Downloading cover from: %s\n", cover->url);
-
-	// Download the cover directly
+	// Download the cover
 	CurlFetch fetch = {0};
 	CURL *curl = curl_easy_init();
 	if (!curl) {
 		printf("Failed to initialize curl\n");
-		return;
+		free(ctx);
+		return NULL;
 	}
 
-	curl_easy_setopt(curl, CURLOPT_URL, cover->url);
+	curl_easy_setopt(curl, CURLOPT_URL, ctx->url);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
@@ -817,10 +811,8 @@ void coverBrowserSelectCover() {
 	if (res != CURLE_OK) {
 		printf("Failed to download cover: %s\n", curl_easy_strerror(res));
 		if (fetch.data) free(fetch.data);
-		snprintf(offblast->statusMessage, 256, "Failed to download cover");
-		offblast->statusMessageTick = SDL_GetTicks();
-		offblast->statusMessageDuration = 3000;
-		return;
+		free(ctx);
+		return NULL;
 	}
 
 	printf("Downloaded %zu bytes\n", fetch.size);
@@ -833,10 +825,8 @@ void coverBrowserSelectCover() {
 
 	if (!pixels) {
 		printf("Failed to decode downloaded image\n");
-		snprintf(offblast->statusMessage, 256, "Failed to decode cover image");
-		offblast->statusMessageTick = SDL_GetTicks();
-		offblast->statusMessageDuration = 3000;
-		return;
+		free(ctx);
+		return NULL;
 	}
 
 	printf("Decoded image: %dx%d\n", width, height);
@@ -868,7 +858,7 @@ void coverBrowserSelectCover() {
 	char *homePath = getenv("HOME");
 	char coverPath[PATH_MAX];
 	snprintf(coverPath, PATH_MAX, "%s/.offblast/covers/%"PRIu64".jpg",
-			 homePath, target->targetSignature);
+			 homePath, ctx->targetSignature);
 
 	printf("Saving cover to: %s\n", coverPath);
 	stbi_flip_vertically_on_write(1);
@@ -877,40 +867,67 @@ void coverBrowserSelectCover() {
 
 	if (!saveResult) {
 		printf("Failed to save cover file\n");
-		snprintf(offblast->statusMessage, 256, "Failed to save cover file");
-		offblast->statusMessageTick = SDL_GetTicks();
-		offblast->statusMessageDuration = 3000;
-		return;
+		free(ctx);
+		return NULL;
 	}
 
 	printf("Cover saved successfully\n");
 
-	// Evict texture from imageStore to force reload
+	// Just mark the image as COLD - don't delete textures from background thread!
+	// The main thread will handle texture deletion and reloading naturally
 	pthread_mutex_lock(&offblast->imageStoreLock);
 	for (uint32_t i = 0; i < IMAGE_STORE_SIZE; i++) {
-		if (offblast->imageStore[i].targetSignature == target->targetSignature) {
-			if (offblast->imageStore[i].textureHandle != 0) {
-				glDeleteTextures(1, &offblast->imageStore[i].textureHandle);
-				offblast->imageStore[i].textureHandle = 0;
-				offblast->numLoadedTextures--;
-			}
+		if (offblast->imageStore[i].targetSignature == ctx->targetSignature) {
+			// Mark as COLD so it will reload from the new file
+			// Don't call glDeleteTextures from background thread - OpenGL isn't thread-safe!
 			offblast->imageStore[i].state = IMAGE_STATE_COLD;
-			offblast->imageStore[i].targetSignature = 0;
 			break;
 		}
 	}
 	pthread_mutex_unlock(&offblast->imageStoreLock);
 
+	free(ctx);
+	return NULL;
+}
+
+void coverBrowserSelectCover() {
+	MainUi *ui = &offblast->mainUi;
+
+	if (ui->coverBrowserState != 1) return;  // 1 = COVER_GRID
+	if (!ui->coverBrowserCovers) return;
+
+	// Get current game
+	if (!ui->activeRowset || !ui->activeRowset->rowCursor ||
+		!ui->activeRowset->rowCursor->tileCursor) return;
+
+	LaunchTarget *target = ui->activeRowset->rowCursor->tileCursor->target;
+	if (!target) return;
+
+	// Get selected cover
+	SgdbCover *cover = &ui->coverBrowserCovers->covers[ui->coverBrowserCoverCursor];
+
+	printf("=== Cover Selection ===\n");
+	printf("Game: %s (signature: %"PRIu64")\n", target->name, target->targetSignature);
+	printf("Selected cover URL: %s\n", cover->url);
+
+	// Create context for background download
+	CoverDownloadContext *ctx = malloc(sizeof(CoverDownloadContext));
+	strncpy(ctx->url, cover->url, PATH_MAX-1);
+	ctx->url[PATH_MAX-1] = '\0';
+	ctx->targetSignature = target->targetSignature;
+
+	// Spawn download thread
+	pthread_t downloadThread;
+	pthread_create(&downloadThread, NULL, downloadCoverMain, ctx);
+	pthread_detach(downloadThread);
+
 	// Show status message
-	snprintf(offblast->statusMessage, 256, "Cover updated");
+	snprintf(offblast->statusMessage, 256, "Downloading cover...");
 	offblast->statusMessageTick = SDL_GetTicks();
 	offblast->statusMessageDuration = 2000;
 
-	// Close browser
+	// Close browser immediately - download continues in background
 	closeCoverBrowser();
-
-	// Invalidate row geometry to trigger re-request
-	offblast->mainUi.rowGeometryInvalid = 1;
 }
 
 void *downloadThumbnailMain(void *arg) {
@@ -3300,41 +3317,28 @@ int main(int argc, char** argv) {
 							}
 						}
 
-						// Render scroll indicators with golden ratio spacing from grid
-						float moreMargin = goldenRatioLarge(offblast->infoPointSize, 1);
+						// Render scroll indicators with simple dots
+						float dotSize = goldenRatioLarge(offblast->infoPointSize, 2);
+						float dotMargin = goldenRatioLarge(offblast->infoPointSize, 1);
+						Color dotColor = {1.0, 1.0, 1.0, 0.7};
 
 						if (mainUi->coverBrowserScrollOffset > 0) {
-							// Top "More" - above the top row
-							char *moreText = "↑ More";
-							uint32_t moreWidth = getTextLineWidth(moreText, offblast->infoCharData);
-							renderText(offblast,
-									   offblast->winWidth / 2 - moreWidth / 2,
-									   gridStartY + coverHeight + moreMargin,
-									   OFFBLAST_TEXT_INFO, 0.8, 0,
-									   moreText);
+							// Top indicator - above the top row
+							renderGradient(offblast->winWidth / 2 - dotSize / 2,
+										  gridStartY + coverHeight + dotMargin,
+										  dotSize, dotSize, 0,
+										  dotColor, dotColor);
 						}
 						uint32_t totalRows = (mainUi->coverBrowserCovers->numCovers + mainUi->coverBrowserCoversPerRow - 1) / mainUi->coverBrowserCoversPerRow;
 						if (mainUi->coverBrowserScrollOffset + mainUi->coverBrowserVisibleRows < totalRows) {
-							// Bottom "More" - below the bottom row with top margin
-							float bottomRowBottomY = gridStartY - totalGridHeight;
-							char *moreText = "↓ More";
-							uint32_t moreWidth = getTextLineWidth(moreText, offblast->infoCharData);
-							renderText(offblast,
-									   offblast->winWidth / 2 - moreWidth / 2,
-									   bottomRowBottomY - moreMargin,
-									   OFFBLAST_TEXT_INFO, 0.8, 0,
-									   moreText);
+							// Bottom indicator - below the bottom row
+							// Bottom of second row is at: gridStartY - (coverHeight + gridPadding)
+							float bottomRowBottomY = gridStartY - (coverHeight + gridPadding);
+							renderGradient(offblast->winWidth / 2 - dotSize / 2,
+										  bottomRowBottomY - dotMargin,
+										  dotSize, dotSize, 0,
+										  dotColor, dotColor);
 						}
-
-						// Instructions at bottom
-						char *instructionsText = "D-Pad: Navigate  |  A: Select  |  B: Cancel";
-						uint32_t instructionsWidth = getTextLineWidth(instructionsText, offblast->infoCharData);
-						float instructionsMargin = goldenRatioLarge(offblast->infoPointSize, 1);
-						renderText(offblast,
-								   offblast->winWidth / 2 - instructionsWidth / 2,
-								   instructionsMargin,
-								   OFFBLAST_TEXT_INFO, 0.7, 0,
-								   instructionsText);
 					}
 				}
 			}

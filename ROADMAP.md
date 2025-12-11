@@ -122,6 +122,12 @@ Support keyboard input for search (currently controller-only).
 
 ## Planned Features
 
+### Cover Browser UI Enhancements
+- Replace scroll indicator dots with proper arrow textures
+  - Current: Simple filled squares
+  - Desired: Triangle or chevron textures pointing up/down
+  - Could use custom texture assets or render with geometry
+
 ### Discord Rich Presence
 Show currently playing game in Discord status.
 

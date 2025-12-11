@@ -51,12 +51,16 @@
   - 5 columns × 2 rows with scrollable navigation for large collections
   - Works for Steam games (matches by AppID) and non-Steam games (searches by name)
   - Multiple match handling: prompts user to select correct game before showing covers
+  - Background download: UI remains responsive while cover downloads/saves
+  - Thumbnails load asynchronously in separate threads for smooth browsing
   - Downloads selected cover and saves directly to local cache
   - Covers persist across restarts and take precedence over database URLs
   - Requires free API key from https://www.steamgriddb.com/profile/preferences/api
   - Configure in config.json: `"steamgriddb_api_key": "your-key-here"`
   - Tile sizing matches main game browser for visual consistency
   - Golden ratio spacing throughout for professional appearance
+  - Proper text centering using getTextLineWidth() with cached title width
+  - Minimalist scroll indicators (simple dots) positioned with golden ratio margins
 - **Steam documentation** added to README.md
 - **Game context menu** accessible via Start button on controller
   - Slides in from right side of screen (mirrors left navigation menu)
