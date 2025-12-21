@@ -2,11 +2,12 @@
     "launchers": [
         {
             "type": "standard",
+            "name": "Wii U",
             "rom_path": "/home/karl/SeraphStore/Games/WiiU",
             "scan_pattern": "*/vol/code/*.rpx",
             "cmd": "wine /home/karl/Apps/Cemu/Cemu.exe -f -a %CEMU_ACCOUNT% -g %ROM%",
             "platform": "wii_u",
-            "comment": "scan_pattern searches recursively for .rpx files in game subdirectories"
+            "comment": "Optional 'name' field provides a custom display name. scan_pattern searches recursively for .rpx files in game subdirectories"
         },
         {
             "type": "standard",
@@ -111,5 +112,8 @@
     "comment_steam": "Optional: Get API key at https://steamcommunity.com/dev/apikey, find your Steam ID at steamid.io. Enables showing all owned games (not just installed).",
 
     "steamgriddb_api_key": "",
-    "comment_steamgriddb": "Optional: Get API key at https://www.steamgriddb.com/profile/preferences/api. Enables browsing and selecting custom covers from context menu."
+    "comment_steamgriddb": "Optional: Get API key at https://www.steamgriddb.com/profile/preferences/api. Enables browsing and selecting custom covers from context menu.",
+
+    "show_installed_only": false,
+    "comment_show_installed_only": "Optional: When true, hides uninstalled Steam games from the library. Only shows games that are currently installed."
 }

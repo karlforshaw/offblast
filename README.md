@@ -56,12 +56,16 @@ Launchers define how to find and run your games. OffBlast supports two launcher 
 ```json
 {
     "type": "standard",
+    "name": "PS2 Games",            // Optional: Custom display name (defaults to platform)
     "rom_path": "/path/to/games",
     "extension": ".iso,.chd",      // File extensions to scan for
     "cmd": "emulator %ROM%",        // Command to run (with placeholders)
     "platform": "playstation_2"     // Platform identifier for OpenGameDB
 }
 ```
+
+**Optional fields:**
+- `name`: Custom display name for this launcher shown in menus and status messages. If not provided, the platform name is used.
 
 #### Special Scanning Patterns
 Some systems need recursive scanning or directory-based games:
@@ -196,6 +200,17 @@ Add the `steam` section to your config.json:
 
 #### Without API Key
 If you don't configure an API key, OffBlast falls back to local-only detection using Steam's appmanifest files. This only shows installed games.
+
+#### Filtering Uninstalled Games
+If you only want to see installed Steam games (even with an API key configured), add this to your config:
+
+```json
+{
+    "show_installed_only": true
+}
+```
+
+This hides all uninstalled games from your library, showing only what's currently installed on your system.
 
 ### 5. SteamGridDB Cover Browser (Optional)
 
