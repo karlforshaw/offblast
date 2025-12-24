@@ -337,6 +337,24 @@ The home screen automatically organizes games into:
   - Playtime statistics
   - Custom settings via dynamic fields
 
+### Resume Feature
+Switch seamlessly between your games and OffBlast:
+- **Press Guide button** while in-game to return to OffBlast
+- **Press Resume** (A button when hovering over Stop/Resume) to return to your game
+- Works across X11 and Wayland sessions
+
+#### GNOME Wayland Requirement
+On **GNOME with Wayland**, Resume requires the **Window Calls** extension:
+
+1. Install from [GNOME Extensions](https://extensions.gnome.org/extension/4724/window-calls/)
+2. Or via command line:
+   ```bash
+   gnome-extensions install window-calls@domandoman.xyz
+   ```
+3. Restart OffBlast after installation
+
+**Note**: On first use without the extension, OffBlast will display installation instructions. This requirement is specific to GNOME Wayland - KDE Plasma and X11 sessions work without additional setup.
+
 ### Game Metadata
 Powered by [OpenGameDB](https://github.com/karlforshaw/opengamedb) for:
 - Game cover art
@@ -382,5 +400,6 @@ export SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS=0
 - **B/Backspace**: Back
 - **Y**: Search
 - **Left** (when at leftmost position): Show main menu (platforms, exit, shutdown, etc.)
-- **Guide**: Show menu (in-game)
+- **Guide**: Return to OffBlast while in-game
+- **Resume**: Return to game from OffBlast (A button on Resume/Stop buttons)
 - **L/R Bumpers**: Page scroll

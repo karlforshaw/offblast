@@ -503,6 +503,7 @@ typedef struct OffblastUi {
     uint32_t sessionType;
     Window resumeWindow;
     char resumeWindowUuid[64];  // KWin window UUID for Wayland
+    long gnomeResumeWindowId;   // GNOME Shell window ID for Wayland
 
     pid_t runningPid;
     LaunchTarget *playingTarget;
@@ -616,6 +617,8 @@ void getActiveKWinWindowUuid(char *uuidOut, size_t uuidSize);
 void getKWinWindowUuids(char *output, size_t outputSize);
 int getKWinWindowUuidByPid(pid_t pid, char *uuidOut, size_t uuidSize);
 void activateWindowByPid(pid_t gamePid);
+void captureGnomeFocusedWindow();
+void activateGnomeWindow(long windowId);
 void raiseWindowByUuid(const char *uuid);
 void importFromSteam(Launcher *theLauncher);
 void importFromCustom(Launcher *theLauncher);
@@ -2140,6 +2143,7 @@ int main(int argc, char** argv) {
 
     printf("\nStarting up OffBlast with %d args.\n\n", argc);
     offblast = calloc(1, sizeof(OffblastUi));
+    offblast->gnomeResumeWindowId = -1;  // Initialize to invalid
 
 
     char *homePath = getenv("HOME");
@@ -4984,10 +4988,15 @@ void pressConfirm(int32_t joystickIndex) {
                 printf("Resume the current game on window %lu \n",
                     offblast->resumeWindow);
 
-                // Use KWin PID-based activation on Wayland/KDE, otherwise use X11
-                if (offblast->sessionType == SESSION_TYPE_WAYLAND &&
-                    offblast->windowManager == WINDOW_MANAGER_KDE) {
-                    activateWindowByPid(offblast->runningPid);
+                // Use appropriate window activation method based on session/WM
+                if (offblast->sessionType == SESSION_TYPE_WAYLAND) {
+                    if (offblast->windowManager == WINDOW_MANAGER_KDE) {
+                        activateWindowByPid(offblast->runningPid);
+                    } else if (offblast->windowManager == WINDOW_MANAGER_GNOME) {
+                        activateGnomeWindow(offblast->gnomeResumeWindowId);
+                    } else {
+                        raiseWindow(offblast->resumeWindow);
+                    }
                 } else {
                     raiseWindow(offblast->resumeWindow);
                 }
@@ -6398,12 +6407,15 @@ void pressGuide() {
             offblast->resumeWindow = getActiveWindowRaw();
             offblast->uiStopButtonHot = 0;
 
-            // On KDE Wayland, we'll use PID-based activation (no need to capture UUID)
-            // Just verify we have the PID
-            if (offblast->sessionType == SESSION_TYPE_WAYLAND &&
-                offblast->windowManager == WINDOW_MANAGER_KDE) {
-                printf("KDE Wayland session - will use PID-based window activation (PID: %d)\n",
-                       offblast->runningPid);
+            // On Wayland, capture window info for resume functionality
+            if (offblast->sessionType == SESSION_TYPE_WAYLAND) {
+                if (offblast->windowManager == WINDOW_MANAGER_KDE) {
+                    printf("KDE Wayland session - will use PID-based window activation (PID: %d)\n",
+                           offblast->runningPid);
+                } else if (offblast->windowManager == WINDOW_MANAGER_GNOME) {
+                    printf("GNOME Wayland session - capturing focused window...\n");
+                    captureGnomeFocusedWindow();
+                }
             }
 
             if (offblast->windowManager == WINDOW_MANAGER_I3) {
@@ -7027,6 +7039,136 @@ void activateWindowByPid(pid_t gamePid) {
     }
 
     unlink(scriptPath);
+}
+
+// Capture the currently focused window ID on GNOME Wayland
+void captureGnomeFocusedWindow() {
+    static int extensionWarningShown = 0;
+
+    if (offblast->sessionType != SESSION_TYPE_WAYLAND ||
+        offblast->windowManager != WINDOW_MANAGER_GNOME) {
+        return;  // Not applicable
+    }
+
+    // Use window-calls List method to find the focused window
+    const char *listCmd =
+        "gdbus call --session "
+        "--dest org.gnome.Shell "
+        "--object-path /org/gnome/Shell/Extensions/Windows "
+        "--method org.gnome.Shell.Extensions.Windows.List 2>&1";
+
+    FILE *pipe = popen(listCmd, "r");
+    if (!pipe) {
+        printf("Could not execute gdbus command\n");
+        return;
+    }
+
+    // Read the response
+    char *response = malloc(16384);
+    if (!response) {
+        pclose(pipe);
+        return;
+    }
+
+    size_t responseSize = 0;
+    char buffer[1024];
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        size_t len = strlen(buffer);
+        if (responseSize + len < 16384) {
+            strcpy(response + responseSize, buffer);
+            responseSize += len;
+        }
+    }
+    pclose(pipe);
+
+    // Check if the extension is installed
+    if (strstr(response, "GDBus.Error") != NULL ||
+        strstr(response, "not provided") != NULL ||
+        responseSize < 10) {
+
+        if (!extensionWarningShown) {
+            printf("\n");
+            printf("========================================\n");
+            printf("GNOME Wayland Resume Feature\n");
+            printf("========================================\n");
+            printf("Resume requires the 'Window Calls' GNOME Shell extension.\n");
+            printf("\n");
+            printf("To install:\n");
+            printf("1. Visit: https://extensions.gnome.org/extension/4724/window-calls/\n");
+            printf("2. Click the toggle to install\n");
+            printf("3. Restart offblast\n");
+            printf("\n");
+            printf("Or search for 'Window Calls' in GNOME Extensions\n");
+            printf("========================================\n");
+            printf("\n");
+            extensionWarningShown = 1;
+        }
+        free(response);
+        offblast->gnomeResumeWindowId = -1;
+        return;
+    }
+
+    // Parse JSON to find focused window
+    // Response format: ('[{..."id":12345..."focus":true}...]',)
+    // Note: NO spaces in JSON - "focus":true not "focus": true
+    char *focusPos = strstr(response, "\"focus\":true");
+    if (focusPos) {
+        // Search backwards to find the start of this object
+        char *objStart = focusPos;
+        while (objStart > response && *objStart != '{') {
+            objStart--;
+        }
+
+        // Now search forward from object start to find the id field
+        // id comes before focus in the JSON
+        char *idPos = strstr(objStart, "\"id\":");
+        if (idPos && idPos < focusPos) {  // id should come before focus
+            if (sscanf(idPos + 5, "%ld", &offblast->gnomeResumeWindowId) == 1) {
+                printf("Captured focused window ID: %ld\n", offblast->gnomeResumeWindowId);
+                free(response);
+                return;
+            }
+        }
+    }
+
+    free(response);
+    printf("Warning: Could not determine focused window\n");
+    offblast->gnomeResumeWindowId = -1;
+}
+
+// Activate a window by ID on GNOME Wayland
+void activateGnomeWindow(long windowId) {
+    if (offblast->sessionType != SESSION_TYPE_WAYLAND ||
+        offblast->windowManager != WINDOW_MANAGER_GNOME) {
+        return;  // Not applicable
+    }
+
+    if (windowId < 0) {
+        printf("No valid window ID to activate\n");
+        return;
+    }
+
+    printf("Activating GNOME window ID %ld...\n", windowId);
+
+    // Use window-calls Activate method
+    char activateCmd[512];
+    snprintf(activateCmd, sizeof(activateCmd),
+        "gdbus call --session "
+        "--dest org.gnome.Shell "
+        "--object-path /org/gnome/Shell/Extensions/Windows "
+        "--method org.gnome.Shell.Extensions.Windows.Activate %u 2>&1",
+        (unsigned int)windowId);
+
+    FILE *pipe = popen(activateCmd, "r");
+    if (pipe) {
+        char buffer[256];
+        if (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+            printf("Activation result: %s", buffer);
+        }
+        pclose(pipe);
+    }
+
+    printf("Window activation complete\n");
 }
 
 // Wrapper for compatibility
