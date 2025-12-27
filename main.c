@@ -6985,17 +6985,41 @@ void activateWindowByPid(pid_t gamePid) {
         "}\n");
     fclose(scriptFile);
 
+    // Detect which qdbus command to use
+    // Try multiple possible locations/names for Qt5/Qt6 compatibility
+    const char *qdbus_cmd = NULL;
+
+    // Try qdbus-qt6 (Fedora Plasma 6)
+    if (access("/usr/bin/qdbus-qt6", X_OK) == 0) {
+        qdbus_cmd = "/usr/bin/qdbus-qt6";
+    }
+    // Try qdbus6 (some distros)
+    else if (access("/usr/bin/qdbus6", X_OK) == 0) {
+        qdbus_cmd = "/usr/bin/qdbus6";
+    }
+    // Try qdbus (Plasma 5/Bazzite)
+    else if (access("/usr/bin/qdbus", X_OK) == 0) {
+        qdbus_cmd = "/usr/bin/qdbus";
+    }
+    else {
+        printf("Warning: No qdbus command found (tried qdbus-qt6, qdbus6, qdbus)\n");
+        unlink(scriptPath);
+        return;
+    }
+
+    printf("Using D-Bus command: %s\n", qdbus_cmd);
+
     // Load script via D-Bus using qdbus (avoids AppImage library conflicts)
     char cmd[PATH_MAX + 256];
     snprintf(cmd, sizeof(cmd),
-        "qdbus org.kde.KWin /Scripting loadScript \"%s\" \"offblast_activate_%d\" 2>&1",
-        scriptPath, gamePid);
+        "%s org.kde.KWin /Scripting loadScript \"%s\" \"offblast_activate_%d\" 2>&1",
+        qdbus_cmd, scriptPath, gamePid);
 
     printf("Activating window for PID %d via KWin scripting...\n", gamePid);
 
     FILE *pipe = popen(cmd, "r");
     if (!pipe) {
-        printf("Could not execute qdbus command\n");
+        printf("Could not execute %s command\n", qdbus_cmd);
         unlink(scriptPath);
         return;
     }
@@ -7013,7 +7037,7 @@ void activateWindowByPid(pid_t gamePid) {
 
         // Run the loaded script
         snprintf(cmd, sizeof(cmd),
-            "qdbus org.kde.KWin /Scripting/Script%d run", scriptId);
+            "%s org.kde.KWin /Scripting/Script%d run", qdbus_cmd, scriptId);
 
         pipe = popen(cmd, "r");
         if (pipe) {
@@ -7029,8 +7053,8 @@ void activateWindowByPid(pid_t gamePid) {
 
         // Unload the script
         snprintf(cmd, sizeof(cmd),
-            "qdbus org.kde.KWin /Scripting unloadScript \"offblast_activate_%d\"",
-            gamePid);
+            "%s org.kde.KWin /Scripting unloadScript \"offblast_activate_%d\"",
+            qdbus_cmd, gamePid);
         system(cmd);
 
         printf("Window activation complete\n");

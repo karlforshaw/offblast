@@ -355,6 +355,54 @@ On **GNOME with Wayland**, Resume requires the **Window Calls** extension:
 
 **Note**: On first use without the extension, OffBlast will display installation instructions. This requirement is specific to GNOME Wayland - KDE Plasma and X11 sessions work without additional setup.
 
+### Console-Like Experience
+
+Want OffBlast to boot automatically like a game console? **KDE Plasma is the recommended desktop environment** for this setup.
+
+#### Why KDE over GNOME?
+
+While OffBlast works on any desktop, **KDE Plasma provides the best console-like experience**:
+
+- **Reliable autostart** - KDE's built-in autostart works perfectly with OffBlast
+- **No focus issues** - GNOME's security restrictions prevent apps from auto-focusing on boot, even with autostart configured
+- **Better hardware support** - Direct GPU access works seamlessly
+- **Window management** - Resume functionality works without additional extensions
+
+#### Setting Up Console Mode with KDE
+
+1. **Install KDE Plasma** (if not already installed):
+   ```bash
+   # Fedora
+   sudo dnf install @kde-desktop-environment
+
+   # Ubuntu/Debian
+   sudo apt install kde-plasma-desktop
+   ```
+
+2. **Enable autologin** in KDE System Settings:
+   - Open System Settings → Startup and Shutdown → Login Screen (SDDM)
+   - Enable "Automatically log in" and select your user
+   - Click Apply
+
+3. **Configure autostart** for OffBlast:
+   - Open System Settings → Startup and Shutdown → Autostart
+   - Click "Add..." → "Add Application..."
+   - Navigate to your OffBlast binary or AppImage
+   - Click OK
+
+4. **Install qdbus-qt6** (required for Resume on Fedora KDE):
+   ```bash
+   sudo dnf install qdbus-qt6
+   ```
+
+5. **Reboot** - Your system will now boot directly into OffBlast
+
+#### Result
+
+Your machine will boot straight into OffBlast like a dedicated game console. Press the Guide button during gameplay to return to the launcher, and use the Resume button to switch back to your game.
+
+**Note**: If you're on GNOME and experiencing autostart/focus issues, switching to KDE Plasma is significantly easier than trying to work around GNOME's restrictions.
+
 ### Game Metadata
 Powered by [OpenGameDB](https://github.com/karlforshaw/opengamedb) for:
 - Game cover art
