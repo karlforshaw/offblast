@@ -62,15 +62,47 @@
   - Proper text centering using getTextLineWidth() with cached title width
   - Minimalist scroll indicators (simple dots) positioned with golden ratio margins
 - **Steam documentation** added to README.md
+- **UTF-8 text rendering with multi-language support**
+  - Full Unicode support for game titles, descriptions, and all UI text
+  - Supports 656 characters across 5 Unicode ranges:
+    - Basic Latin + Latin-1 (32-255): Western European languages
+    - Latin Extended-A (256-383): Eastern European languages
+    - General Punctuation (0x2000-0x206F): Smart quotes, em dashes, ellipsis
+    - Hiragana (0x3040-0x309F): Japanese phonetic script
+    - Katakana (0x30A0-0x30FF): Japanese phonetic script
+  - Proper rendering of accented characters (Pokémon, Café, etc.)
+  - Smart quotes (" " ' ') and typography (— …) display correctly
+  - Uses stbtt_PackFontRanges with 4096×4096 texture atlas per font
+  - Binary search glyph lookup with UTF-8 decoder
+  - Negligible performance impact: 1ms frame time maintained
+  - Graceful fallback: drops Japanese ranges if atlas too small for font size
+- **Launcher rescan feature**
+  - New "Rescan Launcher for New Games" context menu option
+  - Manually detect newly added ROM files without restarting OffBlast
+  - Invalidates launcher cache and re-scans ROM directories
+  - Updates cache file after scan completes
+  - Fixes workflow: add new game → open context menu → rescan → game appears
+- **Roman numeral conversion for game matching**
+  - Automatic bidirectional conversion between arabic and roman numerals (1-39)
+  - Matches "Hades 2.nsp" to "Hades II" in OpenGameDB
+  - Matches "Final Fantasy VII.iso" to "Final Fantasy 7"
+  - Tries both original and converted versions, uses better match score
+  - Solves common mismatch between filename numerals and database titles
 - **Game context menu** accessible via Start button on controller
   - Slides in from right side of screen (mirrors left navigation menu)
-  - "Rescrape Platform" - re-fetch all covers and metadata for current platform
-  - "Rescrape Game" - re-fetch cover and metadata for selected game only
+  - "Rescan Launcher for New Games" - detect newly added ROM files
+  - "Refresh Platform Metadata/Covers" - re-fetch all covers and metadata for current platform
+  - "Refresh Game Metadata/Covers" - re-fetch cover and metadata for selected game only
   - "Copy Cover Filename" - copies expected cover filename to clipboard for manual cover adding
   - "Refresh Cover" - reload cover texture without restarting (for manually added covers)
   - Works on both X11 and Wayland via SDL clipboard
 
 ### Changed
+- **Renamed "Rescrape" to "Refresh Metadata/Covers"** throughout UI and code
+  - Previous naming suggested it would detect new games, which it doesn't
+  - New naming clearly communicates it refreshes metadata for existing games
+  - Updated context menu labels, status messages, and console output
+  - Actual game detection now handled by separate "Rescan Launcher" feature
 - Steam games no longer imported from `steam.csv` in OpenGameDB
   - Game names and metadata now come directly from Steam API
   - Prevents phantom games from appearing in library
@@ -104,6 +136,21 @@
   - Detects session type (Wayland vs X11) and window manager (KDE vs GNOME vs i3)
   - Automatically uses KWin scripting on KDE Wayland, X11 APIs elsewhere
   - Tested and working on Bazzite (KDE Plasma Wayland)
+- **Fixed OpenGameDB path error when using auto-detection**
+  - Metadata refresh failed with "No OpenGameDB path in config" when using fallback paths
+  - Now stores discovered OpenGameDB path in offblast->openGameDbPath at runtime
+  - Metadata refresh uses stored path instead of re-reading config
+  - Supports both explicit config paths and auto-detected fallback locations
+- **Fixed newly added games not appearing until restart**
+  - Launcher contents cache prevented detection of new ROM files
+  - Added "Rescan Launcher for New Games" to manually trigger directory scan
+  - Invalidates cache and re-imports games from launcher ROM directories
+  - Workflow: add ROM → context menu → rescan → game appears immediately
+- **Fixed game matching for sequels with different numeral formats**
+  - Files like "Hades 2.nsp" failed to match "Hades II" in OpenGameDB
+  - Added automatic roman numeral conversion (supports 1-39, I-XXXIX)
+  - Tries both original filename and converted version, uses better match
+  - Bidirectional: works for "2→II" and "VII→7" conversions
 
 ## [0.7.0] - 2025-11-25
 
