@@ -59,6 +59,9 @@
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize2.h"
 
+#define STB_RECT_PACK_IMPLEMENTATION
+#include "stb_rect_pack.h"
+
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
@@ -460,9 +463,16 @@ typedef struct OffblastUi {
 
     GLuint textVbo;
 
-    stbtt_bakedchar titleCharData[224];  // Extended to support Latin-1 (chars 32-255)
-    stbtt_bakedchar infoCharData[224];
-    stbtt_bakedchar debugCharData[224];
+    // UTF-8 font support with packed characters
+    stbtt_packedchar *titleCharData;
+    stbtt_packedchar *infoCharData;
+    stbtt_packedchar *debugCharData;
+    int *titleCodepoints;      // Array of codepoints corresponding to packed chars
+    int *infoCodepoints;
+    int *debugCodepoints;
+    int titleNumChars;
+    int infoNumChars;
+    int debugNumChars;
 
     uint32_t textBitmapHeight;
     uint32_t textBitmapWidth;
@@ -599,7 +609,12 @@ int playTimeSort(const void *a, const void *b);
 int lastPlayedSort(const void *a, const void *b);
 int rankingSort(const void *a, const void *b);
 int tileRankingSort(const void *a, const void *b);
-uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata);
+int utf8_decode(const char **str);
+int find_glyph_index(int codepoint, const int *codepoints, int numChars);
+int packFont(unsigned char *fontData, float fontSize, unsigned char *atlas,
+             int atlasWidth, int atlasHeight,
+             stbtt_packedchar **outCharData, int **outCodepoints);
+uint32_t getTextLineWidth(char *string, stbtt_packedchar* cdata, int *codepoints, int numChars);
 void renderText(OffblastUi *offblast, float x, float y, 
         uint32_t textMode, float alpha, uint32_t lineMaxW, char *string);
 void initQuad(Quad* quad);
@@ -1083,7 +1098,7 @@ void coverBrowserSetTitle() {
 	} else {
 		snprintf(ui->coverBrowserTitle, sizeof(ui->coverBrowserTitle), "Select Cover:");
 	}
-	ui->coverBrowserTitleWidth = getTextLineWidth(ui->coverBrowserTitle, offblast->titleCharData);
+	ui->coverBrowserTitleWidth = getTextLineWidth(ui->coverBrowserTitle, offblast->titleCharData, offblast->titleCodepoints, offblast->titleNumChars);
 }
 
 void coverBrowserQueueThumbnails() {
@@ -2317,8 +2332,8 @@ int main(int argc, char** argv) {
 
     // Calculate point sizes for fonts
     offblast->infoPointSize = goldenRatioLarge(offblast->winWidth, 9);
-    offblast->textBitmapHeight = 1024;
-    offblast->textBitmapWidth = 2048;
+    offblast->textBitmapHeight = 4096;  // Large atlas for UTF-8 + high-res displays
+    offblast->textBitmapWidth = 4096;
 
     // Load logo image
     int w, h, n;
@@ -2346,9 +2361,13 @@ int main(int argc, char** argv) {
         fclose(fontFd);
 
         unsigned char *infoAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
-        stbtt_BakeFontBitmap(fontContents, 0, offblast->infoPointSize,
+        offblast->infoNumChars = packFont(fontContents, offblast->infoPointSize,
             infoAtlas, offblast->textBitmapWidth, offblast->textBitmapHeight,
-            32, 224, offblast->infoCharData);
+            &offblast->infoCharData, &offblast->infoCodepoints);
+
+        if (offblast->infoNumChars == 0) {
+            printf("Warning: Failed to pack info font\n");
+        }
 
         glGenTextures(1, &offblast->infoTextTexture);
         glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
@@ -2522,8 +2541,8 @@ int main(int argc, char** argv) {
     assert(read);
     fclose(fd);
 
-    offblast->textBitmapHeight = 1024;
-    offblast->textBitmapWidth = 2048;
+    offblast->textBitmapHeight = 4096;  // Large atlas for UTF-8 + high-res displays
+    offblast->textBitmapWidth = 4096;
 
     // Calculate all font point sizes
     offblast->titlePointSize = goldenRatioLarge(offblast->winWidth, 7);
@@ -2534,11 +2553,15 @@ int main(int argc, char** argv) {
 
     unsigned char *titleAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
 
-    stbtt_BakeFontBitmap(fontContents, 0, offblast->titlePointSize,
+    offblast->titleNumChars = packFont(fontContents, offblast->titlePointSize,
             titleAtlas,
             offblast->textBitmapWidth,
             offblast->textBitmapHeight,
-            32, 224, offblast->titleCharData);
+            &offblast->titleCharData, &offblast->titleCodepoints);
+
+    if (offblast->titleNumChars == 0) {
+        printf("ERROR: Failed to pack title font\n");
+    }
 
     glGenTextures(1, &offblast->titleTextTexture);
     glBindTexture(GL_TEXTURE_2D, offblast->titleTextTexture);
@@ -2553,11 +2576,15 @@ int main(int argc, char** argv) {
 
     unsigned char *infoAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
 
-    stbtt_BakeFontBitmap(fontContents, 0, offblast->infoPointSize,
+    offblast->infoNumChars = packFont(fontContents, offblast->infoPointSize,
             infoAtlas,
             offblast->textBitmapWidth,
             offblast->textBitmapHeight,
-            32, 224, offblast->infoCharData);
+            &offblast->infoCharData, &offblast->infoCodepoints);
+
+    if (offblast->infoNumChars == 0) {
+        printf("ERROR: Failed to pack info font\n");
+    }
 
     glGenTextures(1, &offblast->infoTextTexture);
     glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
@@ -2572,10 +2599,14 @@ int main(int argc, char** argv) {
 
     unsigned char *debugAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
 
-    stbtt_BakeFontBitmap(fontContents, 0, offblast->debugPointSize, debugAtlas,
+    offblast->debugNumChars = packFont(fontContents, offblast->debugPointSize, debugAtlas,
             offblast->textBitmapWidth,
             offblast->textBitmapHeight,
-            32, 224, offblast->debugCharData);
+            &offblast->debugCharData, &offblast->debugCodepoints);
+
+    if (offblast->debugNumChars == 0) {
+        printf("ERROR: Failed to pack debug font\n");
+    }
 
     glGenTextures(1, &offblast->debugTextTexture);
     glBindTexture(GL_TEXTURE_2D, offblast->debugTextTexture);
@@ -2948,7 +2979,7 @@ int main(int argc, char** argv) {
                 char *noGameText = "whoops, no games found.";
 
                 uint32_t centerOfText = getTextLineWidth(noGameText,
-                        offblast->titleCharData);
+                        offblast->titleCharData, offblast->titleCodepoints, offblast->titleNumChars);
 
                 renderText(offblast, 
                         offblast->winWidth / 2 - centerOfText / 2, 
@@ -3130,7 +3161,7 @@ int main(int argc, char** argv) {
 
                 // Render playtime text (if any) right after infoText with reduced alpha
                 if (mainUi->playtimeText != NULL) {
-                    uint32_t infoWidth = getTextLineWidth(mainUi->infoText, offblast->infoCharData);
+                    uint32_t infoWidth = getTextLineWidth(mainUi->infoText, offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
                     renderText(offblast, offblast->winMargin + infoWidth, pixelY,
                             OFFBLAST_TEXT_INFO, alpha * 0.81f, 0, mainUi->playtimeText);
                 }
@@ -3529,8 +3560,8 @@ int main(int argc, char** argv) {
                 if (strlen(offblast->searchTerm)) 
                     textToShow = (char *)offblast->searchTerm;
 
-                uint32_t lineWidth = getTextLineWidth(textToShow, 
-                        offblast->titleCharData);
+                uint32_t lineWidth = getTextLineWidth(textToShow,
+                        offblast->titleCharData, offblast->titleCodepoints, offblast->titleNumChars);
 
                 renderText(offblast, offblast->winWidth/2 - lineWidth/2, 
                         offblast->winHeight/2 - offblast->titlePointSize/2, 
@@ -3560,7 +3591,7 @@ int main(int argc, char** argv) {
             // cache all the x positions of the text perhaps too?
             char *titleText = "Who's playing?";
             uint32_t titleWidth = getTextLineWidth(titleText,
-                    offblast->titleCharData);
+                    offblast->titleCharData, offblast->titleCodepoints, offblast->titleNumChars);
 
             renderText(offblast,
                     offblast->winWidth / 2 - titleWidth / 2,
@@ -3573,7 +3604,7 @@ int main(int argc, char** argv) {
                 // Display error message when no users are configured
                 char *messageText = "No users configured";
                 uint32_t messageWidth = getTextLineWidth(messageText,
-                        offblast->infoCharData);
+                        offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
 
                 renderText(offblast,
                         offblast->winWidth / 2 - messageWidth / 2,
@@ -3583,7 +3614,7 @@ int main(int argc, char** argv) {
 
                 char *helpText = "Please add users to ~/.offblast/config.json";
                 uint32_t helpWidth = getTextLineWidth(helpText,
-                        offblast->infoCharData);
+                        offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
 
                 renderText(offblast,
                         offblast->winWidth / 2 - helpWidth / 2,
@@ -3624,7 +3655,7 @@ int main(int argc, char** argv) {
 
                 uint32_t nameWidth = getTextLineWidth(
                         offblast->users[i].name,
-                        offblast->infoCharData);
+                        offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
 
                 renderText(offblast,
                         xStart + playerSelectUi->xOffsetForAvatar[i]
@@ -3645,8 +3676,8 @@ int main(int argc, char** argv) {
             if (offblast->loadingFlag)
                 headerText = "Now loading";
 
-            uint32_t titleWidth = getTextLineWidth(headerText, 
-                    offblast->titleCharData);
+            uint32_t titleWidth = getTextLineWidth(headerText,
+                    offblast->titleCharData, offblast->titleCodepoints, offblast->titleNumChars);
 
             renderText(offblast, 
                     offblast->winWidth / 2 - titleWidth / 2, 
@@ -3660,7 +3691,7 @@ int main(int argc, char** argv) {
                 offblast->mainUi.activeRowset->rowCursor->tileCursor->target->name;
 
             uint32_t nameWidth = 
-                getTextLineWidth(titleText, offblast->infoCharData);
+                getTextLineWidth(titleText, offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
 
             renderText(offblast, 
                     offblast->winWidth / 2 - nameWidth/ 2, 
@@ -3697,7 +3728,7 @@ int main(int argc, char** argv) {
 
                 if (isSteamGame) {
                     double returnWidth =
-                        getTextLineWidth("Return", offblast->infoCharData);
+                        getTextLineWidth("Return", offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
                     renderText(offblast,
                             offblast->winWidth/2 - returnWidth/2,
                             yOffset,
@@ -3707,10 +3738,10 @@ int main(int argc, char** argv) {
                             "Return");
                 } else {
                     double stopWidth =
-                        getTextLineWidth("Stop", offblast->infoCharData);
+                        getTextLineWidth("Stop", offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
 
                     double resumeWidth =
-                        getTextLineWidth("Resume", offblast->infoCharData);
+                        getTextLineWidth("Resume", offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
 
                     double totalWidth = stopWidth + 200 + resumeWidth;
 
@@ -3784,7 +3815,7 @@ int main(int argc, char** argv) {
                 }
 
                 // Calculate position (6% of screen height from right edge, 6% from top)
-                uint32_t messageWidth = getTextLineWidth(displayMessage, offblast->infoCharData);
+                uint32_t messageWidth = getTextLineWidth(displayMessage, offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
                 float xPos = offblast->winWidth - messageWidth - (offblast->winHeight * 0.06f);
                 // Position at 6% from top (Y coordinate in OpenGL is from bottom)
                 float yPos = offblast->winHeight - (offblast->winHeight * 0.06f);
@@ -3840,61 +3871,186 @@ double easeInOutCirc (double t, double b, double c, double d) {
 	return c/2.0 * (sqrt(1.0 - t*t) + 1.0) + b;
 };
 
-// Convert UTF-8 string to Latin-1 (ISO-8859-1) in-place
-// Handles 2-byte UTF-8 sequences for characters U+0080 to U+00FF
-void utf8_to_latin1(char *str) {
-    unsigned char *src = (unsigned char *)str;
-    unsigned char *dst = (unsigned char *)str;
+// Pack font with UTF-8 support into texture atlas
+// Returns number of characters packed, or 0 on failure
+int packFont(unsigned char *fontData, float fontSize, unsigned char *atlas,
+             int atlasWidth, int atlasHeight,
+             stbtt_packedchar **outCharData, int **outCodepoints) {
 
-    while (*src) {
-        if ((*src & 0x80) == 0) {
-            // Single-byte ASCII character (0x00-0x7F)
-            *dst++ = *src++;
-        }
-        else if ((*src & 0xE0) == 0xC0) {
-            // Two-byte UTF-8 sequence
-            unsigned char byte1 = *src++;
-            if (*src && (*src & 0xC0) == 0x80) {
-                unsigned char byte2 = *src++;
-                // Decode: ((byte1 & 0x1F) << 6) | (byte2 & 0x3F)
-                unsigned int codepoint = ((byte1 & 0x1F) << 6) | (byte2 & 0x3F);
+    // Define Unicode ranges to support
+    // Start with essential ranges for Latin + common symbols
+    #define NUM_RANGES 5
+    stbtt_pack_range ranges[NUM_RANGES];
+    memset(ranges, 0, sizeof(ranges));  // Zero-initialize all fields
+    int totalChars = 0;
 
-                // Only characters U+0080 to U+00FF fit in Latin-1
-                if (codepoint >= 0x80 && codepoint <= 0xFF) {
-                    *dst++ = (unsigned char)codepoint;
-                } else {
-                    // Character outside Latin-1 range, replace with '?'
-                    *dst++ = '?';
-                }
-            } else {
-                // Invalid UTF-8 sequence, skip
-                *dst++ = '?';
-            }
+    // Range 0: Basic Latin + Latin-1 (32-255)
+    ranges[0].font_size = fontSize;
+    ranges[0].first_unicode_codepoint_in_range = 32;
+    ranges[0].array_of_unicode_codepoints = NULL;  // Use continuous range
+    ranges[0].num_chars = 224;  // 32-255
+    ranges[0].chardata_for_range = NULL;  // Will allocate
+    totalChars += 224;
+
+    // Range 1: Latin Extended-A (256-383) - Eastern European
+    ranges[1].font_size = fontSize;
+    ranges[1].first_unicode_codepoint_in_range = 256;
+    ranges[1].array_of_unicode_codepoints = NULL;
+    ranges[1].num_chars = 128;
+    ranges[1].chardata_for_range = NULL;
+    totalChars += 128;
+
+    // Range 2: General Punctuation (8192-8303) - smart quotes, dashes, ellipsis
+    ranges[2].font_size = fontSize;
+    ranges[2].first_unicode_codepoint_in_range = 0x2000;
+    ranges[2].array_of_unicode_codepoints = NULL;
+    ranges[2].num_chars = 112;
+    ranges[2].chardata_for_range = NULL;
+    totalChars += 112;
+
+    // Range 3: Hiragana (12352-12447)
+    ranges[3].font_size = fontSize;
+    ranges[3].first_unicode_codepoint_in_range = 0x3040;
+    ranges[3].array_of_unicode_codepoints = NULL;
+    ranges[3].num_chars = 96;
+    ranges[3].chardata_for_range = NULL;
+    totalChars += 96;
+
+    // Range 4: Katakana (12448-12543)
+    ranges[4].font_size = fontSize;
+    ranges[4].first_unicode_codepoint_in_range = 0x30A0;
+    ranges[4].array_of_unicode_codepoints = NULL;
+    ranges[4].num_chars = 96;
+    ranges[4].chardata_for_range = NULL;
+    totalChars += 96;
+
+    // Allocate character data
+    stbtt_packedchar *charData = calloc(totalChars, sizeof(stbtt_packedchar));
+    int *codepoints = calloc(totalChars, sizeof(int));
+
+    // Set up char data pointers for each range
+    int offset = 0;
+    for (int i = 0; i < NUM_RANGES; i++) {
+        ranges[i].chardata_for_range = charData + offset;
+
+        // Build codepoint array
+        for (int j = 0; j < ranges[i].num_chars; j++) {
+            codepoints[offset + j] = ranges[i].first_unicode_codepoint_in_range + j;
         }
-        else if ((*src & 0xF0) == 0xE0) {
-            // Three-byte UTF-8 sequence (beyond Latin-1 range)
-            // Skip and replace with '?'
-            *dst++ = '?';
-            src++;
-            if (*src && (*src & 0xC0) == 0x80) src++;
-            if (*src && (*src & 0xC0) == 0x80) src++;
+
+        offset += ranges[i].num_chars;
+    }
+
+    // Pack the font
+    stbtt_pack_context context;
+    if (!stbtt_PackBegin(&context, atlas, atlasWidth, atlasHeight, 0, 1, NULL)) {
+        free(charData);
+        free(codepoints);
+        return 0;
+    }
+
+    stbtt_PackSetOversampling(&context, 1, 1);  // Reduced for large atlases
+
+    // Try packing all ranges (including Japanese)
+    int rangesUsed = NUM_RANGES;
+    if (!stbtt_PackFontRanges(&context, fontData, 0, ranges, NUM_RANGES)) {
+        printf("Warning: Could not fit all Unicode ranges, trying without Japanese...\n");
+
+        // Fallback: try without Japanese (ranges 0-2 only: Latin + punctuation)
+        rangesUsed = 3;
+        totalChars = 224 + 128 + 112;  // Recalculate without Japanese
+
+        stbtt_PackEnd(&context);
+
+        // Re-initialize packing context
+        if (!stbtt_PackBegin(&context, atlas, atlasWidth, atlasHeight, 0, 1, NULL)) {
+            free(charData);
+            free(codepoints);
+            return 0;
         }
-        else if ((*src & 0xF8) == 0xF0) {
-            // Four-byte UTF-8 sequence (beyond Latin-1 range)
-            // Skip and replace with '?'
-            *dst++ = '?';
-            src++;
-            if (*src && (*src & 0xC0) == 0x80) src++;
-            if (*src && (*src & 0xC0) == 0x80) src++;
-            if (*src && (*src & 0xC0) == 0x80) src++;
-        }
-        else {
-            // Invalid UTF-8, skip
-            *dst++ = '?';
-            src++;
+        stbtt_PackSetOversampling(&context, 2, 2);
+
+        if (!stbtt_PackFontRanges(&context, fontData, 0, ranges, rangesUsed)) {
+            printf("ERROR: Could not pack even Latin characters - atlas too small\n");
+            stbtt_PackEnd(&context);
+            free(charData);
+            free(codepoints);
+            return 0;
         }
     }
-    *dst = '\0';
+
+    stbtt_PackEnd(&context);
+
+    *outCharData = charData;
+    *outCodepoints = codepoints;
+
+    printf("Packed %d characters across %d Unicode ranges\n", totalChars, rangesUsed);
+
+    return totalChars;
+
+    #undef NUM_RANGES
+}
+
+// Decode one UTF-8 character from a string
+// Returns the Unicode codepoint and advances the string pointer
+// Returns -1 on invalid UTF-8
+int utf8_decode(const char **str) {
+    const unsigned char *s = (const unsigned char *)*str;
+
+    if (!*s) return -1;  // End of string
+
+    // 1-byte sequence (ASCII): 0xxxxxxx
+    if ((*s & 0x80) == 0) {
+        *str = (const char *)(s + 1);
+        return *s;
+    }
+
+    // 2-byte sequence: 110xxxxx 10xxxxxx
+    if ((*s & 0xE0) == 0xC0) {
+        if ((s[1] & 0xC0) != 0x80) return -1;  // Invalid continuation byte
+        int codepoint = ((s[0] & 0x1F) << 6) | (s[1] & 0x3F);
+        *str = (const char *)(s + 2);
+        return codepoint;
+    }
+
+    // 3-byte sequence: 1110xxxx 10xxxxxx 10xxxxxx
+    if ((*s & 0xF0) == 0xE0) {
+        if ((s[1] & 0xC0) != 0x80 || (s[2] & 0xC0) != 0x80) return -1;
+        int codepoint = ((s[0] & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+        *str = (const char *)(s + 3);
+        return codepoint;
+    }
+
+    // 4-byte sequence: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+    if ((*s & 0xF8) == 0xF0) {
+        if ((s[1] & 0xC0) != 0x80 || (s[2] & 0xC0) != 0x80 || (s[3] & 0xC0) != 0x80) return -1;
+        int codepoint = ((s[0] & 0x07) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+        *str = (const char *)(s + 4);
+        return codepoint;
+    }
+
+    return -1;  // Invalid UTF-8
+}
+
+// Find glyph index for a given Unicode codepoint using binary search
+// Returns -1 if codepoint not found
+int find_glyph_index(int codepoint, const int *codepoints, int numChars) {
+    // Binary search
+    int left = 0;
+    int right = numChars - 1;
+
+    while (left <= right) {
+        int mid = (left + right) / 2;
+        if (codepoints[mid] == codepoint) {
+            return mid;
+        } else if (codepoints[mid] < codepoint) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+
+    return -1;  // Not found
 }
 
 char *getCsvField(char *line, int fieldNo)
@@ -3938,8 +4094,7 @@ char *getCsvField(char *line, int fieldNo)
     fieldString = calloc(1, fieldLength + sizeof(char));
     memcpy(fieldString, fieldStart, fieldLength);
 
-    // Convert from UTF-8 to Latin-1 for proper rendering
-    utf8_to_latin1(fieldString);
+    // Keep UTF-8 as-is - rendering code now handles UTF-8 natively
 
     return fieldString;
 }
@@ -5468,18 +5623,23 @@ int tileRankingSort(const void *a, const void *b) {
 }
 
 
-uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata) {
+uint32_t getTextLineWidth(char *string, stbtt_packedchar* cdata, int *codepoints, int numChars) {
 
     uint32_t width = 0;
+    const char *strptr = string;
 
-    for (uint32_t i = 0; i < strlen(string); ++i) {
-        unsigned char c = (unsigned char)*(string + i);
-        if (c >= 32 && c < 256) {
-            int arrOffset = c - 32;
-            stbtt_bakedchar *b =
-                (stbtt_bakedchar*) cdata + arrOffset;
+    while (*strptr) {
+        const char *before = strptr;
+        int codepoint = utf8_decode(&strptr);
 
-            width += b->xadvance;
+        if (codepoint == -1) {
+            strptr = before + 1;
+            continue;
+        }
+
+        int glyphIndex = find_glyph_index(codepoint, codepoints, numChars);
+        if (glyphIndex != -1) {
+            width += cdata[glyphIndex].xadvance;
         }
     }
 
@@ -5499,24 +5659,32 @@ void renderText(OffblastUi *offblast, float x, float y,
     uint32_t lineHeight = 0;
     float originalX = x;
 
-    void *cdata = NULL;
+    stbtt_packedchar *cdata = NULL;
+    int *codepoints = NULL;
+    int numChars = 0;
 
     switch (textMode) {
         case OFFBLAST_TEXT_TITLE:
             glBindTexture(GL_TEXTURE_2D, offblast->titleTextTexture);
             cdata = offblast->titleCharData;
+            codepoints = offblast->titleCodepoints;
+            numChars = offblast->titleNumChars;
             lineHeight = offblast->titlePointSize * 1.2;
             break;
 
         case OFFBLAST_TEXT_INFO:
             glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
             cdata = offblast->infoCharData;
+            codepoints = offblast->infoCodepoints;
+            numChars = offblast->infoNumChars;
             lineHeight = offblast->infoPointSize * 1.2;
             break;
 
         case OFFBLAST_TEXT_DEBUG:
             glBindTexture(GL_TEXTURE_2D, offblast->debugTextTexture);
             cdata = offblast->debugCharData;
+            codepoints = offblast->debugCodepoints;
+            numChars = offblast->debugNumChars;
             lineHeight = offblast->debugPointSize * 1.2;
             break;
 
@@ -5524,53 +5692,70 @@ void renderText(OffblastUi *offblast, float x, float y,
             return;
     }
 
+    if (!cdata || !codepoints || numChars == 0) {
+        return;  // Font not loaded
+    }
+
     float winWidth = (float)offblast->winWidth;
     float winHeight = (float)offblast->winHeight;
     y = winHeight - y;
 
     char *trailingString = NULL;
+    const char *strptr = string;
 
-    for (uint32_t i= 0; *string; ++i) {
-        unsigned char c = (unsigned char)*string;
-        if (c >= 32 && c < 256) {
+    while (*strptr) {
+        // Decode UTF-8 character
+        const char *before = strptr;
+        int codepoint = utf8_decode(&strptr);
 
-            stbtt_aligned_quad q;
-            stbtt_GetBakedQuad(cdata,
-                    offblast->textBitmapWidth, offblast->textBitmapHeight,
-                    c-32, &x, &y, &q, 1);
+        if (codepoint == -1) {
+            // Invalid UTF-8, skip this byte
+            strptr = before + 1;
+            continue;
+        }
 
-            currentWidth += (q.x1 - q.x0);
+        // Find glyph for this codepoint
+        int glyphIndex = find_glyph_index(codepoint, codepoints, numChars);
+        if (glyphIndex == -1) {
+            // Character not in font, skip it
+            continue;
+        }
+
+        stbtt_aligned_quad q;
+        stbtt_GetPackedQuad(cdata, offblast->textBitmapWidth, offblast->textBitmapHeight,
+                glyphIndex, &x, &y, &q, 1);
+
+        currentWidth += (q.x1 - q.x0);
 
             if (lineMaxW > 0 && trailingString == NULL) {
 
                 float wordWidth = 0.0f;
-                if (*(string) == ' ') {
-
-                    uint32_t curCharOffset = 1;
+                if (codepoint == ' ') {
+                    // Calculate width of next word for line wrapping
+                    const char *wordptr = strptr;
                     wordWidth = 0.0f;
 
-                    while (1) {
-                        if (*(string + curCharOffset) == ' ' ||
-                                *(string + curCharOffset) == 0) break;
+                    while (*wordptr && *wordptr != ' ') {
+                        const char *before_word = wordptr;
+                        int word_cp = utf8_decode(&wordptr);
 
-                        unsigned char c = (unsigned char)*(string + curCharOffset);
-                        if (c >= 32 && c < 256) {
-                            int arrOffset = c - 32;
-                            stbtt_bakedchar *b =
-                                (stbtt_bakedchar*) cdata + arrOffset;
-
-                            wordWidth += b->xadvance;
+                        if (word_cp == -1) {
+                            wordptr = before_word + 1;
+                            continue;
                         }
-                        curCharOffset++;
-                    }
 
+                        int word_gi = find_glyph_index(word_cp, codepoints, numChars);
+                        if (word_gi != -1) {
+                            wordWidth += cdata[word_gi].xadvance;
+                        }
+                    }
                 }
 
                 if (currentWidth + (int)(wordWidth + 0.5f) > lineMaxW) {
 
                     if (currentLine >= 6) {
                         trailingString = "...";
-                        string = trailingString;
+                        strptr = trailingString;  // Reset pointer to ellipsis
                         continue;
                     }
 
@@ -5651,9 +5836,6 @@ void renderText(OffblastUi *offblast, float x, float y,
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
             glUniform1f(offblast->textAlphaUni, 1.0f);
-        }
-
-        ++string;
     }
 
     glDisableVertexAttribArray(0);
@@ -5915,7 +6097,7 @@ void renderLoadingScreen(OffblastUi *offblast) {
     float textY = baseLogoY - spacing;
 
     // Center text horizontally
-    uint32_t textWidth = getTextLineWidth(displayText, offblast->infoCharData);
+    uint32_t textWidth = getTextLineWidth(displayText, offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
     float textX = (offblast->winWidth - textWidth) / 2.0f;
 
     renderText(offblast, textX, textY, OFFBLAST_TEXT_INFO, textAlpha, 0, displayText);
