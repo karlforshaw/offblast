@@ -422,6 +422,7 @@ typedef struct OffblastUi {
     uint32_t loadingFlag;
     enum UiMode mode;
     char *configPath;
+    char *openGameDbPath;
     char *playtimePath;
     Display *XDisplay;
 
@@ -459,9 +460,9 @@ typedef struct OffblastUi {
 
     GLuint textVbo;
 
-    stbtt_bakedchar titleCharData[96];
-    stbtt_bakedchar infoCharData[96];
-    stbtt_bakedchar debugCharData[96];
+    stbtt_bakedchar titleCharData[224];  // Extended to support Latin-1 (chars 32-255)
+    stbtt_bakedchar infoCharData[224];
+    stbtt_bakedchar debugCharData[224];
 
     uint32_t textBitmapHeight;
     uint32_t textBitmapWidth;
@@ -519,7 +520,7 @@ typedef struct OffblastUi {
     pthread_t *imageLoadThreads;
     uint32_t numImageLoadThreads;
 
-    // Rescrape status notification
+    // Metadata refresh status notification
     char statusMessage[256];
     uint32_t statusMessageTick;
     uint32_t statusMessageDuration;
@@ -626,6 +627,7 @@ void importFromCustom(Launcher *theLauncher);
 // Context menu callbacks
 void doRescrapePlatform();
 void doRescrapeGame();
+void doRescanLauncher();
 void doCopyCoverFilename();
 void doRefreshCover();
 void pressContextMenu();
@@ -697,6 +699,97 @@ void doRescrapePlatform() {
 
 void doRescrapeGame() {
     rescrapeCurrentLauncher(0);  // 0 = single game only
+}
+
+void doRescanLauncher() {
+    printf("\n=== LAUNCHER RESCAN STARTED ===\n");
+
+    MainUi *mainUi = &offblast->mainUi;
+    if (offblast->mode != OFFBLAST_UI_MODE_MAIN) {
+        printf("Launcher rescan only available in main UI mode\n");
+        return;
+    }
+
+    if (!mainUi->activeRowset || !mainUi->activeRowset->rowCursor ||
+        !mainUi->activeRowset->rowCursor->tileCursor ||
+        !mainUi->activeRowset->rowCursor->tileCursor->target) {
+        printf("No game selected for launcher rescan\n");
+        return;
+    }
+
+    LaunchTarget *currentTarget = mainUi->activeRowset->rowCursor->tileCursor->target;
+
+    // Find the launcher for this target
+    Launcher *targetLauncher = NULL;
+    for (uint32_t i = 0; i < offblast->nLaunchers; i++) {
+        if (offblast->launchers[i].signature == currentTarget->launcherSignature) {
+            targetLauncher = &offblast->launchers[i];
+            break;
+        }
+    }
+
+    if (!targetLauncher) {
+        printf("ERROR: Could not find launcher for current game\n");
+        return;
+    }
+
+    printf("Rescanning launcher: %s (platform: %s)\n",
+           targetLauncher->name, targetLauncher->platform);
+
+    // Invalidate the cache for this launcher to force a rescan
+    for (uint32_t i = 0; i < offblast->launcherContentsCache.length; i++) {
+        if (offblast->launcherContentsCache.entries[i].launcherSignature == targetLauncher->signature) {
+            printf("Invalidating cache entry for launcher %u\n", targetLauncher->signature);
+            offblast->launcherContentsCache.entries[i].contentSignature = 0;
+            break;
+        }
+    }
+
+    // Set status message
+    snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
+             "Scanning %.228s for new games...", targetLauncher->platform);
+    offblast->statusMessageTick = SDL_GetTicks();
+    offblast->statusMessageDuration = 5000;
+
+    // Rescan based on launcher type
+    if (strcmp(targetLauncher->type, "steam") == 0) {
+        printf("Rescanning Steam library...\n");
+        importFromSteam(targetLauncher);
+    } else {
+        printf("Rescanning ROM directory: %s\n", targetLauncher->romPath);
+        importFromCustom(targetLauncher);
+    }
+
+    // Save updated cache to disk
+    char *configPath = offblast->configPath;
+    char *launcherContentsHashFilePath;
+    asprintf(&launcherContentsHashFilePath, "%s/launchercontents.bin", configPath);
+
+    FILE *launcherContentsFd = fopen(launcherContentsHashFilePath, "wb");
+    if (launcherContentsFd) {
+        fwrite(&offblast->launcherContentsCache.length, sizeof(uint32_t), 1, launcherContentsFd);
+        fwrite(offblast->launcherContentsCache.entries,
+               sizeof(LauncherContentsHash),
+               offblast->launcherContentsCache.length,
+               launcherContentsFd);
+        fclose(launcherContentsFd);
+        printf("Updated launcher contents cache\n");
+    } else {
+        printf("WARNING: Could not save launcher contents cache\n");
+    }
+    free(launcherContentsHashFilePath);
+
+    // Update UI
+    updateHomeLists();
+    updateGameInfo();
+
+    // Update status to show completion
+    snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
+             "%.228s scan complete", targetLauncher->platform);
+    offblast->statusMessageTick = SDL_GetTicks();
+    offblast->statusMessageDuration = 3000;
+
+    printf("=== LAUNCHER RESCAN COMPLETE ===\n\n");
 }
 
 void doCopyCoverFilename() {
@@ -1235,6 +1328,9 @@ void *initThreadFunc(void *arg) {
             }
         }
     }
+
+    // Store the OpenGameDB path for later use (e.g., during rescan)
+    offblast->openGameDbPath = openGameDbPath;
 
     // Load platform display names from names.csv
     SET_STATUS("Loading platform names...");
@@ -2116,18 +2212,20 @@ void *initThreadFunc(void *arg) {
     }
 
     // Init Context Menu (right-side game menu)
-    mainUi->contextMenuItems = calloc(5, sizeof(MenuItem));
+    mainUi->contextMenuItems = calloc(6, sizeof(MenuItem));
     mainUi->contextMenuItems[0].label = "Browse Covers";
     mainUi->contextMenuItems[0].callback = doBrowseCovers;
-    mainUi->contextMenuItems[1].label = "Rescrape Platform";
-    mainUi->contextMenuItems[1].callback = doRescrapePlatform;
-    mainUi->contextMenuItems[2].label = "Rescrape Game";
-    mainUi->contextMenuItems[2].callback = doRescrapeGame;
-    mainUi->contextMenuItems[3].label = "Copy Cover Filename";
-    mainUi->contextMenuItems[3].callback = doCopyCoverFilename;
-    mainUi->contextMenuItems[4].label = "Refresh Cover";
-    mainUi->contextMenuItems[4].callback = doRefreshCover;
-    mainUi->numContextMenuItems = 5;
+    mainUi->contextMenuItems[1].label = "Rescan Launcher for New Games";
+    mainUi->contextMenuItems[1].callback = doRescanLauncher;
+    mainUi->contextMenuItems[2].label = "Refresh Platform Metadata/Covers";
+    mainUi->contextMenuItems[2].callback = doRescrapePlatform;
+    mainUi->contextMenuItems[3].label = "Refresh Game Metadata/Covers";
+    mainUi->contextMenuItems[3].callback = doRescrapeGame;
+    mainUi->contextMenuItems[4].label = "Copy Cover Filename";
+    mainUi->contextMenuItems[4].callback = doCopyCoverFilename;
+    mainUi->contextMenuItems[5].label = "Refresh Cover";
+    mainUi->contextMenuItems[5].callback = doRefreshCover;
+    mainUi->numContextMenuItems = 6;
     mainUi->contextMenuCursor = 0;
 
 
@@ -2250,7 +2348,7 @@ int main(int argc, char** argv) {
         unsigned char *infoAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
         stbtt_BakeFontBitmap(fontContents, 0, offblast->infoPointSize,
             infoAtlas, offblast->textBitmapWidth, offblast->textBitmapHeight,
-            32, 95, offblast->infoCharData);
+            32, 224, offblast->infoCharData);
 
         glGenTextures(1, &offblast->infoTextTexture);
         glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
@@ -2436,11 +2534,11 @@ int main(int argc, char** argv) {
 
     unsigned char *titleAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
 
-    stbtt_BakeFontBitmap(fontContents, 0, offblast->titlePointSize, 
-            titleAtlas, 
-            offblast->textBitmapWidth, 
+    stbtt_BakeFontBitmap(fontContents, 0, offblast->titlePointSize,
+            titleAtlas,
+            offblast->textBitmapWidth,
             offblast->textBitmapHeight,
-            32, 95, offblast->titleCharData);
+            32, 224, offblast->titleCharData);
 
     glGenTextures(1, &offblast->titleTextTexture);
     glBindTexture(GL_TEXTURE_2D, offblast->titleTextTexture);
@@ -2455,11 +2553,11 @@ int main(int argc, char** argv) {
 
     unsigned char *infoAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
 
-    stbtt_BakeFontBitmap(fontContents, 0, offblast->infoPointSize, 
-            infoAtlas, 
-            offblast->textBitmapWidth, 
+    stbtt_BakeFontBitmap(fontContents, 0, offblast->infoPointSize,
+            infoAtlas,
+            offblast->textBitmapWidth,
             offblast->textBitmapHeight,
-            32, 95, offblast->infoCharData);
+            32, 224, offblast->infoCharData);
 
     glGenTextures(1, &offblast->infoTextTexture);
     glBindTexture(GL_TEXTURE_2D, offblast->infoTextTexture);
@@ -2474,10 +2572,10 @@ int main(int argc, char** argv) {
 
     unsigned char *debugAtlas = calloc(offblast->textBitmapWidth * offblast->textBitmapHeight, sizeof(unsigned char));
 
-    stbtt_BakeFontBitmap(fontContents, 0, offblast->debugPointSize, debugAtlas, 
-            offblast->textBitmapWidth, 
+    stbtt_BakeFontBitmap(fontContents, 0, offblast->debugPointSize, debugAtlas,
+            offblast->textBitmapWidth,
             offblast->textBitmapHeight,
-            32, 95, offblast->debugCharData);
+            32, 224, offblast->debugCharData);
 
     glGenTextures(1, &offblast->debugTextTexture);
     glBindTexture(GL_TEXTURE_2D, offblast->debugTextTexture);
@@ -2651,7 +2749,7 @@ int main(int argc, char** argv) {
                         break;
                     case SDL_CONTROLLER_BUTTON_X:
                         if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
-                            printf("X button pressed - rescrape with single cover deletion\n");
+                            printf("X button pressed - refresh current game metadata/covers\n");
                             rescrapeCurrentLauncher(0); // Delete only current cover
                         }
                         break;
@@ -2754,10 +2852,10 @@ int main(int argc, char** argv) {
                         // Check if Shift is held
                         SDL_Keymod modstate = SDL_GetModState();
                         if (modstate & KMOD_SHIFT) {
-                            printf("Shift+R pressed - full rescrape with all cover deletion\n");
+                            printf("Shift+R pressed - refresh all platform metadata/covers\n");
                             rescrapeCurrentLauncher(1); // 1 = delete all covers
                         } else {
-                            printf("R pressed - rescrape with single cover deletion\n");
+                            printf("R pressed - refresh current game metadata/covers\n");
                             rescrapeCurrentLauncher(0); // 0 = delete only current cover
                         }
                     }
@@ -3655,7 +3753,7 @@ int main(int argc, char** argv) {
         animationTick(mainUi->contextMenuAnimation);
         animationTick(mainUi->contextMenuNavigateAnimation);
 
-        // Render status message (rescrape notification)
+        // Render status message (metadata refresh notification)
         if (offblast->statusMessageTick > 0) {
             uint32_t currentTick = SDL_GetTicks();
             uint32_t elapsed = currentTick - offblast->statusMessageTick;
@@ -3742,7 +3840,64 @@ double easeInOutCirc (double t, double b, double c, double d) {
 	return c/2.0 * (sqrt(1.0 - t*t) + 1.0) + b;
 };
 
-char *getCsvField(char *line, int fieldNo) 
+// Convert UTF-8 string to Latin-1 (ISO-8859-1) in-place
+// Handles 2-byte UTF-8 sequences for characters U+0080 to U+00FF
+void utf8_to_latin1(char *str) {
+    unsigned char *src = (unsigned char *)str;
+    unsigned char *dst = (unsigned char *)str;
+
+    while (*src) {
+        if ((*src & 0x80) == 0) {
+            // Single-byte ASCII character (0x00-0x7F)
+            *dst++ = *src++;
+        }
+        else if ((*src & 0xE0) == 0xC0) {
+            // Two-byte UTF-8 sequence
+            unsigned char byte1 = *src++;
+            if (*src && (*src & 0xC0) == 0x80) {
+                unsigned char byte2 = *src++;
+                // Decode: ((byte1 & 0x1F) << 6) | (byte2 & 0x3F)
+                unsigned int codepoint = ((byte1 & 0x1F) << 6) | (byte2 & 0x3F);
+
+                // Only characters U+0080 to U+00FF fit in Latin-1
+                if (codepoint >= 0x80 && codepoint <= 0xFF) {
+                    *dst++ = (unsigned char)codepoint;
+                } else {
+                    // Character outside Latin-1 range, replace with '?'
+                    *dst++ = '?';
+                }
+            } else {
+                // Invalid UTF-8 sequence, skip
+                *dst++ = '?';
+            }
+        }
+        else if ((*src & 0xF0) == 0xE0) {
+            // Three-byte UTF-8 sequence (beyond Latin-1 range)
+            // Skip and replace with '?'
+            *dst++ = '?';
+            src++;
+            if (*src && (*src & 0xC0) == 0x80) src++;
+            if (*src && (*src & 0xC0) == 0x80) src++;
+        }
+        else if ((*src & 0xF8) == 0xF0) {
+            // Four-byte UTF-8 sequence (beyond Latin-1 range)
+            // Skip and replace with '?'
+            *dst++ = '?';
+            src++;
+            if (*src && (*src & 0xC0) == 0x80) src++;
+            if (*src && (*src & 0xC0) == 0x80) src++;
+            if (*src && (*src & 0xC0) == 0x80) src++;
+        }
+        else {
+            // Invalid UTF-8, skip
+            *dst++ = '?';
+            src++;
+        }
+    }
+    *dst = '\0';
+}
+
+char *getCsvField(char *line, int fieldNo)
 {
     char *cursor = line;
     char *fieldStart = NULL;
@@ -3782,6 +3937,9 @@ char *getCsvField(char *line, int fieldNo)
 
     fieldString = calloc(1, fieldLength + sizeof(char));
     memcpy(fieldString, fieldStart, fieldLength);
+
+    // Convert from UTF-8 to Latin-1 for proper rendering
+    utf8_to_latin1(fieldString);
 
     return fieldString;
 }
@@ -5315,11 +5473,14 @@ uint32_t getTextLineWidth(char *string, stbtt_bakedchar* cdata) {
     uint32_t width = 0;
 
     for (uint32_t i = 0; i < strlen(string); ++i) {
-        int arrOffset = *(string + i) -32;
-        stbtt_bakedchar *b = 
-            (stbtt_bakedchar*) cdata + arrOffset;
+        unsigned char c = (unsigned char)*(string + i);
+        if (c >= 32 && c < 256) {
+            int arrOffset = c - 32;
+            stbtt_bakedchar *b =
+                (stbtt_bakedchar*) cdata + arrOffset;
 
-        width += b->xadvance;
+            width += b->xadvance;
+        }
     }
 
     return width;
@@ -5370,12 +5531,13 @@ void renderText(OffblastUi *offblast, float x, float y,
     char *trailingString = NULL;
 
     for (uint32_t i= 0; *string; ++i) {
-        if (*string >= 32 && *string < 128) {
+        unsigned char c = (unsigned char)*string;
+        if (c >= 32 && c < 256) {
 
             stbtt_aligned_quad q;
             stbtt_GetBakedQuad(cdata,
-                    offblast->textBitmapWidth, offblast->textBitmapHeight, 
-                    *string-32, &x, &y, &q, 1);
+                    offblast->textBitmapWidth, offblast->textBitmapHeight,
+                    c-32, &x, &y, &q, 1);
 
             currentWidth += (q.x1 - q.x0);
 
@@ -5391,11 +5553,14 @@ void renderText(OffblastUi *offblast, float x, float y,
                         if (*(string + curCharOffset) == ' ' ||
                                 *(string + curCharOffset) == 0) break;
 
-                        int arrOffset = *(string + curCharOffset) -32;
-                        stbtt_bakedchar *b = 
-                            (stbtt_bakedchar*) cdata + arrOffset;
+                        unsigned char c = (unsigned char)*(string + curCharOffset);
+                        if (c >= 32 && c < 256) {
+                            int arrOffset = c - 32;
+                            stbtt_bakedchar *b =
+                                (stbtt_bakedchar*) cdata + arrOffset;
 
-                        wordWidth += b->xadvance;
+                            wordWidth += b->xadvance;
+                        }
                         curCharOffset++;
                     }
 
@@ -6429,11 +6594,11 @@ void pressGuide() {
 }
 
 void rescrapeCurrentLauncher(int deleteAllCovers) {
-    printf("\n=== RESCRAPE STARTED (deleteAllCovers=%d) ===\n", deleteAllCovers);
+    printf("\n=== METADATA REFRESH STARTED (deleteAllCovers=%d) ===\n", deleteAllCovers);
 
     // Check if we're in the right UI mode
     if (offblast->mode != OFFBLAST_UI_MODE_MAIN) {
-        printf("Rescrape only available in main UI mode\n");
+        printf("Metadata refresh only available in main UI mode\n");
         return;
     }
 
@@ -6443,7 +6608,7 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
     if (!mainUi->activeRowset || !mainUi->activeRowset->rowCursor ||
         !mainUi->activeRowset->rowCursor->tileCursor ||
         !mainUi->activeRowset->rowCursor->tileCursor->target) {
-        printf("No game selected for rescrape\n");
+        printf("No game selected for metadata refresh\n");
         return;
     }
 
@@ -6500,7 +6665,7 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
 
             LaunchTarget *target = &targetFile->entries[i];
 
-            // Clear existing metadata if doing full rescrape
+            // Clear existing metadata if doing full refresh
             if (deleteAllCovers) {
                 memset(target->date, 0, sizeof(target->date));
                 target->ranking = 0;
@@ -6543,7 +6708,7 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
         offblast->rescrapeProcessed = 0;
         offblast->rescrapeTotal = 0;
 
-        printf("Steam rescrape complete: %u/%u games updated\n", updated, steamCount);
+        printf("Steam metadata refresh complete: %u/%u games updated\n", updated, steamCount);
         return;
     }
 
@@ -6555,11 +6720,11 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
             affectedCount++;
         }
     }
-    printf("Will rescrape %u games for platform %s\n", affectedCount, targetLauncher->platform);
+    printf("Will refresh metadata for %u games for platform %s\n", affectedCount, targetLauncher->platform);
 
     // Set initial status message
     snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
-             "Updating %.233s database...", targetLauncher->platform);
+             "Refreshing %.218s metadata/covers...", targetLauncher->platform);
     offblast->statusMessageTick = SDL_GetTicks();
     offblast->statusMessageDuration = 60000; // 60 seconds before fade
     offblast->rescrapeInProgress = 1;
@@ -6624,54 +6789,17 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
         affectedCount = 1;  // Only updating one game
     }
 
-    // Now rescrape from OpenGameDB for this platform
-    printf("\nRescanning OpenGameDB for platform: %s\n", targetLauncher->platform);
+    // Now refresh metadata from OpenGameDB for this platform
+    printf("\nRefreshing metadata from OpenGameDB for platform: %s\n", targetLauncher->platform);
 
-    // Get OpenGameDB path from config - need to read config file
-    char configFilePath[PATH_MAX];
-    snprintf(configFilePath, PATH_MAX, "%s/config.json", offblast->configPath);
-
-    FILE *configFile = fopen(configFilePath, "r");
-    if (!configFile) {
-        printf("ERROR: Could not open config file: %s\n", configFilePath);
-        return;
-    }
-
-    fseek(configFile, 0, SEEK_END);
-    long configSize = ftell(configFile);
-    fseek(configFile, 0, SEEK_SET);
-
-    char *configText = calloc(1, configSize + 1);
-    fread(configText, 1, configSize, configFile);
-    fclose(configFile);
-
-    json_tokener *tokener = json_tokener_new();
-    json_object *configObj = json_tokener_parse_ex(tokener, configText, configSize);
-    free(configText);
-    json_tokener_free(tokener);
-
-    if (!configObj) {
-        printf("ERROR: Could not parse config file\n");
-        return;
-    }
-
-    json_object *configForOpenGameDb = NULL;
-    json_object_object_get_ex(configObj, "opengamedb", &configForOpenGameDb);
-
-    if (!configForOpenGameDb) {
-        printf("ERROR: No OpenGameDB path in config\n");
-        json_object_put(configObj);
-        return;
-    }
-
-    const char *openGameDbPath = json_object_get_string(configForOpenGameDb);
+    // Use the OpenGameDB path that was discovered during initialization
+    const char *openGameDbPath = offblast->openGameDbPath;
     if (!openGameDbPath) {
-        printf("ERROR: Invalid OpenGameDB path in config\n");
-        json_object_put(configObj);
+        printf("ERROR: No OpenGameDB path available\n");
         return;
     }
 
-    printf("OpenGameDB path from config: %s\n", openGameDbPath);
+    printf("OpenGameDB path: %s\n", openGameDbPath);
 
     // Open the CSV file for this platform
     char csvPath[PATH_MAX];
@@ -6817,7 +6945,6 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
                     free(gameName);
                     free(csvLine);
                     fclose(csvFile);
-                    json_object_put(configObj);
                     goto skip_csv_cleanup;
                 }
             }
@@ -6830,16 +6957,15 @@ void rescrapeCurrentLauncher(int deleteAllCovers) {
 
     free(csvLine);
     fclose(csvFile);
-    json_object_put(configObj); // Free the config object
 
 skip_csv_cleanup:
 
-    printf("\nRescrape complete: %u/%u games updated from OpenGameDB\n",
+    printf("\nMetadata refresh complete: %u/%u games updated from OpenGameDB\n",
            matchCount, affectedCount);
 
     // Update status to show completion
     snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
-             "%.218s database updated: %u games refreshed",
+             "%.203s metadata refreshed: %u games",
              targetLauncher->platform, matchCount);
     offblast->statusMessageTick = SDL_GetTicks();
     offblast->statusMessageDuration = 3000; // Show for 3 seconds before fade
@@ -6873,7 +6999,7 @@ skip_csv_cleanup:
     updateHomeLists();
     updateGameInfo();
 
-    printf("=== RESCRAPE COMPLETE ===\n\n");
+    printf("=== METADATA REFRESH COMPLETE ===\n\n");
 }
 
 Window getActiveWindowRaw() {
@@ -7264,16 +7390,16 @@ uint32_t pushToRomList(RomFoundList *list, char *path, char *name, char *id) {
     }
 
     RomFound *rom = &list->items[list->numItems++];
-    if (path != NULL) memcpy(rom->path, path, strlen(path));
-    if (name != NULL) memcpy(rom->name, name, strlen(name));
-    if (id != NULL) memcpy(rom->id, id, strlen(id));
+    if (path != NULL) strncpy(rom->path, path, sizeof(rom->path) - 1);
+    if (name != NULL) strncpy(rom->name, name, sizeof(rom->name) - 1);
+    if (id != NULL) strncpy(rom->id, id, sizeof(rom->id) - 1);
 
     return 1;
 }
 
 uint32_t romListContentSig(RomFoundList *list) {
     uint32_t contentSignature = 0;
-    lmmh_x86_32(list->items, list->numItems * sizeof(RomFound), 
+    lmmh_x86_32(list->items, list->numItems * sizeof(RomFound),
             33, &contentSignature);
 
     return contentSignature;
@@ -8220,6 +8346,108 @@ local_fallback:
     closedir(dir);
 }
 
+// Convert arabic numeral to roman numeral (1-39)
+const char* arabicToRoman(int num) {
+    static const char *romanNumerals[] = {
+        "", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+        "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX",
+        "XXI", "XXII", "XXIII", "XXIV", "XXV", "XXVI", "XXVII", "XXVIII", "XXIX", "XXX",
+        "XXXI", "XXXII", "XXXIII", "XXXIV", "XXXV", "XXXVI", "XXXVII", "XXXVIII", "XXXIX"
+    };
+
+    if (num >= 1 && num <= 39) {
+        return romanNumerals[num];
+    }
+    return NULL;
+}
+
+// Convert roman numeral to arabic (I-XXXIX)
+int romanToArabic(const char *roman) {
+    if (strcmp(roman, "I") == 0) return 1;
+    if (strcmp(roman, "II") == 0) return 2;
+    if (strcmp(roman, "III") == 0) return 3;
+    if (strcmp(roman, "IV") == 0) return 4;
+    if (strcmp(roman, "V") == 0) return 5;
+    if (strcmp(roman, "VI") == 0) return 6;
+    if (strcmp(roman, "VII") == 0) return 7;
+    if (strcmp(roman, "VIII") == 0) return 8;
+    if (strcmp(roman, "IX") == 0) return 9;
+    if (strcmp(roman, "X") == 0) return 10;
+    if (strcmp(roman, "XI") == 0) return 11;
+    if (strcmp(roman, "XII") == 0) return 12;
+    if (strcmp(roman, "XIII") == 0) return 13;
+    if (strcmp(roman, "XIV") == 0) return 14;
+    if (strcmp(roman, "XV") == 0) return 15;
+    if (strcmp(roman, "XVI") == 0) return 16;
+    if (strcmp(roman, "XVII") == 0) return 17;
+    if (strcmp(roman, "XVIII") == 0) return 18;
+    if (strcmp(roman, "XIX") == 0) return 19;
+    if (strcmp(roman, "XX") == 0) return 20;
+    if (strcmp(roman, "XXI") == 0) return 21;
+    if (strcmp(roman, "XXII") == 0) return 22;
+    if (strcmp(roman, "XXIII") == 0) return 23;
+    if (strcmp(roman, "XXIV") == 0) return 24;
+    if (strcmp(roman, "XXV") == 0) return 25;
+    if (strcmp(roman, "XXVI") == 0) return 26;
+    if (strcmp(roman, "XXVII") == 0) return 27;
+    if (strcmp(roman, "XXVIII") == 0) return 28;
+    if (strcmp(roman, "XXIX") == 0) return 29;
+    if (strcmp(roman, "XXX") == 0) return 30;
+    if (strcmp(roman, "XXXI") == 0) return 31;
+    if (strcmp(roman, "XXXII") == 0) return 32;
+    if (strcmp(roman, "XXXIII") == 0) return 33;
+    if (strcmp(roman, "XXXIV") == 0) return 34;
+    if (strcmp(roman, "XXXV") == 0) return 35;
+    if (strcmp(roman, "XXXVI") == 0) return 36;
+    if (strcmp(roman, "XXXVII") == 0) return 37;
+    if (strcmp(roman, "XXXVIII") == 0) return 38;
+    if (strcmp(roman, "XXXIX") == 0) return 39;
+    return -1;  // Not found
+}
+
+// Convert game name with numeral at the end
+// Returns newly allocated string or NULL if no conversion needed
+char* convertNumeralInGameName(const char *gameName) {
+    if (!gameName) return NULL;
+
+    size_t len = strlen(gameName);
+    if (len < 2) return NULL;
+
+    // Find the last space in the name
+    const char *lastSpace = strrchr(gameName, ' ');
+    if (!lastSpace) return NULL;
+
+    const char *suffix = lastSpace + 1;
+    size_t prefixLen = lastSpace - gameName;
+
+    // Try converting arabic to roman
+    char *endPtr;
+    long num = strtol(suffix, &endPtr, 10);
+    if (*endPtr == '\0' && num >= 1 && num <= 39) {
+        // It's a pure arabic numeral
+        const char *roman = arabicToRoman((int)num);
+        if (roman) {
+            char *result = malloc(prefixLen + 1 + strlen(roman) + 1);
+            strncpy(result, gameName, prefixLen);
+            result[prefixLen] = ' ';
+            strcpy(result + prefixLen + 1, roman);
+            return result;
+        }
+    }
+
+    // Try converting roman to arabic
+    int arabic = romanToArabic(suffix);
+    if (arabic != -1) {
+        char *result = malloc(prefixLen + 1 + 10 + 1);  // Space for number
+        strncpy(result, gameName, prefixLen);
+        result[prefixLen] = ' ';
+        sprintf(result + prefixLen + 1, "%d", arabic);
+        return result;
+    }
+
+    return NULL;  // No conversion possible
+}
+
 
 void importFromCustom(Launcher *theLauncher) {
 
@@ -8463,6 +8691,30 @@ void importFromCustom(Launcher *theLauncher) {
                     searchString,
                     theLauncher->platform,
                     &matchScore);
+
+            // Try with converted numerals if no match found or poor match
+            if ((indexOfEntry == -1 || matchScore < 1.0) && strcmp(theLauncher->matchField, "title") == 0) {
+                char *convertedName = convertNumeralInGameName(searchString);
+                if (convertedName) {
+                    printf("       Trying with converted numerals: %s\n", convertedName);
+                    float convertedMatchScore = 0;
+                    int32_t convertedIndex = launchTargetIndexByFieldMatch(
+                            offblast->launchTargetFile,
+                            theLauncher->matchField,
+                            convertedName,
+                            theLauncher->platform,
+                            &convertedMatchScore);
+
+                    // Use converted version if it's better
+                    if (convertedIndex > -1 && convertedMatchScore > matchScore) {
+                        printf("       Converted version matched better: score %f vs %f\n",
+                               convertedMatchScore, matchScore);
+                        indexOfEntry = convertedIndex;
+                        matchScore = convertedMatchScore;
+                    }
+                    free(convertedName);
+                }
+            }
 
             free(searchString);
 
