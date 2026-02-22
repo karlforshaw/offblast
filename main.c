@@ -6139,6 +6139,11 @@ void updateHomeLists(){
                     launchTargetFile,
                     pt->targetSignature);
 
+            // Skip if target no longer exists in database
+            if (targetIndex == -1) {
+                continue;
+            }
+
             LaunchTarget *target = &launchTargetFile->entries[targetIndex];
 
             // Skip uninstalled games if filter is enabled
@@ -6171,8 +6176,8 @@ void updateHomeLists(){
             memset(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name, 0x0, 256);
             strcpy(mainUi->homeRowset->rows[mainUi->homeRowset->numRows].name,
                     "Jump Back In");
-            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length 
-                = tileCount; 
+            mainUi->homeRowset->rows[mainUi->homeRowset->numRows].length
+                = tileCount;
             mainUi->homeRowset->numRows++;
         }
     }
@@ -6197,6 +6202,11 @@ void updateHomeLists(){
             int32_t targetIndex = launchTargetIndexByTargetSignature(
                     launchTargetFile,
                     pt->targetSignature);
+
+            // Skip if target no longer exists in database
+            if (targetIndex == -1) {
+                continue;
+            }
 
             LaunchTarget *target = &launchTargetFile->entries[targetIndex];
 
