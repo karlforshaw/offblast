@@ -133,6 +133,53 @@ Support keyboard input for search (currently controller-only).
 
 ---
 
+## Future Features
+
+### Pre/Post Launch Hooks
+Execute custom commands before and after launching games:
+- **Pre-launch hooks**: Run commands before game starts
+  - Use cases: Display configuration, CPU governor, Discord status, RGB control
+  - Per-game, per-launcher, or global hooks
+  - Access to game metadata (name, platform, etc.) as environment variables
+- **Post-launch hooks**: Run commands after game exits
+  - Clean up temporary changes made in pre-launch
+  - Log playtime, sync saves, etc.
+- Configuration: Define in launcher config or per-game overrides
+
+**Questions to resolve:**
+- Hook definition format (shell commands, script paths, or both?)
+- Environment variables to expose (game name, platform, path, launcher type?)
+- Error handling (abort launch if pre-hook fails? timeout?)
+
+### Custom Lists
+User-defined game collections beyond automatic platform-based lists:
+- Create custom categories: "Couch Co-op", "Unfinished", "Favorites", "Kids Games"
+- Manual curation (add/remove games from lists via UI or config)
+- Appear as rows in home screen alongside "Jump Back In", "Essential PSX", etc.
+- Persistent storage (separate file or embed in config.json?)
+
+**Questions to resolve:**
+- UI for managing lists (add/remove games, create new lists, reorder?)
+- Storage format (JSON config, separate database file?)
+- List metadata (icons, colors, sorting order?)
+
+### Retro Achievements Support
+Integration with RetroAchievements.org for tracking achievements in retro games:
+- Display achievement progress in game info panel
+- Show which games have achievement support
+- Achievement notifications when unlocked
+- Integration with RetroArch's achievement system
+- User login/authentication for RetroAchievements account
+- Achievement list browser per game
+
+**Questions to resolve:**
+- Authentication method (API key in config, OAuth?)
+- Which data to cache locally vs fetch on demand?
+- UI for browsing achievements (separate view or info panel extension?)
+- Notification system (on-screen overlay, system notifications?)
+
+---
+
 ## Planned Features
 
 ### Cover Browser UI Enhancements
