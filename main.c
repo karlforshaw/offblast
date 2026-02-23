@@ -26,6 +26,7 @@
 
 #include <stdio.h>
 #include <signal.h>
+#include <setjmp.h>
 #include <stdint.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -683,6 +684,15 @@ void *downloadMain(void *arg);
 void *imageLoadMain(void *arg); 
 
 OffblastUi *offblast;
+
+// NFS timeout handling
+static jmp_buf nfs_timeout_jmpbuf;
+static volatile sig_atomic_t nfs_timeout_occurred = 0;
+
+void nfs_timeout_handler(int sig) {
+    nfs_timeout_occurred = 1;
+    longjmp(nfs_timeout_jmpbuf, 1);
+}
 
 void openPlayerSelect() {
     offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
@@ -2436,6 +2446,18 @@ int main(int argc, char** argv) {
                 offblast->running = 0;
                 offblast->loadingMode = 0;
             }
+            else if (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_KEYDOWN) {
+                // If there's an error, any button/key press exits
+                pthread_mutex_lock(&offblast->loadingState.mutex);
+                if (offblast->loadingState.error) {
+                    printf("Input received during error - exiting\n");
+                    offblast->running = 0;
+                    offblast->loadingMode = 0;
+                    pthread_mutex_unlock(&offblast->loadingState.mutex);
+                    break;
+                }
+                pthread_mutex_unlock(&offblast->loadingState.mutex);
+            }
             else if (event.type == SDL_CONTROLLERDEVICEADDED) {
                 // Handle controller connection during loading screen
                 SDL_ControllerDeviceEvent *devEvent = (SDL_ControllerDeviceEvent*)&event;
@@ -2461,11 +2483,13 @@ int main(int argc, char** argv) {
             offblast->exitAnimating = 1;
             offblast->exitAnimationStartTick = SDL_GetTicks();
         }
-        if (offblast->loadingState.error) {
-            // Handle error - display message and exit
-            printf("Error during initialization: %s\n", offblast->loadingState.errorMsg);
-            offblast->running = 0;
-            offblast->loadingMode = 0;
+        if (offblast->loadingState.error && !offblast->loadingState.complete) {
+            // Mark as complete to stop loading thread, but stay in loading mode to show error
+            offblast->loadingState.complete = 1;
+        }
+        if (offblast->loadingState.error && offblast->loadingState.complete) {
+            // Show error message with instruction to exit
+            // Error is displayed by renderLoadingScreen, user must press button to exit
         }
         pthread_mutex_unlock(&offblast->loadingState.mutex);
 
@@ -4453,7 +4477,6 @@ void jumpScreen(uint32_t direction)
         if (animationRunning() == 0)
         {
 
-            // TODO This is broken
             if (!ui->showMenu && ui->activeRowset->numRows) {
                 if (direction == 0) {
                         ui->activeRowset->movingToTarget = 
@@ -6067,16 +6090,22 @@ void renderLoadingScreen(OffblastUi *offblast) {
 
     // Get current status (mutex protected)
     char status[256];
+    char errorMsg[256];
     uint32_t progress = 0, total = 0;
+    uint32_t hasError = 0;
     pthread_mutex_lock(&offblast->loadingState.mutex);
     strncpy(status, offblast->loadingState.status, 256);
+    strncpy(errorMsg, offblast->loadingState.errorMsg, 256);
     progress = offblast->loadingState.progress;
     total = offblast->loadingState.progressTotal;
+    hasError = offblast->loadingState.error;
     pthread_mutex_unlock(&offblast->loadingState.mutex);
 
-    // Render status text centered below logo (using static base position)
+    // Render status or error text centered below logo (using static base position)
     char displayText[300];
-    if (total > 0) {
+    if (hasError) {
+        snprintf(displayText, 300, "Error: %s", errorMsg);
+    } else if (total > 0) {
         snprintf(displayText, 300, "%s (%u/%u)", status, progress, total);
     } else if (progress > 0) {
         snprintf(displayText, 300, "%s (%u)", status, progress);
@@ -6098,6 +6127,15 @@ void renderLoadingScreen(OffblastUi *offblast) {
     float textX = (offblast->winWidth - textWidth) / 2.0f;
 
     renderText(offblast, textX, textY, OFFBLAST_TEXT_INFO, textAlpha, 0, displayText);
+
+    // If error, show "Press any button to exit" below error message
+    if (hasError) {
+        char *exitMsg = "Press any button to exit";
+        uint32_t exitMsgWidth = getTextLineWidth(exitMsg, offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
+        float exitMsgX = (offblast->winWidth - exitMsgWidth) / 2.0f;
+        float exitMsgY = textY - (offblast->infoPointSize * 1.2f * 2); // Two lines below error
+        renderText(offblast, exitMsgX, exitMsgY, OFFBLAST_TEXT_INFO, textAlpha, 0, exitMsg);
+    }
 
     SDL_GL_SwapWindow(offblast->window);
 }
@@ -8640,15 +8678,66 @@ char* convertNumeralInGameName(const char *gameName) {
 
 void importFromCustom(Launcher *theLauncher) {
 
-    // TODO NFS shares when unavailable just lock this up!
-    DIR *dir = opendir(theLauncher->romPath);
-    if (dir == NULL) {
-        printf("ERROR: Cannot access %s rom_path: '%s'\n", theLauncher->type, theLauncher->romPath);
-        if (strlen(theLauncher->romPath) == 0) {
-            printf("       The rom_path is empty. Please set it in config.json\n");
+    DIR *dir = NULL;
+    struct sigaction sa, old_sa;
+    int attempts = 0;
+    const int max_attempts = 2;
+    const unsigned int timeouts[] = {5, 10}; // First try 5s, then 10s
+
+    // Setup signal handler for alarm timeout
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = nfs_timeout_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGALRM, &sa, &old_sa);
+
+    for (attempts = 0; attempts < max_attempts && dir == NULL; attempts++) {
+        nfs_timeout_occurred = 0;
+
+        if (setjmp(nfs_timeout_jmpbuf) == 0) {
+            // Set alarm for timeout
+            alarm(timeouts[attempts]);
+            printf("Attempting to access %s (timeout: %us, attempt %d/%d)...\n",
+                   theLauncher->romPath, timeouts[attempts], attempts + 1, max_attempts);
+
+            dir = opendir(theLauncher->romPath);
+
+            // Cancel alarm if opendir succeeded
+            alarm(0);
+
+            if (dir == NULL && !nfs_timeout_occurred) {
+                // opendir failed but not due to timeout
+                printf("ERROR: Cannot access %s rom_path: '%s'\n", theLauncher->type, theLauncher->romPath);
+                if (strlen(theLauncher->romPath) == 0) {
+                    printf("       The rom_path is empty. Please set it in config.json\n");
+                } else {
+                    printf("       Please check that the directory exists and is readable\n");
+                }
+                sigaction(SIGALRM, &old_sa, NULL);
+                return;
+            }
         } else {
-            printf("       Please check that the directory exists and is readable\n");
+            // Timeout occurred - longjmp returned here
+            alarm(0);  // Cancel alarm
+            printf("Timeout accessing %s after %u seconds\n", theLauncher->romPath, timeouts[attempts]);
+
+            if (attempts + 1 >= max_attempts) {
+                // Final attempt failed
+                printf("ERROR: Cannot access ROM path '%s' after %d timeout attempts\n",
+                       theLauncher->romPath, max_attempts);
+                printf("       Directory may be on unavailable network share (NFS, SMB, etc.)\n");
+                printf("       Check network connectivity or update rom_path in config.json\n");
+                sigaction(SIGALRM, &old_sa, NULL);
+                return;
+            }
         }
+    }
+
+    // Restore old signal handler
+    sigaction(SIGALRM, &old_sa, NULL);
+
+    if (dir == NULL) {
+        printf("ERROR: Failed to access %s after %d attempts\n", theLauncher->romPath, max_attempts);
         return;
     }
 
