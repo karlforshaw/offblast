@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-02-23
+
 ### Added
 - **Animated loading screen with threaded initialization**
   - Beautiful breathing rocket animation during startup (sin² curve with pauses at extremes)
