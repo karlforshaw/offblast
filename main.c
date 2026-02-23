@@ -674,6 +674,7 @@ uint32_t activeWindowIsOffblast();
 uint32_t launcherContentsCacheUpdated(uint32_t launcherSignature, 
         uint32_t newContentsHash);
 void logMissingGame(char *missingGamePath);
+void logPoorMatch(char *romPath, char *matchedName, float matchScore);
 void calculateRowGeometry(UiRow *row);
 Image *requestImageForTarget(LaunchTarget *target, uint32_t affectQueue);
 void changeRowset(UiRowset *rowset);
@@ -8939,6 +8940,12 @@ void importFromCustom(Launcher *theLauncher) {
 
                 printf("DEBUG: Successfully assigned path to %s\n", theTarget->name);
 
+                // Log poor matches for review
+                if (matchScore < 0.5) {
+                    printf("WARNING: Poor match score (%.2f) - logging for review\n", matchScore);
+                    logPoorMatch(list->items[j].path, theTarget->name, matchScore);
+                }
+
             }
             else {
                 printf("No match found (or score too low) for %s\n", list->items[j].path);
@@ -9005,6 +9012,24 @@ void logMissingGame(char *missingGamePath){
     if (fp != NULL) {
         fwrite(missingGamePath, strlen(missingGamePath), 1, fp);
         fwrite("\n", 1, 1, fp);
+        fclose(fp);
+    } else {
+        printf("Warning: Could not open %s for logging\n", path);
+    }
+
+    free(path);
+}
+
+void logPoorMatch(char *romPath, char *matchedName, float matchScore) {
+    char *path = NULL;
+    asprintf(&path, "%s/missinggames.log", offblast->configPath);
+    FILE * fp = fopen(path, "a+");
+
+    if (fp != NULL) {
+        char *logLine = NULL;
+        asprintf(&logLine, "%s -> %s (score: %.2f)\n", romPath, matchedName, matchScore);
+        fwrite(logLine, strlen(logLine), 1, fp);
+        free(logLine);
         fclose(fp);
     } else {
         printf("Warning: Could not open %s for logging\n", path);

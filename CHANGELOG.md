@@ -157,6 +157,11 @@
   - Added automatic roman numeral conversion (supports 1-39, I-XXXIX)
   - Tries both original filename and converted version, uses better match
   - Bidirectional: works for "2→II" and "VII→7" conversions
+- **Added poor match score logging**
+  - Games with match scores below 0.5 are now logged to missinggames.log
+  - Log format: `rompath -> matched name (score: 0.42)`
+  - Allows review of questionable matches that were accepted due to lack of better options
+  - Helps identify games that need manual verification or better database entries
 
 ## [0.7.0] - 2025-11-25
 

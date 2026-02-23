@@ -84,7 +84,11 @@ Both now implemented in launch().
 - Removed manual tick calls that had to be updated for each new animation type
 
 ### Poor Match Score Logging
-Games with poor match scores should be logged to the missing games log. Currently allowing bad matches through as long as the proper game isn't present.
+**SOLVED:** Games with poor match scores (< 0.5) are now logged to missinggames.log:
+- Logs ROM path, matched game name, and match score for review
+- Format: `rompath -> matched name (score: 0.42)`
+- Allows identification of questionable matches that need manual verification
+- Threshold set at 0.5 (less than half tokens matched)
 
 ### Hours Played in Info Panel
 **SOLVED:** Playtime now displayed in game info panel:
