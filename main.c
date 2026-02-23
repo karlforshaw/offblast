@@ -2068,14 +2068,14 @@ void *initThreadFunc(void *arg) {
             launcherContentsFd);
     fclose(launcherContentsFd);
 
-    // TODO this is sort of bugged
+    // Clean up orphaned games (games from launchers no longer in config)
     for (int i = 0; i < launchTargetFile->nEntries; ++i) {
         int isOrphan = 0;
-        if (launchTargetFile->entries[i].launcherSignature) { 
+        if (launchTargetFile->entries[i].launcherSignature) {
             isOrphan = 1;
             for (int j=0; j < nConfigLaunchers; j++) {
-                if (launchTargetFile->entries[i].launcherSignature 
-                        == configLauncherSignatures[j]) 
+                if (launchTargetFile->entries[i].launcherSignature
+                        == configLauncherSignatures[j])
                 {
                     isOrphan = 0;
                 }
@@ -2083,11 +2083,16 @@ void *initThreadFunc(void *arg) {
         }
 
         if (isOrphan) {
-            printf("ORPHANED GAME: \n%s\n%u\n", 
+            printf("ORPHANED GAME: %s (signature %u)\n",
                     launchTargetFile->entries[i].name,
                     launchTargetFile->entries[i].launcherSignature);
+            printf("       Clearing path and resetting for re-matching\n");
 
+            // Clear launcher association, path, and matchScore
+            // This allows the ROM to be re-matched by a replacement launcher
             launchTargetFile->entries[i].launcherSignature = 0;
+            memset(launchTargetFile->entries[i].path, 0x00, PATH_MAX);
+            launchTargetFile->entries[i].matchScore = 0.0f;
         }
     }
 
