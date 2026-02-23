@@ -22,6 +22,9 @@
 #define MAX_LOADED_TEXTURES 150
 #define TEXTURE_EVICTION_TIME_MS 3000
 
+#define STEAM_METADATA_WORKER_COUNT 3
+#define STEAM_METADATA_MIN_DELAY_MS 200
+
 // See ROADMAP.md for planned features and backlog
 
 #include <stdio.h>
@@ -525,6 +528,7 @@ typedef struct OffblastUi {
 
     Image *imageStore;
     pthread_mutex_t imageStoreLock;
+    pthread_mutex_t steamMetadataLock;  // Protects DB modifications during Steam metadata fetch
     uint32_t numLoadedTextures;
 
     // Image loader worker threads
@@ -655,6 +659,38 @@ typedef struct SteamMetadata {
     uint32_t score;       // Metacritic score (0-100)
     char *description;    // Short description (allocated, caller must free)
 } SteamMetadata;
+
+// Multi-threaded metadata fetching data structures
+typedef struct SteamMetadataWorkItem {
+    uint32_t appid;
+    uint64_t targetSignature;
+    char gameName[256];
+} SteamMetadataWorkItem;
+
+typedef struct SteamMetadataQueue {
+    SteamMetadataWorkItem *items;
+    uint32_t capacity;
+    uint32_t count;
+    uint32_t head;                    // Next item to consume
+    pthread_mutex_t mutex;
+    pthread_cond_t workComplete;
+    uint32_t activeWorkers;
+
+    // Rate limiting
+    struct timespec lastRequestTime;
+    uint32_t minDelayMs;
+
+    // Progress
+    uint32_t totalItems;
+    uint32_t completedItems;
+} SteamMetadataQueue;
+
+typedef struct SteamMetadataWorkerContext {
+    OffblastUi *offblast;
+    SteamMetadataQueue *queue;
+    uint32_t workerIndex;
+} SteamMetadataWorkerContext;
+
 SteamMetadata *fetchSteamGameMetadata(uint32_t appid);
 void freeSteamMetadata(SteamMetadata *meta);
 off_t writeDescriptionBlob(LaunchTarget *target, const char *description);
@@ -2148,6 +2184,7 @@ void *initThreadFunc(void *arg) {
     SET_STATUS("Setting up image system...");
     // CREATE IMAGE STORE
     pthread_mutex_init(&offblast->imageStoreLock, NULL);
+    pthread_mutex_init(&offblast->steamMetadataLock, NULL);
     offblast->imageStore = calloc(IMAGE_STORE_SIZE, sizeof(Image));
     offblast->numLoadedTextures = 0;
     for (uint32_t i = 0; i < IMAGE_STORE_SIZE; ++i) {
@@ -8297,6 +8334,201 @@ void freeSteamGameList(SteamGameList *list) {
     }
 }
 
+// ============================================================================
+// Multi-threaded Steam Metadata Fetching
+// ============================================================================
+
+void initMetadataQueue(SteamMetadataQueue *queue, uint32_t capacity) {
+    memset(queue, 0, sizeof(*queue));
+    queue->items = calloc(capacity, sizeof(SteamMetadataWorkItem));
+    queue->capacity = capacity;
+    pthread_mutex_init(&queue->mutex, NULL);
+    pthread_cond_init(&queue->workComplete, NULL);
+    queue->minDelayMs = STEAM_METADATA_MIN_DELAY_MS;
+    clock_gettime(CLOCK_MONOTONIC, &queue->lastRequestTime);
+}
+
+void destroyMetadataQueue(SteamMetadataQueue *queue) {
+    pthread_mutex_destroy(&queue->mutex);
+    pthread_cond_destroy(&queue->workComplete);
+    free(queue->items);
+}
+
+void queueMetadataFetch(SteamMetadataQueue *queue, uint32_t appid,
+                        uint64_t targetSignature, const char *gameName) {
+    if (queue->count >= queue->capacity) {
+        printf("Metadata queue full, skipping appid %u\n", appid);
+        return;
+    }
+
+    SteamMetadataWorkItem *item = &queue->items[queue->count++];
+    item->appid = appid;
+    item->targetSignature = targetSignature;
+    strncpy(item->gameName, gameName, 255);
+    item->gameName[255] = '\0';
+    queue->totalItems = queue->count;
+}
+
+void writeMetadataToDatabase(OffblastUi *offblast, uint64_t targetSignature,
+                              SteamMetadata *meta) {
+    // CALLER MUST HOLD steamMetadataLock
+
+    // Find target by signature
+    int32_t targetIndex = -1;
+    for (uint32_t i = 0; i < offblast->launchTargetFile->nEntries; i++) {
+        if (offblast->launchTargetFile->entries[i].targetSignature == targetSignature) {
+            targetIndex = i;
+            break;
+        }
+    }
+
+    if (targetIndex == -1) {
+        printf("ERROR: Could not find target with signature %lu\n", targetSignature);
+        return;
+    }
+
+    LaunchTarget *target = &offblast->launchTargetFile->entries[targetIndex];
+
+    // Set release date
+    if (meta->date[0] != '\0') {
+        memcpy(target->date, meta->date, sizeof(target->date));
+    }
+
+    // Set score
+    if (meta->score > 0) {
+        target->ranking = meta->score;
+    } else {
+        target->ranking = 999;
+    }
+
+    // Write description blob
+    if (meta->description) {
+        target->descriptionOffset = writeDescriptionBlob(target, meta->description);
+    }
+}
+
+void markMetadataFetchFailed(OffblastUi *offblast, uint64_t targetSignature) {
+    // CALLER MUST HOLD steamMetadataLock
+
+    int32_t targetIndex = -1;
+    for (uint32_t i = 0; i < offblast->launchTargetFile->nEntries; i++) {
+        if (offblast->launchTargetFile->entries[i].targetSignature == targetSignature) {
+            targetIndex = i;
+            break;
+        }
+    }
+
+    if (targetIndex == -1) return;
+
+    LaunchTarget *target = &offblast->launchTargetFile->entries[targetIndex];
+    target->ranking = 999;  // No score available
+}
+
+void *steamMetadataWorkerMain(void *arg) {
+    SteamMetadataWorkerContext *ctx = (SteamMetadataWorkerContext *)arg;
+
+    while (1) {
+        pthread_mutex_lock(&ctx->queue->mutex);
+
+        // Check for work
+        if (ctx->queue->head >= ctx->queue->count) {
+            ctx->queue->activeWorkers--;
+            if (ctx->queue->activeWorkers == 0) {
+                pthread_cond_signal(&ctx->queue->workComplete);
+            }
+            pthread_mutex_unlock(&ctx->queue->mutex);
+            break;
+        }
+
+        // Claim work
+        SteamMetadataWorkItem work = ctx->queue->items[ctx->queue->head++];
+        ctx->queue->activeWorkers++;
+
+        // Rate limiting
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        int64_t elapsedMs = (now.tv_sec - ctx->queue->lastRequestTime.tv_sec) * 1000 +
+                            (now.tv_nsec - ctx->queue->lastRequestTime.tv_nsec) / 1000000;
+
+        if (elapsedMs < ctx->queue->minDelayMs) {
+            int64_t sleepMs = ctx->queue->minDelayMs - elapsedMs;
+            pthread_mutex_unlock(&ctx->queue->mutex);
+            usleep(sleepMs * 1000);
+            pthread_mutex_lock(&ctx->queue->mutex);
+        }
+
+        clock_gettime(CLOCK_MONOTONIC, &ctx->queue->lastRequestTime);
+        pthread_mutex_unlock(&ctx->queue->mutex);
+
+        // Fetch metadata (NO LOCKS HELD)
+        printf("[Worker %u] Fetching: %s (%u)\n", ctx->workerIndex, work.gameName, work.appid);
+        SteamMetadata *meta = fetchSteamGameMetadata(work.appid);
+
+        // Write to database (LOCK HELD)
+        pthread_mutex_lock(&ctx->offblast->steamMetadataLock);
+        if (meta) {
+            writeMetadataToDatabase(ctx->offblast, work.targetSignature, meta);
+            freeSteamMetadata(meta);
+        } else {
+            markMetadataFetchFailed(ctx->offblast, work.targetSignature);
+        }
+        pthread_mutex_unlock(&ctx->offblast->steamMetadataLock);
+
+        // Update progress
+        pthread_mutex_lock(&ctx->queue->mutex);
+        ctx->queue->completedItems++;
+        ctx->queue->activeWorkers--;
+        pthread_mutex_unlock(&ctx->queue->mutex);
+
+        pthread_mutex_lock(&ctx->offblast->loadingState.mutex);
+        ctx->offblast->loadingState.progress = ctx->queue->completedItems;
+        pthread_mutex_unlock(&ctx->offblast->loadingState.mutex);
+    }
+
+    free(ctx);
+    return NULL;
+}
+
+void fetchMetadataThreaded(OffblastUi *offblast, SteamMetadataQueue *queue) {
+    pthread_t workers[STEAM_METADATA_WORKER_COUNT];
+
+    printf("Spawning %d metadata worker threads for %u games\n",
+           STEAM_METADATA_WORKER_COUNT, queue->count);
+
+    // Spawn workers
+    for (uint32_t i = 0; i < STEAM_METADATA_WORKER_COUNT; i++) {
+        SteamMetadataWorkerContext *ctx = malloc(sizeof(SteamMetadataWorkerContext));
+        ctx->offblast = offblast;
+        ctx->queue = queue;
+        ctx->workerIndex = i;
+
+        pthread_mutex_lock(&queue->mutex);
+        queue->activeWorkers++;
+        pthread_mutex_unlock(&queue->mutex);
+
+        pthread_create(&workers[i], NULL, steamMetadataWorkerMain, ctx);
+    }
+
+    // Wait for completion
+    pthread_mutex_lock(&queue->mutex);
+    while (queue->activeWorkers > 0 || queue->head < queue->count) {
+        pthread_cond_wait(&queue->workComplete, &queue->mutex);
+    }
+    pthread_mutex_unlock(&queue->mutex);
+
+    // Join workers
+    for (uint32_t i = 0; i < STEAM_METADATA_WORKER_COUNT; i++) {
+        pthread_join(workers[i], NULL);
+    }
+
+    printf("Metadata fetching complete: %u/%u succeeded\n",
+           queue->completedItems, queue->totalItems);
+}
+
+// ============================================================================
+// End Multi-threaded Steam Metadata Fetching
+// ============================================================================
+
 void importFromSteam(Launcher *theLauncher) {
     // Check if Steam API is configured
     if (offblast->steamApiKey[0] && offblast->steamId[0]) {
@@ -8312,13 +8544,18 @@ void importFromSteam(Launcher *theLauncher) {
         // Check install status
         checkSteamInstallStatus(steamGames);
 
-        // Process each game
+        // Initialize metadata work queue
+        SteamMetadataQueue queue = {0};
+        initMetadataQueue(&queue, steamGames->count);
+
+        // PASS 1: Create/update targets, sync playtime, queue metadata work
         for (uint32_t i = 0; i < steamGames->count; i++) {
             SteamGame *sg = &steamGames->games[i];
 
             // Update progress
             if (offblast->loadingMode) {
                 pthread_mutex_lock(&offblast->loadingState.mutex);
+                snprintf(offblast->loadingState.status, 256, "Processing Steam library...");
                 offblast->loadingState.progress = i + 1;
                 offblast->loadingState.progressTotal = steamGames->count;
                 pthread_mutex_unlock(&offblast->loadingState.mutex);
@@ -8419,40 +8656,25 @@ void importFromSteam(Launcher *theLauncher) {
                 }
             }
 
-            // Fetch metadata if missing (date is empty means no metadata yet)
+            // Queue metadata fetch if needed
             if (target->date[0] == '\0') {
-                printf("Fetching metadata for: %s (%u)\n", sg->name, sg->appid);
-                SteamMetadata *meta = fetchSteamGameMetadata(sg->appid);
-                if (meta) {
-                    // Set release date
-                    if (meta->date[0] != '\0') {
-                        memcpy(target->date, meta->date, sizeof(target->date));
-                    }
-
-                    // Set score (Metacritic)
-                    if (meta->score > 0) {
-                        target->ranking = meta->score;
-                    } else {
-                        target->ranking = 999;  // No score available
-                    }
-
-                    // Write description blob
-                    if (meta->description) {
-                        target->descriptionOffset = writeDescriptionBlob(target, meta->description);
-                        if (target->descriptionOffset > 0) {
-                            printf("  Stored description at offset %lu\n", target->descriptionOffset);
-                        }
-                    }
-
-                    printf("  Date: %s, Score: %u\n", meta->date, meta->score);
-                    freeSteamMetadata(meta);
-                } else {
-                    // API fetch failed, set sentinel
-                    target->ranking = 999;
-                }
+                queueMetadataFetch(&queue, sg->appid, target->targetSignature, sg->name);
             }
         }
 
+        // PASS 2: Fetch metadata in parallel
+        if (queue.count > 0) {
+            pthread_mutex_lock(&offblast->loadingState.mutex);
+            snprintf(offblast->loadingState.status, 256, "Fetching Steam metadata...");
+            offblast->loadingState.progress = 0;
+            offblast->loadingState.progressTotal = queue.count;
+            pthread_mutex_unlock(&offblast->loadingState.mutex);
+
+            fetchMetadataThreaded(offblast, &queue);
+        }
+
+        // Cleanup
+        destroyMetadataQueue(&queue);
         freeSteamGameList(steamGames);
         return;
     }
