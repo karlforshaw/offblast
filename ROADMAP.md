@@ -122,19 +122,6 @@ Both now implemented in launch().
 
 ## 0.8.1
 
-### Steam Offline Handling
-What happens when Steam is configured but there's no internet connection? Currently the API call will fail and fall back to local appmanifest scanning, but need to verify this gracefully handles:
-- No network at all
-- Timeout scenarios
-- Partial failures mid-fetch
-
-### Search Keyboard Input
-Support keyboard input for search (currently controller-only).
-
----
-
-## Future Features
-
 ### .desktop File Launcher Support
 Support launching PC games and ports via .desktop files:
 - Scan directory for .desktop files (freedesktop.org standard)
@@ -232,6 +219,10 @@ User-defined game collections beyond automatic platform-based lists:
 - Appear as rows in home screen alongside "Jump Back In", "Essential PSX", etc.
 - Persistent storage (separate file or embed in config.json?)
 
+**Related features (part of this):**
+- **List Caching**: Cache generated lists to files for faster loading
+- **Collections**: Curated game collections (e.g., YouTuber lists like Metal Jesus) - could be an OpenGameDB feature
+
 **Questions to resolve:**
 - UI for managing lists (add/remove games, create new lists, reorder?)
 - Storage format (JSON config, separate database file?)
@@ -252,9 +243,18 @@ Integration with RetroAchievements.org for tracking achievements in retro games:
 - UI for browsing achievements (separate view or info panel extension?)
 - Notification system (on-screen overlay, system notifications?)
 
+### Steam Offline Handling
+What happens when Steam is configured but there's no internet connection? Currently the API call will fail and fall back to local appmanifest scanning, but need to verify this gracefully handles:
+- No network at all
+- Timeout scenarios
+- Partial failures mid-fetch
+
+### Search Keyboard Input
+Support keyboard input for search (currently controller-only).
+
 ---
 
-## Planned Features
+## Future Features (0.9.0+)
 
 ### Cover Browser UI Enhancements
 - Replace scroll indicator dots with proper arrow textures
@@ -303,12 +303,6 @@ Show currently playing game in Discord status.
 
 ### Steam: Per-User Credentials
 Move `steam.api_key` and `steam.steam_id` to user config instead of global. Each user could have their own Steam account.
-
-### List Caching
-Cache generated lists to files for faster loading.
-
-### Collections
-Curated game collections (e.g., YouTuber lists like Metal Jesus). This is more of an OpenGameDB feature.
 
 ### Regional Variant Architecture
 Formulate a full plan for how to deal with different regional versions of the same game:
