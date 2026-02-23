@@ -76,7 +76,12 @@ Both now implemented in launch().
 - Honest score display (no fake zeros)
 
 ### Animation System Improvements
-Refactor animation system - queue animations instead of repeating code. Need to rethink input modes and the system in general.
+**SOLVED:** Refactored animation system for better performance and maintainability:
+- Single array of all animations defined once at startup
+- Animation tick loop inlined in main render loop (eliminates 8 function calls per frame)
+- `animationRunning()` uses same array (single point of maintenance)
+- Adding new animations now only requires updating one array definition
+- Removed manual tick calls that had to be updated for each new animation type
 
 ### Poor Match Score Logging
 Games with poor match scores should be logged to the missing games log. Currently allowing bad matches through as long as the proper game isn't present.

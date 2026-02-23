@@ -98,6 +98,12 @@
   - Works on both X11 and Wayland via SDL clipboard
 
 ### Changed
+- **Optimized animation system** for better performance and maintainability
+  - Single array of all animations defined once at startup (single point of maintenance)
+  - Inlined animation tick loop in main render loop (eliminates 8 function calls per frame)
+  - `animationRunning()` checks array with early exit on first active animation
+  - Adding new animations now only requires updating one array definition
+  - Removed manual tick calls that required updating for each new animation type
 - **Renamed "Rescrape" to "Refresh Metadata/Covers"** throughout UI and code
   - Previous naming suggested it would detect new games, which it doesn't
   - New naming clearly communicates it refreshes metadata for existing games

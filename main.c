@@ -578,7 +578,6 @@ void verticalMoveDone();
 void infoFaded();
 void rowNameFaded();
 uint32_t animationRunning();
-void animationTick(Animation *theAnimation);
 void loadPlatformNames(const char *openGameDbPath);
 const char *platformString(char *key);
 char *getCoverPath(LaunchTarget *);
@@ -2719,6 +2718,20 @@ int main(int argc, char** argv) {
     playerSelectUi->fadeInActive = 1;
     playerSelectUi->fadeInStartTick = SDL_GetTicks();
 
+    // Array of all animations for efficient ticking and state checks
+    Animation *allAnimations[] = {
+        mainUi->horizontalAnimation,
+        mainUi->verticalAnimation,
+        mainUi->infoAnimation,
+        mainUi->rowNameAnimation,
+        mainUi->menuAnimation,
+        mainUi->menuNavigateAnimation,
+        mainUi->contextMenuAnimation,
+        mainUi->contextMenuNavigateAnimation,
+        mainUi->coverBrowserAnimation
+    };
+    int numAnimations = sizeof(allAnimations) / sizeof(allAnimations[0]);
+
     // § Main loop
     while (offblast->running) {
 
@@ -2950,8 +2963,6 @@ int main(int argc, char** argv) {
             }
             else {
                 offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
-                // TODO this should probably kill all the active animations?
-                // or fire their callbacks immediately
             }
         }
 
@@ -3774,15 +3785,18 @@ int main(int argc, char** argv) {
         free(fpsString);
 
 
-        // XXX yuk
-        animationTick(mainUi->horizontalAnimation);
-        animationTick(mainUi->verticalAnimation);
-        animationTick(mainUi->infoAnimation);
-        animationTick(mainUi->rowNameAnimation);
-        animationTick(mainUi->menuAnimation);
-        animationTick(mainUi->menuNavigateAnimation);
-        animationTick(mainUi->contextMenuAnimation);
-        animationTick(mainUi->contextMenuNavigateAnimation);
+        // Tick active animations
+        for (int i = 0; i < numAnimations; i++) {
+            Animation *anim = allAnimations[i];
+            if (anim->animating && SDL_GetTicks() > anim->startTick + anim->durationMs) {
+                anim->animating = 0;
+                anim->callback(anim->callbackArgs);
+                if (anim->callbackArgs != NULL) {
+                    free(anim->callbackArgs);
+                    anim->callbackArgs = NULL;
+                }
+            }
+        }
 
         // Render status message (metadata refresh notification)
         if (offblast->statusMessageTick > 0) {
@@ -4605,45 +4619,27 @@ uint32_t megabytes(uint32_t n) {
 
 uint32_t animationRunning() {
 
-    uint32_t result = 0;
     MainUi *ui = &offblast->mainUi;
-    if (ui->horizontalAnimation->animating != 0) {
-        result++;
-    }
-    else if (ui->verticalAnimation->animating != 0) {
-        result++;
-    }
-    else if (ui->infoAnimation->animating != 0) {
-        result++;
-    }
-    else if (ui->menuAnimation->animating != 0) {
-        result++;
-    }
-    else if (ui->menuNavigateAnimation->animating != 0) {
-        result++;
-    }
-    else if (ui->contextMenuAnimation->animating != 0) {
-        result++;
-    }
-    else if (ui->contextMenuNavigateAnimation->animating != 0) {
-        result++;
-    }
+    Animation *allAnimations[] = {
+        ui->horizontalAnimation,
+        ui->verticalAnimation,
+        ui->infoAnimation,
+        ui->rowNameAnimation,
+        ui->menuAnimation,
+        ui->menuNavigateAnimation,
+        ui->contextMenuAnimation,
+        ui->contextMenuNavigateAnimation,
+        ui->coverBrowserAnimation
+    };
+    int numAnimations = sizeof(allAnimations) / sizeof(allAnimations[0]);
 
-    return result;
-}
-
-void animationTick(Animation *theAnimation) {
-        if (theAnimation->animating && SDL_GetTicks() > 
-                theAnimation->startTick + theAnimation->durationMs) 
-        {
-            theAnimation->animating = 0;
-            theAnimation->callback(theAnimation->callbackArgs);
-
-            if (theAnimation->callbackArgs != NULL) {
-                free(theAnimation->callbackArgs);
-                theAnimation->callbackArgs = NULL;
-            }
+    for (int i = 0; i < numAnimations; i++) {
+        if (allAnimations[i]->animating) {
+            return 1;
         }
+    }
+
+    return 0;
 }
 
 void loadPlatformNames(const char *openGameDbPath) {
