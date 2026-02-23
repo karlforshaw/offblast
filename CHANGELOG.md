@@ -104,6 +104,7 @@
   - `animationRunning()` checks array with early exit on first active animation
   - Adding new animations now only requires updating one array definition
   - Removed manual tick calls that required updating for each new animation type
+  - Removed TODO about killing animations on mode switch - investigation revealed this is not an issue because all mode switches occur either during initialization (before animations start) or when input is blocked by `animationRunning()` checks (no animations active)
 - **Renamed "Rescrape" to "Refresh Metadata/Covers"** throughout UI and code
   - Previous naming suggested it would detect new games, which it doesn't
   - New naming clearly communicates it refreshes metadata for existing games
