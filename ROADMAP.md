@@ -138,18 +138,42 @@ Support keyboard input for search (currently controller-only).
 ### Pre/Post Launch Hooks
 Execute custom commands before and after launching games:
 - **Pre-launch hooks**: Run commands before game starts
-  - Use cases: Display configuration, CPU governor, Discord status, RGB control
+  - Use cases: Display configuration, CPU governor, save file swapping, Discord status
   - Per-game, per-launcher, or global hooks
   - Access to game metadata (name, platform, etc.) as environment variables
 - **Post-launch hooks**: Run commands after game exits
   - Clean up temporary changes made in pre-launch
-  - Log playtime, sync saves, etc.
-- Configuration: Define in launcher config or per-game overrides
+  - Sync saves, log playtime, restore display settings, etc.
+
+**Status display:**
+- Status text appears under game cover during launch (existing game launch UI)
+- Two options for status messages:
+  1. **Static config-defined**: Simple message in launcher config
+     - `"pre_launch_status": "Swapping save files..."`
+     - `"post_launch_status": "Syncing save files..."`
+  2. **Dynamic stdout passthrough**: Hook script outputs status updates
+     - Each line of stdout updates the status text in real-time
+     - Example: Hook echoes "Checking network share...", then "Copying saves..."
+- Can combine both: static message as default, stdout overrides if hook outputs text
+- Timeout and error handling (abort if hook hangs or fails)
+
+**Config example:**
+```json
+{
+  "type": "retroarch",
+  "platform": "psx",
+  "pre_launch_hook": "/path/to/setup.sh",
+  "pre_launch_status": "Configuring system...",
+  "post_launch_hook": "/path/to/cleanup.sh",
+  "post_launch_status": "Syncing changes..."
+}
+```
 
 **Questions to resolve:**
 - Hook definition format (shell commands, script paths, or both?)
 - Environment variables to expose (game name, platform, path, launcher type?)
-- Error handling (abort launch if pre-hook fails? timeout?)
+- Should hooks be per-launcher, per-game, or global (with override hierarchy)?
+- Timeout values (default 30s? configurable?)
 
 ### Custom Lists
 User-defined game collections beyond automatic platform-based lists:
