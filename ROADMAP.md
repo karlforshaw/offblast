@@ -243,6 +243,25 @@ Integration with RetroAchievements.org for tracking achievements in retro games:
 - UI for browsing achievements (separate view or info panel extension?)
 - Notification system (on-screen overlay, system notifications?)
 
+### Multi-threaded Steam Metadata Fetching
+Optimize Steam metadata fetching for faster cold start performance:
+- **Current issue**: Sequential API calls block startup (50 games = 50-100 seconds)
+- **Solution**: Multi-threaded fetching with rate limiting
+  - Spawn 3-5 worker threads pulling from queue of appids needing metadata
+  - 200ms delay between requests to respect Steam API rate limits (~5 req/sec across all threads)
+  - Progress counter updates in loading screen as metadata arrives
+  - 3-5x speedup while staying under Steam's recommended 1 req/sec guideline
+- **Rate limits**: ~100,000 requests/day, ~200 requests per 5 minutes recommended
+- Graceful handling of 429 errors (rate limit exceeded) with exponential backoff
+
+### Steam Achievements Support
+Display Steam achievement progress alongside Retro Achievements:
+- Fetch achievement data via `ISteamUserStats/GetPlayerAchievements` API
+- Show achievement progress in game info panel for Steam games
+- Display unlock percentage and player's completion status
+- Use existing Steam API key and Steam ID from config
+- Cache achievement data to minimize API calls
+
 ### Steam Offline Handling
 What happens when Steam is configured but there's no internet connection? Currently the API call will fail and fall back to local appmanifest scanning, but need to verify this gracefully handles:
 - No network at all
