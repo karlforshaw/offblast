@@ -135,6 +135,56 @@ Support keyboard input for search (currently controller-only).
 
 ## Future Features
 
+### .desktop File Launcher Support
+Support launching PC games and ports via .desktop files:
+- Scan directory for .desktop files (freedesktop.org standard)
+- Parse `Name` field and match against OpenGameDB (platform: "pc" or configured)
+- Use `Exec` field as launch command
+- Optional: Use `Icon` field as fallback cover art
+- Support custom `X-*` fields for per-game configuration:
+  - `X-PreLaunchHook`: Per-game pre-launch hook script
+  - `X-PostLaunchHook`: Per-game post-launch hook script
+  - `X-PreLaunchStatus`: Status message during pre-launch
+  - `X-PostLaunchStatus`: Status message during post-launch
+
+**Use cases:**
+- Recompilations (Ship of Harkinian, Super Mario 64 PC port)
+- Source ports (Sonic 3 AIR, GZDoom games)
+- Native Linux games not on Steam
+- Portable AppImages and custom-built games
+
+**Config example:**
+```json
+{
+  "type": "desktop",
+  "platform": "pc",
+  "rom_path": "/home/user/.offblast/pc-games/",
+  "scan_pattern": "*.desktop",
+  "match_field": "title"
+}
+```
+
+**.desktop example:**
+```ini
+[Desktop Entry]
+Type=Application
+Name=Ship of Harkinian
+Exec=/home/user/soh/soh.AppImage
+Icon=/home/user/soh/icon.png
+Categories=Game;
+
+# OffBlast custom fields
+X-PreLaunchHook=/home/user/soh/pre-launch.sh
+X-PostLaunchHook=/home/user/soh/post-launch.sh
+X-PreLaunchStatus=Loading OoT save data...
+```
+
+**Implementation notes:**
+- Simple INI parser for .desktop files (or use existing library)
+- Handle `Exec` field codes (`%f`, `%u`) or treat as literal command
+- Per-game hooks override or supplement launcher-level hooks (TBD)
+- Works on all Linux desktop environments (freedesktop.org standard)
+
 ### Pre/Post Launch Hooks
 Execute custom commands before and after launching games:
 - **Pre-launch hooks**: Run commands before game starts
