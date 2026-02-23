@@ -105,15 +105,6 @@ Both now implemented in launch().
 - Steam games appear in Most Played lists with accurate hours
 - Reordered initialization to load users → playtime file → launchers
 
-### Steam Offline Handling
-What happens when Steam is configured but there's no internet connection? Currently the API call will fail and fall back to local appmanifest scanning, but need to verify this gracefully handles:
-- No network at all
-- Timeout scenarios
-- Partial failures mid-fetch
-
-### Search Keyboard Input
-Support keyboard input for search (currently controller-only).
-
 ### Resume Functionality on Wayland
 **SOLVED:** Resume now works on KDE Plasma Wayland:
 - Implemented KWin scripting via D-Bus using `workspace.stackingOrder`
@@ -126,6 +117,19 @@ Support keyboard input for search (currently controller-only).
 - Automatically chooses KWin scripting on KDE Wayland, X11 APIs elsewhere
 - Tested and working on Bazzite (KDE Plasma Wayland)
 - Works with flatpak/AppImage games despite PID sandboxing
+
+---
+
+## 0.8.1
+
+### Steam Offline Handling
+What happens when Steam is configured but there's no internet connection? Currently the API call will fail and fall back to local appmanifest scanning, but need to verify this gracefully handles:
+- No network at all
+- Timeout scenarios
+- Partial failures mid-fetch
+
+### Search Keyboard Input
+Support keyboard input for search (currently controller-only).
 
 ---
 
