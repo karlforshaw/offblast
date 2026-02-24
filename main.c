@@ -139,21 +139,42 @@ void replaceUserPlaceholders(char *launchString, User *user) {
     }
 }
 
-// Helper function to replace a single placeholder in a string
+// Helper function to replace a single placeholder in a string with proper shell quoting
 void replacePlaceholder(char *str, const char *placeholder, const char *value) {
     if (!str || !placeholder || !value) return;
 
     char *p;
     int replaceIter = 0, replaceLimit = 8;
 
+    // Build quoted value: wrap in single quotes and escape existing single quotes
+    // Single quotes in shell: can't escape inside single quotes, so we use '\''
+    // which ends the quote, adds an escaped quote, and starts a new quote
+    char quotedValue[PATH_MAX * 2];
+    char *qp = quotedValue;
+    *qp++ = '\'';  // Opening quote
+
+    for (const char *vp = value; *vp && (qp - quotedValue) < (PATH_MAX * 2 - 10); vp++) {
+        if (*vp == '\'') {
+            // End current quote, add escaped quote, start new quote
+            *qp++ = '\'';
+            *qp++ = '\\';
+            *qp++ = '\'';
+            *qp++ = '\'';
+        } else {
+            *qp++ = *vp;
+        }
+    }
+    *qp++ = '\'';  // Closing quote
+    *qp = '\0';
+
     while ((p = strstr(str, placeholder))) {
         // Move the rest of the string to make room
-        memmove(p + strlen(value),
+        memmove(p + strlen(quotedValue),
                 p + strlen(placeholder),
                 strlen(p + strlen(placeholder)) + 1);
 
-        // Copy in the replacement value
-        memcpy(p, value, strlen(value));
+        // Copy in the quoted replacement value
+        memcpy(p, quotedValue, strlen(quotedValue));
 
         replaceIter++;
         if (replaceIter >= replaceLimit) {
