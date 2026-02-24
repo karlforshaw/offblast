@@ -3,6 +3,23 @@
 ## [Unreleased]
 
 ### Added
+- **.desktop file launcher support**
+  - Launch PC games, ports, and recompilations via freedesktop.org .desktop files
+  - Scan directories for .desktop files with configurable scan_pattern
+  - Parse Name field for OpenGameDB matching, Exec field for launch command
+  - Support Path field for working directory (chdir before execution)
+  - Per-game hooks via X-PreLaunchHook and X-PostLaunchHook override launcher hooks
+  - Real-time stdout from hooks updates status display
+  - Wine support for Windows executables (e.g., Sonic 2 Absolute)
+  - Icon field parsed (reserved for future cover fallback)
+  - Tested with: Ship of Harkinian, 2Ship2Harkinian, Sonic 3 A.I.R., Sonic 2 Absolute, Super Mario Bros. Remastered
+  - Use cases: Harbour Masters ports, fan remasters, AppImages, native Linux games
+- **Import New Games from CSV**
+  - New context menu option to import new entries from OpenGameDB CSV
+  - Adds new LaunchTarget entries without destroying existing database
+  - Preserves all path assignments and match scores
+  - Enables pulling CSV updates without full database rebuild
+  - Shows count of newly imported games in status message
 - **Pre/post launch hooks**
   - Execute custom commands before and after launching games
   - Per-launcher hook configuration via config.json
@@ -24,6 +41,11 @@
   - Loading screen shows "Fetching Steam metadata..." with live progress counter
   - Respects Steam API rate limits (~200 requests per 5 minutes)
   - Graceful error handling - failed fetches marked with ranking=999
+
+### Fixed
+- Desktop launcher rescan now clears stale assignments before re-matching
+- Rescan/import operations preserve current view (stay in platform list instead of home)
+- Desktop launcher rescan properly calls importFromDesktop() instead of importFromCustom()
 
 ## [0.8.0] - 2026-02-23
 

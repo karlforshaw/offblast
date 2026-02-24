@@ -123,31 +123,23 @@ Both now implemented in launch().
 ## 0.8.1
 
 ### .desktop File Launcher Support
-Support launching PC games and ports via .desktop files:
-- Scan directory for .desktop files (freedesktop.org standard)
-- Parse `Name` field and match against OpenGameDB (platform: "pc" or configured)
-- Use `Exec` field as launch command
-- Optional: Use `Icon` field as fallback cover art
-- Support custom `X-*` fields for per-game configuration:
-  - `X-PreLaunchHook`: Per-game pre-launch hook script
-  - `X-PostLaunchHook`: Per-game post-launch hook script
-  - `X-PreLaunchStatus`: Status message during pre-launch
-  - `X-PostLaunchStatus`: Status message during post-launch
-
-**Use cases:**
-- Recompilations (Ship of Harkinian, Super Mario 64 PC port)
-- Source ports (Sonic 3 AIR, GZDoom games)
-- Native Linux games not on Steam
-- Portable AppImages and custom-built games
+**SOLVED:** Launch PC games and ports via freedesktop.org .desktop files:
+- **Scan directories** for .desktop files with configurable scan_pattern (defaults to "*.desktop")
+- **Parse fields**: Name (OpenGameDB matching), Exec (launch command), Path (working directory)
+- **Per-game hooks**: X-PreLaunchHook and X-PostLaunchHook override launcher-level hooks
+  - Hook stdout dynamically updates status display
+  - Breathing animation during hook execution
+- **Wine support**: Exec can use wine for Windows executables
+- **Icon field** parsed (reserved for future cover fallback)
+- **Working directory**: Child process chdir to Path field before launching
+- **Smart rescanning**: Clears stale assignments before re-matching .desktop files
 
 **Config example:**
 ```json
 {
   "type": "desktop",
   "platform": "pc",
-  "rom_path": "/home/user/.offblast/pc-games/",
-  "scan_pattern": "*.desktop",
-  "match_field": "title"
+  "rom_path": "/home/user/.offblast/pc-games/"
 }
 ```
 
@@ -157,20 +149,25 @@ Support launching PC games and ports via .desktop files:
 Type=Application
 Name=Ship of Harkinian
 Exec=/home/user/soh/soh.AppImage
+Path=/home/user/soh
 Icon=/home/user/soh/icon.png
 Categories=Game;
 
-# OffBlast custom fields
-X-PreLaunchHook=/home/user/soh/pre-launch.sh
-X-PostLaunchHook=/home/user/soh/post-launch.sh
-X-PreLaunchStatus=Loading OoT save data...
+# OffBlast per-game hooks
+X-PreLaunchHook=/home/user/soh/pre-launch.sh %GAME_NAME%
+X-PostLaunchHook=/home/user/soh/post-launch.sh %GAME_NAME%
 ```
 
-**Implementation notes:**
-- Simple INI parser for .desktop files (or use existing library)
-- Handle `Exec` field codes (`%f`, `%u`) or treat as literal command
-- Per-game hooks override or supplement launcher-level hooks (TBD)
-- Works on all Linux desktop environments (freedesktop.org standard)
+**Tested with:**
+- Ship of Harkinian (Ocarina of Time PC port)
+- 2Ship2Harkinian (Majora's Mask PC port)
+- Sonic 3 A.I.R.
+- Sonic 2 Absolute (via Wine)
+- Super Mario Bros. Remastered
+
+**Future enhancements:**
+- Icon field as cover art fallback (when OpenGameDB has no cover)
+- Exec field code support (%f, %u) for desktop environment compatibility
 
 ### Pre/Post Launch Hooks
 **SOLVED:** Execute custom commands before and after launching games:
@@ -267,6 +264,16 @@ Display Steam achievement progress alongside Retro Achievements:
 - Display unlock percentage and player's completion status
 - Use existing Steam API key and Steam ID from config
 - Cache achievement data to minimize API calls
+
+### Import New Games from CSV
+**SOLVED:** Pull OpenGameDB CSV updates without destroying database:
+- New context menu option: "Import New Games from CSV"
+- Scans platform CSV and creates LaunchTarget entries for new games only
+- Preserves existing entries and their path assignments
+- Previously required deleting launchtargets.bin and losing all launcher associations
+- Now can update OpenGameDB repository and import new entries seamlessly
+- Shows count of newly imported games in status message
+- Works for all platforms (pc, playstation, nintendo_64, etc.)
 
 ### Steam Offline Handling
 What happens when Steam is configured but there's no internet connection? Currently the API call will fail and fall back to local appmanifest scanning, but need to verify this gracefully handles:

@@ -260,7 +260,96 @@ mount -t nfs server:/saves/$USER $SAVE_PATH
 echo "Save directory ready!"
 ```
 
-### 5. Steam Integration
+### 5. .desktop File Launcher (PC Games and Ports)
+
+Launch PC games, native Linux games, ports, and recompilations using freedesktop.org .desktop files.
+
+#### Configuration
+
+Add a desktop launcher to your config.json:
+
+```json
+{
+    "type": "desktop",
+    "rom_path": "/home/user/.offblast/desktop-games",
+    "platform": "pc"
+}
+```
+
+**Configuration options:**
+- `rom_path` - Directory containing .desktop files (required)
+- `platform` - Platform for OpenGameDB matching (optional, defaults to "pc")
+- `scan_pattern` - Pattern for finding .desktop files (optional, defaults to "*.desktop")
+- `cmd` - Not used (Exec comes from .desktop files)
+
+#### Creating .desktop Files
+
+Place .desktop files in your configured `rom_path` directory:
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=Ship of Harkinian
+Exec=/home/user/Apps/soh/soh.AppImage
+Path=/home/user/Apps/soh
+Icon=/home/user/Apps/soh/icon.png
+Categories=Game;
+Comment=Native PC port of Ocarina of Time
+Terminal=false
+
+# OffBlast per-game hooks (optional)
+X-PreLaunchHook=/home/user/soh/pre-launch.sh %GAME_NAME%
+X-PostLaunchHook=/home/user/soh/post-launch.sh %GAME_NAME%
+```
+
+**Important fields:**
+- `Name` - Used to match against OpenGameDB for metadata and covers
+- `Exec` - Command to launch the game (supports wine, env vars, etc.)
+- `Path` - Working directory (game changes to this directory before launching)
+- `X-PreLaunchHook` / `X-PostLaunchHook` - Per-game hooks (override launcher-level hooks)
+
+#### Wine Support
+
+For Windows games, use wine in the Exec field:
+
+```ini
+[Desktop Entry]
+Name=Sonic 2 Absolute
+Exec=wine /home/user/Games/Sonic2Absolute.exe
+Path=/home/user/Games/Sonic2Absolute
+```
+
+#### Per-Game Hooks
+
+.desktop files support per-game hooks via custom X-* fields. These override launcher-level hooks:
+
+```ini
+X-PreLaunchHook=/scripts/mount-saves.sh %GAME_NAME% %USER_NAME%
+X-PostLaunchHook=/scripts/sync-saves.sh %GAME_NAME% %USER_NAME%
+```
+
+All standard placeholders work: `%GAME_NAME%`, `%USER_NAME%`, `%SAVE_PATH%`, etc.
+
+#### Supported Games
+
+Tested and working:
+- **Ship of Harkinian** - Ocarina of Time PC port
+- **2Ship2Harkinian** - Majora's Mask PC port
+- **Sonic 3 A.I.R.** - Enhanced Sonic 3 & Knuckles port
+- **Sonic 2 Absolute** - Enhanced Sonic 2 port (via Wine)
+- **Super Mario Bros. Remastered** - Fan remake in Godot 4
+- Any AppImage, native Linux game, or Wine application
+
+#### Adding New Games
+
+When you add new .desktop files or update OpenGameDB:
+
+1. Navigate to any PC game
+2. Press **Start** button → **"Import New Games from CSV"** (if you added entries to pc.csv)
+3. Press **Start** button → **"Rescan Launcher for New Games"**
+4. New games appear immediately without restarting
+
+### 6. Steam Integration
 
 OffBlast can show **all your owned Steam games**, not just installed ones. This requires a Steam Web API key.
 
@@ -304,7 +393,7 @@ If you only want to see installed Steam games (even with an API key configured),
 
 This hides all uninstalled games from your library, showing only what's currently installed on your system.
 
-### 6. SteamGridDB Cover Browser (Optional)
+### 7. SteamGridDB Cover Browser (Optional)
 
 Browse and select custom game covers from SteamGridDB's extensive community artwork collection.
 
