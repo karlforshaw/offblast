@@ -5421,15 +5421,25 @@ int executeHook(OffblastUi *offblast, const char *hookCmd, const char *statusMsg
 
             yOffset -= (offblast->infoPointSize * 3);
 
-            // Render game cover
+            // Calculate breathing animation for cover (same as loading screen rocket)
+            float t = (float)SDL_GetTicks() / 1000.0f;
+            float rawSin = sinf(t * 0.75f);  // 0.75Hz (50% slower)
+            float breathCurve = rawSin * rawSin;  // [0, 1] with pauses at 0 and 1
+            float breathScale = 0.95f + 0.10f * breathCurve;  // Map to [0.95, 1.05]
+
+            // Render game cover with breathing effect
             UiTile *theTile = offblast->mainUi.activeRowset->rowCursor->tileCursor;
             Image *imageToShow = requestImageForTarget(theTile->target, 1);
 
-            double xPos = offblast->winWidth / 2 - getWidthForScaledImage(
-                    mainUi->boxHeight, imageToShow) / 2;
+            double baseHeight = mainUi->boxHeight;
+            double animatedHeight = baseHeight * breathScale;
+            double baseWidth = getWidthForScaledImage(baseHeight, imageToShow);
+            double animatedWidth = baseWidth * breathScale;
 
-            renderImage(xPos, yOffset - mainUi->boxHeight, 0, mainUi->boxHeight,
-                    imageToShow, 0.2, 1);
+            double xPos = offblast->winWidth / 2 - animatedWidth / 2;
+            double yPos = yOffset - baseHeight;  // Use base height for positioning (centered)
+
+            renderImage(xPos, yPos, 0, animatedHeight, imageToShow, 0.2, 1);
 
             yOffset -= (mainUi->boxHeight + 200);
 
