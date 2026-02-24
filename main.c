@@ -601,6 +601,7 @@ typedef struct OffblastUi {
     OffblastBlobFile *descriptionFile;
     OffblastDbFile playTimeDb;
     PlayTimeFile *playTimeFile;
+    OffblastDbFile launchTargetDb;
     LaunchTargetFile *launchTargetFile;
 
     uint32_t nLaunchers;
@@ -742,16 +743,32 @@ void activateGnomeWindow(long windowId);
 void raiseWindowByUuid(const char *uuid);
 void importFromSteam(Launcher *theLauncher);
 void importFromCustom(Launcher *theLauncher);
+void importFromDesktop(Launcher *theLauncher);
 
 // Context menu callbacks
 void doRescrapePlatform();
 void doRescrapeGame();
 void doRescanLauncher();
+void doImportNewGames();
 void doCopyCoverFilename();
 void doRefreshCover();
 void pressContextMenu();
 void contextMenuToggleDone(void *arg);
 void contextMenuNavigationDone(void *arg);
+
+// .desktop file launcher types and functions
+typedef struct DesktopFile {
+    char name[OFFBLAST_NAME_MAX];
+    char exec[MAX_LAUNCH_COMMAND_LENGTH];
+    char path[PATH_MAX];  // Working directory
+    char icon[PATH_MAX];
+    char preHook[PATH_MAX];
+    char preHookStatus[256];
+    char postHook[PATH_MAX];
+    char postHookStatus[256];
+} DesktopFile;
+int parseDesktopFile(const char *filePath, DesktopFile *desktop);
+char* convertNumeralInGameName(const char *gameName);
 
 // Steam metadata types and functions
 typedef struct SteamMetadata {
@@ -854,6 +871,229 @@ void doHome() {
 }
 
 // Context menu callbacks
+void doImportNewGames() {
+    printf("\n=== IMPORT NEW GAMES FROM CSV STARTED ===\n");
+
+    MainUi *mainUi = &offblast->mainUi;
+    if (offblast->mode != OFFBLAST_UI_MODE_MAIN) {
+        printf("Import only available in main UI mode\n");
+        return;
+    }
+
+    if (!mainUi->activeRowset || !mainUi->activeRowset->rowCursor ||
+        !mainUi->activeRowset->rowCursor->tileCursor ||
+        !mainUi->activeRowset->rowCursor->tileCursor->target) {
+        printf("No game selected for platform detection\n");
+        return;
+    }
+
+    LaunchTarget *currentTarget = mainUi->activeRowset->rowCursor->tileCursor->target;
+
+    // Find the launcher for this target
+    Launcher *targetLauncher = NULL;
+    for (uint32_t i = 0; i < offblast->nLaunchers; i++) {
+        if (offblast->launchers[i].signature == currentTarget->launcherSignature ||
+            strcmp(offblast->launchers[i].platform, currentTarget->platform) == 0) {
+            targetLauncher = &offblast->launchers[i];
+            break;
+        }
+    }
+
+    if (!targetLauncher) {
+        printf("ERROR: Could not find launcher for platform: %s\n", currentTarget->platform);
+        return;
+    }
+
+    printf("Importing new games for platform: %s\n", targetLauncher->platform);
+
+    // Use the OpenGameDB path
+    const char *openGameDbPath = offblast->openGameDbPath;
+    if (!openGameDbPath) {
+        printf("ERROR: No OpenGameDB path available\n");
+        return;
+    }
+
+    // Open the CSV file for this platform
+    char csvPath[PATH_MAX];
+    snprintf(csvPath, PATH_MAX, "%s/%s.csv", openGameDbPath, targetLauncher->platform);
+    printf("Reading CSV: %s\n", csvPath);
+
+    FILE *csvFile = fopen(csvPath, "r");
+    if (!csvFile) {
+        printf("ERROR: Could not open CSV file: %s\n", csvPath);
+        return;
+    }
+
+    // Set status message
+    snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
+             "Importing new %.218s games from CSV...", targetLauncher->platform);
+    offblast->statusMessageTick = SDL_GetTicks();
+    offblast->statusMessageDuration = 60000;
+
+    // Read CSV and create entries for new games only
+    char *csvLine = NULL;
+    size_t csvLineLength = 0;
+    ssize_t csvBytesRead;
+    uint32_t rowCount = 0;
+    uint32_t newGamesAdded = 0;
+
+    LaunchTargetFile *launchTargetFile = offblast->launchTargetFile;
+
+    while ((csvBytesRead = getline(&csvLine, &csvLineLength, csvFile)) != -1) {
+        if (rowCount == 0) {
+            rowCount++;
+            continue; // Skip header
+        }
+        rowCount++;
+
+        // Parse CSV fields
+        char *gameName = getCsvField(csvLine, 1);
+        if (!gameName || strlen(gameName) == 0) continue;
+
+        // Generate signature
+        char *gameSeed;
+        asprintf(&gameSeed, "%s_%s", targetLauncher->platform, gameName);
+        uint64_t targetSignature[2] = {0, 0};
+        lmmh_x64_128(gameSeed, strlen(gameSeed), 33, targetSignature);
+
+        // Check if this game already exists
+        int32_t indexOfEntry = launchTargetIndexByTargetSignature(
+            launchTargetFile, targetSignature[0]);
+
+        if (indexOfEntry == -1) {
+            // New game - create entry
+            printf("  Adding new game: %s\n", gameName);
+
+            // Parse other CSV fields
+            char *gameDate = getCsvField(csvLine, 2);
+            char *scoreString = getCsvField(csvLine, 3);
+            char *metaScoreString = getCsvField(csvLine, 4);
+            char *description = getCsvField(csvLine, 6);
+            char *coverArtUrl = getCsvField(csvLine, 7);
+            char *gameId = getCsvField(csvLine, 8);
+
+            // Grow launch target file
+            void *growState = growDbFileIfNecessary(
+                &offblast->launchTargetDb,
+                sizeof(LaunchTarget),
+                OFFBLAST_DB_TYPE_FIXED);
+
+            if (growState == NULL) {
+                printf("ERROR: Couldn't expand launch target file\n");
+                free(gameName);
+                free(gameSeed);
+                break;
+            }
+
+            launchTargetFile = (LaunchTargetFile*) growState;
+            offblast->launchTargetFile = launchTargetFile;
+
+            LaunchTarget *newEntry = &launchTargetFile->entries[launchTargetFile->nEntries];
+            memset(newEntry, 0, sizeof(LaunchTarget));
+
+            newEntry->targetSignature = targetSignature[0];
+            strncpy(newEntry->name, gameName, OFFBLAST_NAME_MAX - 1);
+            newEntry->name[OFFBLAST_NAME_MAX - 1] = '\0';
+            strncpy(newEntry->platform, targetLauncher->platform, 255);
+            newEntry->platform[255] = '\0';
+            strncpy(newEntry->coverUrl, coverArtUrl, PATH_MAX - 1);
+            newEntry->coverUrl[PATH_MAX - 1] = '\0';
+
+            if (gameId) {
+                strncpy(newEntry->id, gameId, OFFBLAST_NAME_MAX - 1);
+                newEntry->id[OFFBLAST_NAME_MAX - 1] = '\0';
+            }
+
+            // Parse date
+            if (gameDate && strlen(gameDate) == 10) {
+                memcpy(&newEntry->date, gameDate, 10);
+            } else if (gameDate && strlen(gameDate) == 4 && strtod(gameDate, NULL)) {
+                memcpy(&newEntry->date, gameDate, 4);
+            }
+
+            // Parse score
+            float score = -1;
+            if (scoreString && strlen(scoreString) != 0) {
+                float gfScore = atof(scoreString);
+                if (gfScore > 0 && gfScore <= 5.0) {
+                    score = gfScore * 2 * 10;
+                }
+            }
+            if (metaScoreString && strlen(metaScoreString) != 0) {
+                float metaScore = atof(metaScoreString);
+                if (metaScore > 0 && metaScore <= 100) {
+                    if (score == -1) {
+                        score = metaScore;
+                    } else {
+                        score = (score + metaScore) / 2;
+                    }
+                }
+            }
+            if (score == -1) score = 999;
+            newEntry->ranking = (uint32_t)round(score);
+
+            // Write description blob
+            if (description && strlen(description) > 0) {
+                void *pDescriptionFile = growDbFileIfNecessary(
+                    &offblast->descriptionDb,
+                    sizeof(OffblastBlob) + strlen(description),
+                    OFFBLAST_DB_TYPE_BLOB);
+
+                if (pDescriptionFile != NULL) {
+                    offblast->descriptionFile = (OffblastBlobFile*) pDescriptionFile;
+
+                    OffblastBlob *newDescription = (OffblastBlob*)
+                        &offblast->descriptionFile->memory[offblast->descriptionFile->cursor];
+
+                    newDescription->targetSignature = targetSignature[0];
+                    newDescription->length = strlen(description);
+                    memcpy(&newDescription->content, description, strlen(description));
+                    *(newDescription->content + strlen(description)) = '\0';
+
+                    newEntry->descriptionOffset = offblast->descriptionFile->cursor;
+                    offblast->descriptionFile->cursor +=
+                        sizeof(OffblastBlob) + strlen(description) + 1;
+                }
+            }
+
+            launchTargetFile->nEntries++;
+            newGamesAdded++;
+
+            free(gameDate);
+            free(scoreString);
+            free(metaScoreString);
+            free(description);
+            free(coverArtUrl);
+            free(gameId);
+        }
+
+        free(gameSeed);
+        free(gameName);
+    }
+
+    free(csvLine);
+    fclose(csvFile);
+
+    // Update status
+    snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
+             "Added %u new %.218s games from CSV", newGamesAdded, targetLauncher->platform);
+    offblast->statusMessageTick = SDL_GetTicks();
+    offblast->statusMessageDuration = 3000;
+
+    // Update UI - preserve current rowset
+    UiRowset *currentRowset = mainUi->activeRowset;
+    updateHomeLists();
+    updateGameInfo();
+    mainUi->rowGeometryInvalid = 1;  // Force UI rebuild
+
+    // Stay in current rowset (refreshes the list without changing view)
+    if (currentRowset) {
+        changeRowset(currentRowset);
+    }
+
+    printf("=== IMPORT COMPLETE: Added %u new games ===\n\n", newGamesAdded);
+}
+
 void doRescrapePlatform() {
     rescrapeCurrentLauncher(1);
 }
@@ -912,10 +1152,27 @@ void doRescanLauncher() {
     offblast->statusMessageTick = SDL_GetTicks();
     offblast->statusMessageDuration = 5000;
 
+    // For desktop launchers, clear existing assignments first to prevent stale fuzzy matches
+    if (strcmp(targetLauncher->type, "desktop") == 0) {
+        printf("Clearing existing .desktop assignments before rescan...\n");
+        for (uint32_t i = 0; i < offblast->launchTargetFile->nEntries; i++) {
+            LaunchTarget *target = &offblast->launchTargetFile->entries[i];
+            if (target->launcherSignature == targetLauncher->signature) {
+                memset(target->path, 0, PATH_MAX);
+                target->launcherSignature = 0;  // Clear launcher assignment
+                target->matchScore = 0.0;
+                printf("  Cleared assignment for: %s\n", target->name);
+            }
+        }
+    }
+
     // Rescan based on launcher type
     if (strcmp(targetLauncher->type, "steam") == 0) {
         printf("Rescanning Steam library...\n");
         importFromSteam(targetLauncher);
+    } else if (strcmp(targetLauncher->type, "desktop") == 0) {
+        printf("Rescanning .desktop files: %s\n", targetLauncher->romPath);
+        importFromDesktop(targetLauncher);
     } else {
         printf("Rescanning ROM directory: %s\n", targetLauncher->romPath);
         importFromCustom(targetLauncher);
@@ -940,9 +1197,16 @@ void doRescanLauncher() {
     }
     free(launcherContentsHashFilePath);
 
-    // Update UI
+    // Update UI - preserve current rowset
+    UiRowset *currentRowset = mainUi->activeRowset;
     updateHomeLists();
     updateGameInfo();
+    mainUi->rowGeometryInvalid = 1;  // Force UI rebuild
+
+    // Stay in current rowset (refreshes the list without changing view)
+    if (currentRowset) {
+        changeRowset(currentRowset);
+    }
 
     // Update status to show completion
     snprintf(offblast->statusMessage, sizeof(offblast->statusMessage),
@@ -1565,8 +1829,9 @@ void *initThreadFunc(void *arg) {
         SET_ERROR("Initialization error");
         return NULL;
     }
-    LaunchTargetFile *launchTargetFile = 
+    LaunchTargetFile *launchTargetFile =
         (LaunchTargetFile*) launchTargetDb.memory;
+    offblast->launchTargetDb = launchTargetDb;
     offblast->launchTargetFile = launchTargetFile;
     free(launchTargetDbPath);
 
@@ -2131,6 +2396,68 @@ void *initThreadFunc(void *arg) {
 
 
         }
+        else if (strcmp("desktop", theLauncher->type) == 0) {
+            // Desktop file launcher - scans for .desktop files
+
+            // Handle rom_path (required for desktop launchers)
+            json_object_object_get_ex(launcherNode, "rom_path", &romPathStringNode);
+            theRomPath = json_object_get_string(romPathStringNode);
+            if (theRomPath != NULL) {
+                memcpy(&theLauncher->romPath, theRomPath, strlen(theRomPath));
+            } else {
+                printf("ERROR: desktop launcher at index %d is missing 'rom_path' field\n", i);
+                printf("       Please add a rom_path to your launcher in config.json\n");
+            }
+
+            // Handle platform (optional, defaults to "pc")
+            json_object_object_get_ex(launcherNode, "platform", &platformStringNode);
+            thePlatform = json_object_get_string(platformStringNode);
+            if (thePlatform != NULL) {
+                if (strlen(thePlatform) >= 256) {
+                    condPrintConfigError(NULL, "desktop launcher platform string is too long");
+                }
+                memcpy(&theLauncher->platform, thePlatform, strlen(thePlatform));
+            } else {
+                // Default to "pc" for desktop launchers
+                memcpy(&theLauncher->platform, "pc", strlen("pc"));
+                printf("Desktop launcher %d defaulting to platform: pc\n", i);
+            }
+
+            // Handle scan_pattern (optional, defaults to "*.desktop")
+            json_object *scanPatternNode = NULL;
+            json_object_object_get_ex(launcherNode, "scan_pattern", &scanPatternNode);
+            const char *theScanPattern = json_object_get_string(scanPatternNode);
+            if (theScanPattern != NULL) {
+                if (strlen(theScanPattern) >= 256) {
+                    condPrintConfigError(NULL, "desktop launcher scan_pattern is too long");
+                }
+                memcpy(&theLauncher->scanPattern, theScanPattern, strlen(theScanPattern));
+            } else {
+                // Default to "*.desktop"
+                strcpy(theLauncher->scanPattern, "*.desktop");
+            }
+
+            // Handle match_field (optional, defaults to "title")
+            json_object *matchFieldNode = NULL;
+            json_object_object_get_ex(launcherNode, "match_field", &matchFieldNode);
+            const char *theMatchField = json_object_get_string(matchFieldNode);
+            if (theMatchField != NULL) {
+                if (strlen(theMatchField) >= 32) {
+                    condPrintConfigError(NULL, "desktop launcher match_field is too long");
+                }
+                memcpy(&theLauncher->matchField, theMatchField, strlen(theMatchField));
+            } else {
+                strcpy(theLauncher->matchField, "title");
+            }
+
+            // Warn if cmd field is present (not used for desktop launchers)
+            json_object *cmdNode = NULL;
+            json_object_object_get_ex(launcherNode, "cmd", &cmdNode);
+            if (cmdNode != NULL) {
+                printf("WARNING: desktop launcher at index %d has 'cmd' field, which is ignored.\n", i);
+                printf("         Desktop launchers use the Exec field from .desktop files.\n");
+            }
+        }
         else if (strcmp("steam", theLauncher->type) == 0){
             memcpy(&theLauncher->platform,
                     "steam", strlen("steam"));
@@ -2223,8 +2550,14 @@ void *initThreadFunc(void *arg) {
             SET_STATUS("Fetching Steam library...");
             importFromSteam(theLauncher);
         }
+        else if (strcmp(theLauncher->type, "desktop") == 0) {
+            char statusMsg[256];
+            snprintf(statusMsg, 256, "Scanning .desktop files...");
+            SET_STATUS(statusMsg);
+            importFromDesktop(theLauncher);
+        }
         else {
-            // All directory-based launchers use the same import logic
+            // All other directory-based launchers use the same import logic
             // This includes: standard, custom, retroarch, cemu, rpcs3, scummvm
             char statusMsg[256];
             snprintf(statusMsg, 256, "Scanning %s games...",
@@ -2422,20 +2755,22 @@ void *initThreadFunc(void *arg) {
     }
 
     // Init Context Menu (right-side game menu)
-    mainUi->contextMenuItems = calloc(6, sizeof(MenuItem));
+    mainUi->contextMenuItems = calloc(7, sizeof(MenuItem));
     mainUi->contextMenuItems[0].label = "Browse Covers";
     mainUi->contextMenuItems[0].callback = doBrowseCovers;
     mainUi->contextMenuItems[1].label = "Rescan Launcher for New Games";
     mainUi->contextMenuItems[1].callback = doRescanLauncher;
-    mainUi->contextMenuItems[2].label = "Refresh Platform Metadata/Covers";
-    mainUi->contextMenuItems[2].callback = doRescrapePlatform;
-    mainUi->contextMenuItems[3].label = "Refresh Game Metadata/Covers";
-    mainUi->contextMenuItems[3].callback = doRescrapeGame;
-    mainUi->contextMenuItems[4].label = "Copy Cover Filename";
-    mainUi->contextMenuItems[4].callback = doCopyCoverFilename;
-    mainUi->contextMenuItems[5].label = "Refresh Cover";
-    mainUi->contextMenuItems[5].callback = doRefreshCover;
-    mainUi->numContextMenuItems = 6;
+    mainUi->contextMenuItems[2].label = "Import New Games from CSV";
+    mainUi->contextMenuItems[2].callback = doImportNewGames;
+    mainUi->contextMenuItems[3].label = "Refresh Platform Metadata/Covers";
+    mainUi->contextMenuItems[3].callback = doRescrapePlatform;
+    mainUi->contextMenuItems[4].label = "Refresh Game Metadata/Covers";
+    mainUi->contextMenuItems[4].callback = doRescrapeGame;
+    mainUi->contextMenuItems[5].label = "Copy Cover Filename";
+    mainUi->contextMenuItems[5].callback = doCopyCoverFilename;
+    mainUi->contextMenuItems[6].label = "Refresh Cover";
+    mainUi->contextMenuItems[6].callback = doRefreshCover;
+    mainUi->numContextMenuItems = 7;
     mainUi->contextMenuCursor = 0;
 
 
@@ -5607,23 +5942,47 @@ void launch() {
     Launcher *theLauncher = &offblast->launchers[foundIndex];
     int32_t isSteam = (strcmp(theLauncher->type, "steam") == 0);
     int32_t isScummvm = (strcmp(theLauncher->type, "scummvm") == 0);
+    int32_t isDesktop = (strcmp(theLauncher->type, "desktop") == 0);
 
-    if (!isSteam && !isScummvm && strlen(target->path) == 0) {
+    // Parse .desktop file if this is a desktop launcher
+    DesktopFile desktop;
+    char desktopWorkingDir[PATH_MAX] = {0};
+    if (isDesktop) {
+        if (!parseDesktopFile(target->path, &desktop)) {
+            printf("Failed to parse .desktop file: %s\n", target->path);
+            return;
+        }
+        if (desktop.path[0] != '\0') {
+            strncpy(desktopWorkingDir, desktop.path, PATH_MAX - 1);
+            desktopWorkingDir[PATH_MAX - 1] = '\0';
+        }
+    }
+
+    if (!isSteam && !isScummvm && !isDesktop && strlen(target->path) == 0) {
         printf("%s has no launch candidate\n", target->name);
     }
     else {
 
         User *theUser = offblast->player.user;
 
-        // Execute pre-launch hook if configured
-        if (theLauncher->preHook[0] != '\0') {
+        // Execute pre-launch hook
+        // For desktop launchers, use per-game hook if present, otherwise launcher hook
+        const char *preHookCmd = theLauncher->preHook;
+        const char *preHookStatus = theLauncher->preHookStatus;
+        if (isDesktop && desktop.preHook[0] != '\0') {
+            preHookCmd = desktop.preHook;
+            preHookStatus = desktop.preHookStatus;
+            printf("Using per-game pre-launch hook from .desktop file\n");
+        }
+
+        if (preHookCmd[0] != '\0') {
             // Switch to BACKGROUND mode to show hook status
             enum UiMode previousMode = offblast->mode;
             offblast->mode = OFFBLAST_UI_MODE_BACKGROUND;
             offblast->playingTarget = target;  // Set target for rendering
 
-            int hookSuccess = executeHook(offblast, theLauncher->preHook,
-                                         theLauncher->preHookStatus,
+            int hookSuccess = executeHook(offblast, preHookCmd,
+                                         preHookStatus,
                                          target, theLauncher, theUser);
 
             // Return to previous mode
@@ -5641,6 +6000,14 @@ void launch() {
         if (isSteam) {
             asprintf(&launchString, "steam -bigpicture steam://rungameid/%s",
                     target->id);
+        }
+        else if (isDesktop) {
+            // Use Exec command from .desktop file
+            memcpy(launchString, desktop.exec, strlen(desktop.exec));
+            printf("Using Exec from .desktop: %s\n", desktop.exec);
+
+            // Replace user placeholders in case Exec has any
+            replaceUserPlaceholders(launchString, theUser);
         }
         else if (isScummvm) {
             const char *savePath = getUserCustomField(theUser, "save_path");
@@ -5725,6 +6092,14 @@ void launch() {
             int maxfd = sysconf(_SC_OPEN_MAX);
             for (int fd = 3; fd < maxfd; fd++) {
                 close(fd);
+            }
+
+            // Change to working directory if specified (.desktop Path field)
+            if (desktopWorkingDir[0] != '\0') {
+                printf("Changing to working directory: %s\n", desktopWorkingDir);
+                if (chdir(desktopWorkingDir) != 0) {
+                    printf("WARNING: Failed to chdir to %s\n", desktopWorkingDir);
+                }
             }
 
             printf("RUNNING\n%s\n", commandStr);
@@ -7263,12 +7638,32 @@ void killRunningGame() {
         }
     }
 
-    // Execute post-launch hook if configured
-    if (theLauncher && theLauncher->postHook[0] != '\0') {
-        // Stay in BACKGROUND mode to show hook status
-        executeHook(offblast, theLauncher->postHook,
-                   theLauncher->postHookStatus,
-                   target, theLauncher, offblast->player.user);
+    // Execute post-launch hook
+    // For desktop launchers, check for per-game hook first
+    const char *postHookCmd = NULL;
+    const char *postHookStatus = NULL;
+
+    if (theLauncher) {
+        postHookCmd = theLauncher->postHook;
+        postHookStatus = theLauncher->postHookStatus;
+
+        // For desktop launchers, check .desktop file for per-game hooks
+        if (strcmp(theLauncher->type, "desktop") == 0) {
+            DesktopFile desktop;
+            if (parseDesktopFile(target->path, &desktop)) {
+                if (desktop.postHook[0] != '\0') {
+                    postHookCmd = desktop.postHook;
+                    postHookStatus = desktop.postHookStatus;
+                    printf("Using per-game post-launch hook from .desktop file\n");
+                }
+            }
+        }
+
+        if (postHookCmd && postHookCmd[0] != '\0') {
+            // Stay in BACKGROUND mode to show hook status
+            executeHook(offblast, postHookCmd, postHookStatus,
+                       target, theLauncher, offblast->player.user);
+        }
     }
 
     // Now clean up and return to MAIN mode
@@ -8992,6 +9387,277 @@ void fetchMetadataThreaded(OffblastUi *offblast, SteamMetadataQueue *queue) {
 
 // ============================================================================
 // End Multi-threaded Steam Metadata Fetching
+// ============================================================================
+
+// ============================================================================
+// .desktop File Launcher Support
+// ============================================================================
+
+// Parse a .desktop file and extract relevant fields
+// Returns 1 on success, 0 on failure
+int parseDesktopFile(const char *filePath, DesktopFile *desktop) {
+    if (!filePath || !desktop) return 0;
+
+    memset(desktop, 0, sizeof(DesktopFile));
+
+    FILE *fp = fopen(filePath, "r");
+    if (!fp) {
+        printf("Failed to open .desktop file: %s\n", filePath);
+        return 0;
+    }
+
+    char line[1024];
+    int inDesktopEntry = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        // Remove trailing newline
+        size_t len = strlen(line);
+        if (len > 0 && line[len-1] == '\n') {
+            line[len-1] = '\0';
+            len--;
+        }
+
+        // Skip empty lines and comments
+        if (len == 0 || line[0] == '#') continue;
+
+        // Check for [Desktop Entry] section
+        if (line[0] == '[') {
+            if (strcmp(line, "[Desktop Entry]") == 0) {
+                inDesktopEntry = 1;
+            } else {
+                inDesktopEntry = 0;
+            }
+            continue;
+        }
+
+        // Only parse lines in [Desktop Entry] section
+        if (!inDesktopEntry) continue;
+
+        // Find the '=' separator
+        char *equals = strchr(line, '=');
+        if (!equals) continue;
+
+        // Split into key and value
+        *equals = '\0';
+        const char *key = line;
+        const char *value = equals + 1;
+
+        // Parse known fields
+        if (strcmp(key, "Name") == 0) {
+            strncpy(desktop->name, value, OFFBLAST_NAME_MAX - 1);
+            desktop->name[OFFBLAST_NAME_MAX - 1] = '\0';
+        }
+        else if (strcmp(key, "Exec") == 0) {
+            strncpy(desktop->exec, value, MAX_LAUNCH_COMMAND_LENGTH - 1);
+            desktop->exec[MAX_LAUNCH_COMMAND_LENGTH - 1] = '\0';
+        }
+        else if (strcmp(key, "Path") == 0) {
+            strncpy(desktop->path, value, PATH_MAX - 1);
+            desktop->path[PATH_MAX - 1] = '\0';
+        }
+        else if (strcmp(key, "Icon") == 0) {
+            strncpy(desktop->icon, value, PATH_MAX - 1);
+            desktop->icon[PATH_MAX - 1] = '\0';
+        }
+        else if (strcmp(key, "X-PreLaunchHook") == 0) {
+            strncpy(desktop->preHook, value, PATH_MAX - 1);
+            desktop->preHook[PATH_MAX - 1] = '\0';
+        }
+        else if (strcmp(key, "X-PreLaunchStatus") == 0) {
+            strncpy(desktop->preHookStatus, value, 255);
+            desktop->preHookStatus[255] = '\0';
+        }
+        else if (strcmp(key, "X-PostLaunchHook") == 0) {
+            strncpy(desktop->postHook, value, PATH_MAX - 1);
+            desktop->postHook[PATH_MAX - 1] = '\0';
+        }
+        else if (strcmp(key, "X-PostLaunchStatus") == 0) {
+            strncpy(desktop->postHookStatus, value, 255);
+            desktop->postHookStatus[255] = '\0';
+        }
+    }
+
+    fclose(fp);
+
+    // Validate required fields
+    if (desktop->name[0] == '\0' || desktop->exec[0] == '\0') {
+        printf("Invalid .desktop file (missing Name or Exec): %s\n", filePath);
+        return 0;
+    }
+
+    return 1;
+}
+
+void importFromDesktop(Launcher *theLauncher) {
+    DIR *dir = NULL;
+    struct sigaction sa, old_sa;
+    int attempts = 0;
+    const int max_attempts = 2;
+    const unsigned int timeouts[] = {5, 10};
+
+    // Setup signal handler for alarm timeout (same as importFromCustom)
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = nfs_timeout_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGALRM, &sa, &old_sa);
+
+    for (attempts = 0; attempts < max_attempts && dir == NULL; attempts++) {
+        nfs_timeout_occurred = 0;
+
+        if (setjmp(nfs_timeout_jmpbuf) == 0) {
+            alarm(timeouts[attempts]);
+            printf("Attempting to access %s (timeout: %us, attempt %d/%d)...\n",
+                   theLauncher->romPath, timeouts[attempts], attempts + 1, max_attempts);
+
+            dir = opendir(theLauncher->romPath);
+            alarm(0);
+
+            if (dir == NULL && !nfs_timeout_occurred) {
+                printf("ERROR: Cannot access desktop launcher rom_path: '%s'\n", theLauncher->romPath);
+                printf("       Please check that the directory exists and is readable\n");
+                sigaction(SIGALRM, &old_sa, NULL);
+                return;
+            }
+        } else {
+            alarm(0);
+            printf("Timeout accessing %s after %u seconds\n", theLauncher->romPath, timeouts[attempts]);
+
+            if (attempts + 1 >= max_attempts) {
+                printf("ERROR: Cannot access ROM path '%s' after %d timeout attempts\n",
+                       theLauncher->romPath, max_attempts);
+                sigaction(SIGALRM, &old_sa, NULL);
+                return;
+            }
+        }
+    }
+
+    sigaction(SIGALRM, &old_sa, NULL);
+
+    if (dir == NULL) {
+        printf("ERROR: Failed to access %s after %d attempts\n", theLauncher->romPath, max_attempts);
+        return;
+    }
+
+    // Use glob to find .desktop files
+    char globPattern[PATH_MAX * 2];
+    const char *scanPattern = theLauncher->scanPattern[0] != '\0' ?
+                              theLauncher->scanPattern : "*.desktop";
+    snprintf(globPattern, sizeof(globPattern), "%s/%s", theLauncher->romPath, scanPattern);
+    globPattern[PATH_MAX - 1] = '\0';
+
+    glob_t globResult;
+    printf("Scanning for .desktop files: %s\n", globPattern);
+
+    if (glob(globPattern, GLOB_NOSORT, NULL, &globResult) != 0) {
+        printf("No .desktop files found in %s\n", theLauncher->romPath);
+        closedir(dir);
+        return;
+    }
+
+    RomFoundList *list = newRomList();
+
+    // Parse each .desktop file
+    for (size_t i = 0; i < globResult.gl_pathc; i++) {
+        char *filePath = globResult.gl_pathv[i];
+        DesktopFile desktop;
+
+        if (parseDesktopFile(filePath, &desktop)) {
+            // Add to ROM list with Name field for OpenGameDB matching
+            pushToRomList(list, filePath, desktop.name, NULL);
+            printf("Found .desktop: %s -> %s\n", desktop.name, filePath);
+        }
+    }
+
+    globfree(&globResult);
+    closedir(dir);
+
+    if (list->numItems == 0) {
+        printf("No valid .desktop files found\n");
+        freeRomList(list);
+        return;
+    }
+
+    // Check if rescrape is required
+    uint32_t rescrapeRequired = 0;
+    if (launcherContentsCacheUpdated(theLauncher->signature, romListContentSig(list))) {
+        printf("Desktop launcher targets for %u have changed!\n", theLauncher->signature);
+        rescrapeRequired = 1;
+    } else {
+        printf("Contents unchanged for: %u\n", theLauncher->signature);
+    }
+
+    if (rescrapeRequired) {
+        // Match each .desktop file against OpenGameDB
+        for (uint32_t j = 0; j < list->numItems; j++) {
+            char *gameName = list->items[j].name;
+            float matchScore = 0;
+
+            printf("\nSearching for .desktop game: %s\n", gameName);
+            printf("       Platform: %s\n", theLauncher->platform);
+            printf("       Match field: %s\n", theLauncher->matchField);
+
+            int32_t indexOfEntry = launchTargetIndexByFieldMatch(
+                    offblast->launchTargetFile,
+                    theLauncher->matchField,
+                    gameName,
+                    theLauncher->platform,
+                    &matchScore);
+
+            // Try with converted numerals if no match found
+            if ((indexOfEntry == -1 || matchScore < 1.0) && strcmp(theLauncher->matchField, "title") == 0) {
+                char *convertedName = convertNumeralInGameName(gameName);
+                if (convertedName) {
+                    printf("       Trying with converted numerals: %s\n", convertedName);
+                    float convertedMatchScore = 0;
+                    int32_t convertedIndex = launchTargetIndexByFieldMatch(
+                            offblast->launchTargetFile,
+                            theLauncher->matchField,
+                            convertedName,
+                            theLauncher->platform,
+                            &convertedMatchScore);
+
+                    if (convertedIndex > -1 && convertedMatchScore > matchScore) {
+                        indexOfEntry = convertedIndex;
+                        matchScore = convertedMatchScore;
+                    }
+                    free(convertedName);
+                }
+            }
+
+            if (indexOfEntry > -1 &&
+                matchScore > offblast->launchTargetFile->entries[indexOfEntry].matchScore) {
+
+                LaunchTarget *theTarget = &offblast->launchTargetFile->entries[indexOfEntry];
+
+                if (theTarget->path != NULL && strlen(theTarget->path)) {
+                    printf("%s already has a path, overwriting with .desktop file\n", theTarget->name);
+                    memset(&theTarget->path, 0x00, PATH_MAX);
+                }
+
+                theTarget->launcherSignature = theLauncher->signature;
+                strncpy(theTarget->path, list->items[j].path, PATH_MAX - 1);
+                theTarget->path[PATH_MAX - 1] = '\0';
+                theTarget->matchScore = matchScore;
+
+                printf("Matched .desktop '%s' to '%s' (score: %.2f)\n",
+                       gameName, theTarget->name, matchScore);
+
+                if (matchScore < 0.5) {
+                    logPoorMatch(list->items[j].path, theTarget->name, matchScore);
+                }
+            } else {
+                printf("No match found for .desktop file: %s\n", gameName);
+                logMissingGame(list->items[j].path);
+            }
+        }
+    }
+
+    freeRomList(list);
+}
+
+// ============================================================================
+// End .desktop File Launcher Support
 // ============================================================================
 
 void importFromSteam(Launcher *theLauncher) {
