@@ -5311,8 +5311,13 @@ int executeHook(OffblastUi *offblast, const char *hookCmd, const char *statusMsg
 
     printf("Executing hook: %s\n", expandedCmd);
 
-    // Set hook state
+    // Set hook state and timing for animations
     offblast->hookActive = 1;
+    uint32_t hookStartTick = SDL_GetTicks();
+    uint32_t hookEndTick = 0;
+    uint32_t fadeInDuration = 300;   // 300ms fade in
+    uint32_t fadeOutDuration = 300;  // 300ms fade out
+
     if (statusMsg && statusMsg[0] != '\0') {
         strncpy(offblast->hookStatus, statusMsg, 255);
         offblast->hookStatus[255] = '\0';
@@ -5362,7 +5367,7 @@ int executeHook(OffblastUi *offblast, const char *hookCmd, const char *statusMsg
                         printf("Hook aborted by user (west button)\n");
                         killpg(hookPid, SIGKILL);
                         hookAborted = 1;
-                        break;
+                        if (hookEndTick == 0) hookEndTick = SDL_GetTicks();  // Start fade-out
                     }
                 }
                 else if (event.type == SDL_KEYDOWN) {
@@ -5371,21 +5376,26 @@ int executeHook(OffblastUi *offblast, const char *hookCmd, const char *statusMsg
                         printf("Hook aborted by user (escape key)\n");
                         killpg(hookPid, SIGKILL);
                         hookAborted = 1;
-                        break;
+                        if (hookEndTick == 0) hookEndTick = SDL_GetTicks();  // Start fade-out
                     }
                 }
             }
 
-            if (hookAborted) break;
-
             // Check if hook has finished
-            pid_t result = waitpid(hookPid, &status, WNOHANG);
-            if (result == hookPid) {
-                // Hook finished
-                break;
+            if (hookEndTick == 0) {
+                pid_t result = waitpid(hookPid, &status, WNOHANG);
+                if (result == hookPid) {
+                    // Hook finished, start fade-out animation
+                    hookEndTick = SDL_GetTicks();
+                }
+                else if (result == -1) {
+                    printf("Error waiting for hook process\n");
+                    hookEndTick = SDL_GetTicks();
+                }
             }
-            else if (result == -1) {
-                printf("Error waiting for hook process\n");
+
+            // Exit after fade-out completes
+            if (hookEndTick > 0 && (SDL_GetTicks() - hookEndTick) >= fadeOutDuration) {
                 break;
             }
 
@@ -5427,14 +5437,33 @@ int executeHook(OffblastUi *offblast, const char *hookCmd, const char *statusMsg
             float breathCurve = rawSin * rawSin;  // [0, 1] with pauses at 0 and 1
             float breathScale = 0.95f + 0.10f * breathCurve;  // Map to [0.95, 1.05]
 
-            // Render game cover with breathing effect
+            // Calculate fade-in/fade-out blending
+            uint32_t currentTick = SDL_GetTicks();
+            float animationStrength = 1.0f;
+
+            if (hookEndTick > 0) {
+                // Fade out: blend from breathing to static
+                uint32_t elapsed = currentTick - hookEndTick;
+                animationStrength = 1.0f - ((float)elapsed / (float)fadeOutDuration);
+                if (animationStrength < 0.0f) animationStrength = 0.0f;
+            } else {
+                // Fade in: blend from static to breathing
+                uint32_t elapsed = currentTick - hookStartTick;
+                animationStrength = (float)elapsed / (float)fadeInDuration;
+                if (animationStrength > 1.0f) animationStrength = 1.0f;
+            }
+
+            // Blend between static scale (1.0) and breathing scale
+            float finalScale = 1.0f + (breathScale - 1.0f) * animationStrength;
+
+            // Render game cover with blended breathing effect
             UiTile *theTile = offblast->mainUi.activeRowset->rowCursor->tileCursor;
             Image *imageToShow = requestImageForTarget(theTile->target, 1);
 
             double baseHeight = mainUi->boxHeight;
-            double animatedHeight = baseHeight * breathScale;
+            double animatedHeight = baseHeight * finalScale;
             double baseWidth = getWidthForScaledImage(baseHeight, imageToShow);
-            double animatedWidth = baseWidth * breathScale;
+            double animatedWidth = baseWidth * finalScale;
 
             double xPos = offblast->winWidth / 2 - animatedWidth / 2;
             double yPos = yOffset - baseHeight;  // Use base height for positioning (centered)
