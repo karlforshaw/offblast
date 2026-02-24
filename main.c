@@ -39,6 +39,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
@@ -5318,6 +5319,7 @@ int executeHook(OffblastUi *offblast, const char *hookCmd, const char *statusMsg
     uint32_t fadeInDuration = 300;   // 300ms fade in
     uint32_t fadeOutDuration = 300;  // 300ms fade out
 
+    // Set initial status (fallback if no stdout yet)
     if (statusMsg && statusMsg[0] != '\0') {
         strncpy(offblast->hookStatus, statusMsg, 255);
         offblast->hookStatus[255] = '\0';
@@ -5325,11 +5327,22 @@ int executeHook(OffblastUi *offblast, const char *hookCmd, const char *statusMsg
         strncpy(offblast->hookStatus, "Running hook...", 255);
     }
 
+    // Create pipe to capture hook stdout
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        printf("Failed to create pipe for hook\n");
+        free(expandedCmd);
+        offblast->hookActive = 0;
+        return 0;
+    }
+
     // Fork and execute hook
     pid_t hookPid = fork();
 
     if (hookPid == -1) {
         printf("Failed to fork hook process\n");
+        close(pipefd[0]);
+        close(pipefd[1]);
         free(expandedCmd);
         offblast->hookActive = 0;
         return 0;
@@ -5338,25 +5351,68 @@ int executeHook(OffblastUi *offblast, const char *hookCmd, const char *statusMsg
         // Child process
         setsid();
 
-        // Close inherited file descriptors
+        // Redirect stdout to pipe
+        close(pipefd[0]);  // Close read end
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);  // Also capture stderr
+        close(pipefd[1]);
+
+        // Close inherited file descriptors (except stdout/stderr which we just set)
         int maxfd = sysconf(_SC_OPEN_MAX);
         for (int fd = 3; fd < maxfd; fd++) {
             close(fd);
         }
 
         printf("Executing hook command: %s\n", expandedCmd);
-        system(expandedCmd);
-        exit(0);
+
+        // Execute via shell to support complex commands
+        execl("/bin/sh", "sh", "-c", expandedCmd, (char *)NULL);
+
+        // If exec fails, exit
+        exit(1);
     }
     else {
         // Parent process
         offblast->hookPid = hookPid;
+
+        // Close write end of pipe, keep read end
+        close(pipefd[1]);
+
+        // Make pipe non-blocking so we don't block render loop
+        int flags = fcntl(pipefd[0], F_GETFL, 0);
+        fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
+
+        // Buffer for reading hook output
+        char readBuffer[256];
+        char lineBuffer[256] = {0};
+        int lineBufferLen = 0;
 
         // Wait for hook to complete, but allow abort via west button
         int status;
         int hookAborted = 0;
 
         while (1) {
+            // Try to read from hook stdout/stderr
+            ssize_t bytesRead = read(pipefd[0], readBuffer, sizeof(readBuffer) - 1);
+            if (bytesRead > 0) {
+                readBuffer[bytesRead] = '\0';
+
+                // Process each character, looking for newlines
+                for (ssize_t i = 0; i < bytesRead; i++) {
+                    if (readBuffer[i] == '\n') {
+                        // Complete line - update status
+                        lineBuffer[lineBufferLen] = '\0';
+                        if (lineBufferLen > 0) {
+                            strncpy(offblast->hookStatus, lineBuffer, 255);
+                            offblast->hookStatus[255] = '\0';
+                        }
+                        lineBufferLen = 0;
+                    } else if (lineBufferLen < 255) {
+                        // Accumulate line
+                        lineBuffer[lineBufferLen++] = readBuffer[i];
+                    }
+                }
+            }
             // Check for west button press to abort
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -5488,6 +5544,7 @@ int executeHook(OffblastUi *offblast, const char *hookCmd, const char *statusMsg
         }
 
         // Clean up
+        close(pipefd[0]);
         offblast->hookActive = 0;
         offblast->hookPid = 0;
         free(expandedCmd);
