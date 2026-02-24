@@ -177,15 +177,19 @@ X-PreLaunchStatus=Loading OoT save data...
 - **Pre-launch hooks**: Run before game starts (display config, save swapping, Discord status)
 - **Post-launch hooks**: Run after game exits (cleanup, save syncing, restore settings)
 - **Per-launcher scope**: Configured in launcher definition in config.json
-- **Slug substitution**: Replace placeholders with game/launcher/user metadata
+- **Comprehensive slug substitution**: Replace placeholders with game/launcher/user metadata
   - Game fields: %GAME_NAME%, %ROM_PATH%, %GAME_ID%, %PLATFORM%, %COVER_URL%, %GAME_DATE%, %GAME_RANKING%
   - Launcher fields: %LAUNCHER_TYPE%, %LAUNCHER_NAME%, %ROM_DIR%
   - User fields: %USER_NAME%, %USER_EMAIL%, %USER_AVATAR%, plus any custom user fields
-- **Status messages**: Static config-defined messages shown during hook execution
-  - Displayed centered below game cover in launch screen
-  - Uses same visual position as Resume/Stop buttons
-- **Manual abort**: Hold west button (X) or escape key to abort hook and cancel launch
-- **Visual feedback**: Launch screen shows game cover + hook status during execution
+- **Real-time status updates**: Hook script stdout dynamically updates displayed status
+  - Each line of output from hook updates the status message
+  - Config status messages optional (used as fallback if no output yet)
+  - Displayed centered below game cover (same position as Resume/Stop buttons)
+- **Breathing animation**: Game cover pulses during hook execution
+  - Smooth 300ms fade-in/fade-out transitions between static and breathing
+  - Same sin² curve animation as loading screen rocket
+- **Manual abort**: Press west button (X) or escape key to kill hook and cancel launch
+- **Proper shell quoting**: All substituted values automatically quoted for safe shell parsing
 
 **Config example:**
 ```json
@@ -193,16 +197,23 @@ X-PreLaunchStatus=Loading OoT save data...
   "type": "retroarch",
   "platform": "psx",
   "pre_launch_hook": "/path/to/setup.sh %GAME_NAME% %ROM_PATH%",
-  "pre_launch_status": "Configuring system...",
-  "post_launch_hook": "/path/to/cleanup.sh %GAME_NAME%",
-  "post_launch_status": "Syncing changes..."
+  "post_launch_hook": "/path/to/cleanup.sh %GAME_NAME%"
 }
+```
+
+**Hook script example:**
+```bash
+#!/bin/bash
+echo "Checking network connection..."
+sleep 1
+echo "Mounting save share..."
+mount -t nfs server:/saves /mnt
+echo "Ready to launch!"
 ```
 
 **Future enhancements (deferred):**
 - Per-game hooks via .desktop files (planned for desktop launcher support)
 - Global hooks with override hierarchy (user → launcher → game)
-- Dynamic stdout passthrough for real-time status updates
 - Configurable timeouts (currently manual abort only)
 
 ### Custom Lists

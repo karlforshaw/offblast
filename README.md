@@ -168,7 +168,99 @@ Reference any user field in your launcher commands:
 }
 ```
 
-### 4. Steam Integration
+### 4. Pre/Post Launch Hooks
+
+Execute custom commands before and after launching games. Perfect for advanced workflows like save file management, display configuration, network mounts, and more.
+
+#### Configuration
+Add hook commands to any launcher:
+
+```json
+{
+    "type": "standard",
+    "rom_path": "/games/psx",
+    "extension": ".cue",
+    "cmd": "retroarch -L core.so %ROM%",
+    "platform": "playstation",
+    "pre_launch_hook": "/path/to/setup.sh %GAME_NAME% %ROM_PATH%",
+    "post_launch_hook": "/path/to/cleanup.sh %GAME_NAME%"
+}
+```
+
+#### Available Placeholders
+Hooks support the same slug substitution as launcher commands:
+
+**Game metadata:**
+- `%GAME_NAME%` - Game title
+- `%ROM_PATH%` - Full path to game file
+- `%GAME_ID%` - Game ID (for Steam, Vita, etc.)
+- `%PLATFORM%` - Platform name
+- `%COVER_URL%` - Cover image URL
+- `%GAME_DATE%` - Release date
+- `%GAME_RANKING%` - Metacritic score
+
+**Launcher metadata:**
+- `%LAUNCHER_TYPE%` - Launcher type (standard, steam, etc.)
+- `%LAUNCHER_NAME%` - Custom launcher name
+- `%ROM_DIR%` - ROM directory path
+
+**User metadata:**
+- `%USER_NAME%`, `%USER_EMAIL%`, `%USER_AVATAR%`
+- Plus all custom user fields: `%SAVE_PATH%`, `%RETROARCH_CONFIG%`, etc.
+
+#### Real-Time Status Display
+Hook scripts can output status messages that appear below the game cover:
+
+```bash
+#!/bin/bash
+echo "Checking network connection..."
+sleep 1
+echo "Mounting save share..."
+mount -t nfs server:/saves /mnt/saves
+echo "Copying save files..."
+cp /mnt/saves/$1.sav /local/saves/
+echo "Ready to launch!"
+```
+
+Each line of output updates the displayed status in real-time.
+
+#### Visual Feedback
+- Game cover breathes (pulsing animation) while hooks execute
+- Smooth fade-in when hook starts, fade-out when complete
+- Status updates appear centered below the cover
+
+#### Aborting Hooks
+- Press **X button** (west) or **Escape** to abort a running hook
+- Pre-launch hook abort cancels the game launch
+- Post-launch hook abort skips cleanup but returns to menu
+
+#### Use Cases
+- **Save file swapping**: Switch between user save files before launch
+- **Network mounts**: Mount NFS/SMB shares for cloud saves
+- **Display configuration**: Set resolution, refresh rate, HDR settings
+- **Discord Rich Presence**: Update Discord status with current game
+- **CPU governor**: Set performance mode for demanding games
+- **Cleanup**: Unmount shares, restore settings after gameplay
+
+#### Example: Per-User Save Management
+```json
+{
+    "pre_launch_hook": "/scripts/mount-saves.sh %USER_NAME% %SAVE_PATH%",
+    "post_launch_hook": "/scripts/sync-saves.sh %USER_NAME% %SAVE_PATH%"
+}
+```
+
+```bash
+# /scripts/mount-saves.sh
+#!/bin/bash
+USER=$1
+SAVE_PATH=$2
+echo "Mounting save directory for $USER..."
+mount -t nfs server:/saves/$USER $SAVE_PATH
+echo "Save directory ready!"
+```
+
+### 5. Steam Integration
 
 OffBlast can show **all your owned Steam games**, not just installed ones. This requires a Steam Web API key.
 
@@ -212,7 +304,7 @@ If you only want to see installed Steam games (even with an API key configured),
 
 This hides all uninstalled games from your library, showing only what's currently installed on your system.
 
-### 5. SteamGridDB Cover Browser (Optional)
+### 6. SteamGridDB Cover Browser (Optional)
 
 Browse and select custom game covers from SteamGridDB's extensive community artwork collection.
 
