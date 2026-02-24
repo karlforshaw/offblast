@@ -33,6 +33,12 @@ typedef struct Launcher {
     char scanPattern[256];  // Optional: pattern like "*/vol/code/*.rpx"
     char matchField[32];    // Field to match on: "title" (default), "title_id", etc.
     uint8_t pathIsMatchString;  // If true, store match string as path instead of file path
+
+    // Pre/post launch hooks
+    char preHook[PATH_MAX];
+    char preHookStatus[256];
+    char postHook[PATH_MAX];
+    char postHookStatus[256];
 } Launcher;
 
 typedef struct LauncherFile {

@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- **Pre/post launch hooks**
+  - Execute custom commands before and after launching games
+  - Per-launcher hook configuration via config.json
+  - Slug substitution for game metadata: %GAME_NAME%, %ROM_PATH%, %PLATFORM%, etc.
+  - Slug substitution for user fields: %USER_NAME%, %SAVE_PATH%, etc.
+  - Custom status messages displayed during hook execution
+  - Hook abort via west button (X) or escape key
+  - Visual feedback shows hook status below game cover in launch screen
+  - Use cases: display configuration, save file swapping, Discord status, network mounts
 - **Multi-threaded Steam metadata fetching**
   - Parallel fetching with 3 worker threads for ~8x speedup on cold starts
   - 50 games now fetch metadata in ~10 seconds instead of 100 seconds

@@ -38,6 +38,7 @@
 #include <glob.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <errno.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
@@ -134,6 +135,78 @@ void replaceUserPlaceholders(char *launchString, User *user) {
                 printf("Replacement iterations exceeded for %s\n", placeholder);
                 break;
             }
+        }
+    }
+}
+
+// Helper function to replace a single placeholder in a string
+void replacePlaceholder(char *str, const char *placeholder, const char *value) {
+    if (!str || !placeholder || !value) return;
+
+    char *p;
+    int replaceIter = 0, replaceLimit = 8;
+
+    while ((p = strstr(str, placeholder))) {
+        // Move the rest of the string to make room
+        memmove(p + strlen(value),
+                p + strlen(placeholder),
+                strlen(p + strlen(placeholder)) + 1);
+
+        // Copy in the replacement value
+        memcpy(p, value, strlen(value));
+
+        replaceIter++;
+        if (replaceIter >= replaceLimit) {
+            printf("Replacement iterations exceeded for %s\n", placeholder);
+            break;
+        }
+    }
+}
+
+// Replace all placeholders (launcher, target, and user fields) in hook commands
+void replaceAllPlaceholders(char *hookCmd, LaunchTarget *target,
+                            Launcher *launcher, User *user) {
+    if (!hookCmd) return;
+
+    // Replace target fields
+    if (target) {
+        replacePlaceholder(hookCmd, "%GAME_NAME%", target->name);
+        replacePlaceholder(hookCmd, "%ROM_PATH%", target->path);
+        replacePlaceholder(hookCmd, "%GAME_ID%", target->id);
+        replacePlaceholder(hookCmd, "%GAME_PLATFORM%", target->platform);
+        replacePlaceholder(hookCmd, "%COVER_URL%", target->coverUrl);
+        replacePlaceholder(hookCmd, "%GAME_DATE%", target->date);
+
+        char rankingStr[16];
+        snprintf(rankingStr, sizeof(rankingStr), "%u", target->ranking);
+        replacePlaceholder(hookCmd, "%GAME_RANKING%", rankingStr);
+    }
+
+    // Replace launcher fields
+    if (launcher) {
+        replacePlaceholder(hookCmd, "%LAUNCHER_TYPE%", launcher->type);
+        replacePlaceholder(hookCmd, "%LAUNCHER_NAME%", launcher->name);
+        replacePlaceholder(hookCmd, "%PLATFORM%", launcher->platform);
+        replacePlaceholder(hookCmd, "%ROM_DIR%", launcher->romPath);
+    }
+
+    // Replace user fields
+    if (user) {
+        replacePlaceholder(hookCmd, "%USER_NAME%", user->name);
+        replacePlaceholder(hookCmd, "%USER_EMAIL%", user->email);
+        replacePlaceholder(hookCmd, "%USER_AVATAR%", user->avatarPath);
+
+        // Replace custom user fields
+        for (int i = 0; i < user->numCustomFields; i++) {
+            char placeholder[256];
+            snprintf(placeholder, sizeof(placeholder), "%%%s%%", user->customKeys[i]);
+
+            // Convert placeholder to uppercase
+            for (char *c = placeholder; *c; c++) {
+                if (*c >= 'a' && *c <= 'z') *c -= 32;
+            }
+
+            replacePlaceholder(hookCmd, placeholder, user->customValues[i]);
         }
     }
 }
@@ -525,6 +598,11 @@ typedef struct OffblastUi {
     uint32_t startPlayTick;
 
     uint32_t uiStopButtonHot;
+
+    // Pre/post launch hook state
+    char hookStatus[256];
+    uint32_t hookActive;
+    pid_t hookPid;
 
     Image *imageStore;
     pthread_mutex_t imageStoreLock;
@@ -2038,6 +2116,49 @@ void *initThreadFunc(void *arg) {
         else {
             printf("Unsupported Launcher Type: %s\n", theLauncher->type);
             continue;
+        }
+
+        // Parse pre/post launch hooks (optional, applies to all launcher types)
+        json_object *preHookNode = NULL;
+        json_object_object_get_ex(launcherNode, "pre_launch_hook", &preHookNode);
+        const char *preHook = json_object_get_string(preHookNode);
+        if (preHook != NULL) {
+            if (strlen(preHook) >= PATH_MAX) {
+                condPrintConfigError(NULL, "pre_launch_hook is too long");
+            }
+            memcpy(&theLauncher->preHook, preHook, strlen(preHook));
+            printf("Launcher %d has pre-launch hook: %s\n", i, preHook);
+        }
+
+        json_object *preHookStatusNode = NULL;
+        json_object_object_get_ex(launcherNode, "pre_launch_status", &preHookStatusNode);
+        const char *preHookStatus = json_object_get_string(preHookStatusNode);
+        if (preHookStatus != NULL) {
+            if (strlen(preHookStatus) >= 256) {
+                condPrintConfigError(NULL, "pre_launch_status is too long");
+            }
+            memcpy(&theLauncher->preHookStatus, preHookStatus, strlen(preHookStatus));
+        }
+
+        json_object *postHookNode = NULL;
+        json_object_object_get_ex(launcherNode, "post_launch_hook", &postHookNode);
+        const char *postHook = json_object_get_string(postHookNode);
+        if (postHook != NULL) {
+            if (strlen(postHook) >= PATH_MAX) {
+                condPrintConfigError(NULL, "post_launch_hook is too long");
+            }
+            memcpy(&theLauncher->postHook, postHook, strlen(postHook));
+            printf("Launcher %d has post-launch hook: %s\n", i, postHook);
+        }
+
+        json_object *postHookStatusNode = NULL;
+        json_object_object_get_ex(launcherNode, "post_launch_status", &postHookStatusNode);
+        const char *postHookStatus = json_object_get_string(postHookStatusNode);
+        if (postHookStatus != NULL) {
+            if (strlen(postHookStatus) >= 256) {
+                condPrintConfigError(NULL, "post_launch_status is too long");
+            }
+            memcpy(&theLauncher->postHookStatus, postHookStatus, strlen(postHookStatus));
         }
 
         // Calculate launcher signature from type + platform only
@@ -3800,44 +3921,57 @@ int main(int argc, char** argv) {
             yOffset -= (mainUi->boxHeight + 200);
 
             if (!offblast->loadingFlag) {
-                // For Steam games, just show "Return" (Steam handles resume/stop)
-                int isSteamGame = offblast->playingTarget &&
-                    strcmp(offblast->playingTarget->platform, "steam") == 0;
-
-                if (isSteamGame) {
-                    double returnWidth =
-                        getTextLineWidth("Return", offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
+                if (offblast->hookActive) {
+                    // Show hook status message centered
+                    double statusWidth = getTextLineWidth(offblast->hookStatus,
+                        offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
                     renderText(offblast,
-                            offblast->winWidth/2 - returnWidth/2,
-                            yOffset,
-                            OFFBLAST_TEXT_INFO,
-                            1.0,
-                            0,
-                            "Return");
+                        offblast->winWidth/2 - statusWidth/2,
+                        yOffset,
+                        OFFBLAST_TEXT_INFO,
+                        1.0,
+                        0,
+                        offblast->hookStatus);
                 } else {
-                    double stopWidth =
-                        getTextLineWidth("Stop", offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
+                    // For Steam games, just show "Return" (Steam handles resume/stop)
+                    int isSteamGame = offblast->playingTarget &&
+                        strcmp(offblast->playingTarget->platform, "steam") == 0;
 
-                    double resumeWidth =
-                        getTextLineWidth("Resume", offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
+                    if (isSteamGame) {
+                        double returnWidth =
+                            getTextLineWidth("Return", offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
+                        renderText(offblast,
+                                offblast->winWidth/2 - returnWidth/2,
+                                yOffset,
+                                OFFBLAST_TEXT_INFO,
+                                1.0,
+                                0,
+                                "Return");
+                    } else {
+                        double stopWidth =
+                            getTextLineWidth("Stop", offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
 
-                    double totalWidth = stopWidth + 200 + resumeWidth;
+                        double resumeWidth =
+                            getTextLineWidth("Resume", offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
 
-                    renderText(offblast,
-                            offblast->winWidth/2 - totalWidth/2,
-                            yOffset,
-                            OFFBLAST_TEXT_INFO,
-                            (offblast->uiStopButtonHot ? 0.6 : 1.0),
-                            0,
-                            "Resume");
+                        double totalWidth = stopWidth + 200 + resumeWidth;
 
-                    renderText(offblast,
-                            offblast->winWidth/2 - totalWidth/2 + resumeWidth + 200,
-                            yOffset,
-                            OFFBLAST_TEXT_INFO,
-                            (offblast->uiStopButtonHot ? 1.0 : 0.6),
-                            0,
-                            "Stop");
+                        renderText(offblast,
+                                offblast->winWidth/2 - totalWidth/2,
+                                yOffset,
+                                OFFBLAST_TEXT_INFO,
+                                (offblast->uiStopButtonHot ? 0.6 : 1.0),
+                                0,
+                                "Resume");
+
+                        renderText(offblast,
+                                offblast->winWidth/2 - totalWidth/2 + resumeWidth + 200,
+                                yOffset,
+                                OFFBLAST_TEXT_INFO,
+                                (offblast->uiStopButtonHot ? 1.0 : 0.6),
+                                0,
+                                "Stop");
+                    }
                 }
             }
 
@@ -5143,6 +5277,182 @@ GLuint createShaderProgram(GLint vertShader, GLint fragShader) {
     return program;
 }
 
+// Execute a hook command and wait for completion
+// Returns 1 on success, 0 on failure/abort
+int executeHook(OffblastUi *offblast, const char *hookCmd, const char *statusMsg,
+                LaunchTarget *target, Launcher *launcher, User *user) {
+    if (!hookCmd || hookCmd[0] == '\0') return 1;  // No hook, success
+
+    // Build hook command with placeholder substitution
+    char *expandedCmd = calloc(PATH_MAX * 4, sizeof(char));
+    strncpy(expandedCmd, hookCmd, PATH_MAX * 4 - 1);
+    replaceAllPlaceholders(expandedCmd, target, launcher, user);
+
+    printf("Executing hook: %s\n", expandedCmd);
+
+    // Set hook state
+    offblast->hookActive = 1;
+    if (statusMsg && statusMsg[0] != '\0') {
+        strncpy(offblast->hookStatus, statusMsg, 255);
+        offblast->hookStatus[255] = '\0';
+    } else {
+        strncpy(offblast->hookStatus, "Running hook...", 255);
+    }
+
+    // Fork and execute hook
+    pid_t hookPid = fork();
+
+    if (hookPid == -1) {
+        printf("Failed to fork hook process\n");
+        free(expandedCmd);
+        offblast->hookActive = 0;
+        return 0;
+    }
+    else if (hookPid == 0) {
+        // Child process
+        setsid();
+
+        // Close inherited file descriptors
+        int maxfd = sysconf(_SC_OPEN_MAX);
+        for (int fd = 3; fd < maxfd; fd++) {
+            close(fd);
+        }
+
+        printf("Executing hook command: %s\n", expandedCmd);
+        system(expandedCmd);
+        exit(0);
+    }
+    else {
+        // Parent process
+        offblast->hookPid = hookPid;
+
+        // Wait for hook to complete, but allow abort via west button
+        int status;
+        int hookAborted = 0;
+
+        while (1) {
+            // Check for west button press to abort
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_CONTROLLERBUTTONDOWN) {
+                    SDL_ControllerButtonEvent *buttonEvent =
+                        (SDL_ControllerButtonEvent *)&event;
+                    if (buttonEvent->button == SDL_CONTROLLER_BUTTON_X) {
+                        printf("Hook aborted by user (west button)\n");
+                        killpg(hookPid, SIGKILL);
+                        hookAborted = 1;
+                        break;
+                    }
+                }
+                else if (event.type == SDL_KEYDOWN) {
+                    SDL_KeyboardEvent *keyEvent = (SDL_KeyboardEvent *)&event;
+                    if (keyEvent->keysym.scancode == SDL_SCANCODE_ESCAPE) {
+                        printf("Hook aborted by user (escape key)\n");
+                        killpg(hookPid, SIGKILL);
+                        hookAborted = 1;
+                        break;
+                    }
+                }
+            }
+
+            if (hookAborted) break;
+
+            // Check if hook has finished
+            pid_t result = waitpid(hookPid, &status, WNOHANG);
+            if (result == hookPid) {
+                // Hook finished
+                break;
+            }
+            else if (result == -1) {
+                printf("Error waiting for hook process\n");
+                break;
+            }
+
+            // Render the BACKGROUND screen with hook status
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            // Render BACKGROUND mode UI (game cover + hook status)
+            MainUi *mainUi = &offblast->mainUi;
+            double yOffset = offblast->winHeight - goldenRatioLarge(offblast->winHeight, 3);
+
+            // Render "Now playing" header
+            char *headerText = "Now playing";
+            uint32_t titleWidth = getTextLineWidth(headerText,
+                    offblast->titleCharData, offblast->titleCodepoints, offblast->titleNumChars);
+            renderText(offblast,
+                    offblast->winWidth / 2 - titleWidth / 2,
+                    yOffset,
+                    OFFBLAST_TEXT_TITLE, 1.0, 0,
+                    headerText);
+
+            yOffset -= 100;
+
+            // Render game name
+            char *titleText = target->name;
+            uint32_t nameWidth =
+                getTextLineWidth(titleText, offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
+            renderText(offblast,
+                    offblast->winWidth / 2 - nameWidth / 2,
+                    yOffset,
+                    OFFBLAST_TEXT_INFO, 1.0, 0,
+                    titleText);
+
+            yOffset -= (offblast->infoPointSize * 3);
+
+            // Render game cover
+            UiTile *theTile = offblast->mainUi.activeRowset->rowCursor->tileCursor;
+            Image *imageToShow = requestImageForTarget(theTile->target, 1);
+
+            double xPos = offblast->winWidth / 2 - getWidthForScaledImage(
+                    mainUi->boxHeight, imageToShow) / 2;
+
+            renderImage(xPos, yOffset - mainUi->boxHeight, 0, mainUi->boxHeight,
+                    imageToShow, 0.2, 1);
+
+            yOffset -= (mainUi->boxHeight + 200);
+
+            // Render hook status centered
+            double statusWidth = getTextLineWidth(offblast->hookStatus,
+                offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
+            renderText(offblast,
+                offblast->winWidth / 2 - statusWidth / 2,
+                yOffset,
+                OFFBLAST_TEXT_INFO,
+                1.0,
+                0,
+                offblast->hookStatus);
+
+            SDL_GL_SwapWindow(offblast->window);
+            SDL_Delay(16);  // ~60 FPS
+        }
+
+        // Clean up
+        offblast->hookActive = 0;
+        offblast->hookPid = 0;
+        free(expandedCmd);
+
+        if (hookAborted) {
+            return 0;  // Hook was aborted
+        }
+
+        // Check hook exit status
+        if (WIFEXITED(status)) {
+            int exitCode = WEXITSTATUS(status);
+            if (exitCode == 0) {
+                printf("Hook completed successfully\n");
+                return 1;
+            } else {
+                printf("Hook failed with exit code %d\n", exitCode);
+                return 0;
+            }
+        } else {
+            printf("Hook terminated abnormally\n");
+            return 0;
+        }
+    }
+}
+
 
 void launch() {
 
@@ -5188,7 +5498,26 @@ void launch() {
 
         User *theUser = offblast->player.user;
 
+        // Execute pre-launch hook if configured
+        if (theLauncher->preHook[0] != '\0') {
+            // Switch to BACKGROUND mode to show hook status
+            enum UiMode previousMode = offblast->mode;
+            offblast->mode = OFFBLAST_UI_MODE_BACKGROUND;
+            offblast->playingTarget = target;  // Set target for rendering
 
+            int hookSuccess = executeHook(offblast, theLauncher->preHook,
+                                         theLauncher->preHookStatus,
+                                         target, theLauncher, theUser);
+
+            // Return to previous mode
+            offblast->mode = previousMode;
+            offblast->playingTarget = NULL;
+
+            if (!hookSuccess) {
+                printf("Pre-launch hook failed or was aborted, cancelling launch\n");
+                return;
+            }
+        }
 
         char *launchString = calloc(PATH_MAX, sizeof(char));
 
@@ -6767,19 +7096,18 @@ void killRunningGame() {
             break;
     }
     printf("killed %d\n", offblast->runningPid);
-    offblast->mode = OFFBLAST_UI_MODE_MAIN;
     offblast->runningPid = 0;
-    offblast->mainUi.rowGeometryInvalid = 1;  // Force tile repositioning
 
     LaunchTarget *target = offblast->playingTarget;
     assert(target);
 
     uint32_t afterTick = SDL_GetTicks();
 
+    // Update playtime tracking
     PlayTime *pt = NULL;
     for (uint32_t i = 0; i < offblast->playTimeFile->nEntries; ++i) {
-        if (offblast->playTimeFile->entries[i].targetSignature 
-                == target->targetSignature) 
+        if (offblast->playTimeFile->entries[i].targetSignature
+                == target->targetSignature)
         {
             pt = &offblast->playTimeFile->entries[i];
         }
@@ -6787,16 +7115,16 @@ void killRunningGame() {
 
     if (pt == NULL) {
         void *growState = growDbFileIfNecessary(
-                &offblast->playTimeDb, 
+                &offblast->playTimeDb,
                 sizeof(PlayTime),
-                OFFBLAST_DB_TYPE_FIXED); 
+                OFFBLAST_DB_TYPE_FIXED);
 
         if(growState == NULL) {
             printf("Couldn't expand the playtime file to "
                     "accomodate all the playtimes\n");
             return;
         }
-        else { 
+        else {
             offblast->playTimeFile = (PlayTimeFile*) growState;
         }
 
@@ -6809,8 +7137,28 @@ void killRunningGame() {
     pt->msPlayed += (afterTick - offblast->startPlayTick);
     pt->lastPlayed = (uint32_t)time(NULL);
 
+    // Find the launcher for this target to execute post-hook
+    Launcher *theLauncher = NULL;
+    for (uint32_t i = 0; i < offblast->nLaunchers; ++i) {
+        if (target->launcherSignature == offblast->launchers[i].signature) {
+            theLauncher = &offblast->launchers[i];
+            break;
+        }
+    }
+
+    // Execute post-launch hook if configured
+    if (theLauncher && theLauncher->postHook[0] != '\0') {
+        // Stay in BACKGROUND mode to show hook status
+        executeHook(offblast, theLauncher->postHook,
+                   theLauncher->postHookStatus,
+                   target, theLauncher, offblast->player.user);
+    }
+
+    // Now clean up and return to MAIN mode
     offblast->playingTarget = NULL;
     offblast->startPlayTick = 0;
+    offblast->mode = OFFBLAST_UI_MODE_MAIN;
+    offblast->mainUi.rowGeometryInvalid = 1;  // Force tile repositioning
 
     updateHomeLists();
 }

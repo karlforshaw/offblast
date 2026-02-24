@@ -173,44 +173,37 @@ X-PreLaunchStatus=Loading OoT save data...
 - Works on all Linux desktop environments (freedesktop.org standard)
 
 ### Pre/Post Launch Hooks
-Execute custom commands before and after launching games:
-- **Pre-launch hooks**: Run commands before game starts
-  - Use cases: Display configuration, CPU governor, save file swapping, Discord status
-  - Per-game, per-launcher, or global hooks
-  - Access to game metadata (name, platform, etc.) as environment variables
-- **Post-launch hooks**: Run commands after game exits
-  - Clean up temporary changes made in pre-launch
-  - Sync saves, log playtime, restore display settings, etc.
-
-**Status display:**
-- Status text appears under game cover during launch (existing game launch UI)
-- Two options for status messages:
-  1. **Static config-defined**: Simple message in launcher config
-     - `"pre_launch_status": "Swapping save files..."`
-     - `"post_launch_status": "Syncing save files..."`
-  2. **Dynamic stdout passthrough**: Hook script outputs status updates
-     - Each line of stdout updates the status text in real-time
-     - Example: Hook echoes "Checking network share...", then "Copying saves..."
-- Can combine both: static message as default, stdout overrides if hook outputs text
-- Timeout and error handling (abort if hook hangs or fails)
+**SOLVED:** Execute custom commands before and after launching games:
+- **Pre-launch hooks**: Run before game starts (display config, save swapping, Discord status)
+- **Post-launch hooks**: Run after game exits (cleanup, save syncing, restore settings)
+- **Per-launcher scope**: Configured in launcher definition in config.json
+- **Slug substitution**: Replace placeholders with game/launcher/user metadata
+  - Game fields: %GAME_NAME%, %ROM_PATH%, %GAME_ID%, %PLATFORM%, %COVER_URL%, %GAME_DATE%, %GAME_RANKING%
+  - Launcher fields: %LAUNCHER_TYPE%, %LAUNCHER_NAME%, %ROM_DIR%
+  - User fields: %USER_NAME%, %USER_EMAIL%, %USER_AVATAR%, plus any custom user fields
+- **Status messages**: Static config-defined messages shown during hook execution
+  - Displayed centered below game cover in launch screen
+  - Uses same visual position as Resume/Stop buttons
+- **Manual abort**: Hold west button (X) or escape key to abort hook and cancel launch
+- **Visual feedback**: Launch screen shows game cover + hook status during execution
 
 **Config example:**
 ```json
 {
   "type": "retroarch",
   "platform": "psx",
-  "pre_launch_hook": "/path/to/setup.sh",
+  "pre_launch_hook": "/path/to/setup.sh %GAME_NAME% %ROM_PATH%",
   "pre_launch_status": "Configuring system...",
-  "post_launch_hook": "/path/to/cleanup.sh",
+  "post_launch_hook": "/path/to/cleanup.sh %GAME_NAME%",
   "post_launch_status": "Syncing changes..."
 }
 ```
 
-**Questions to resolve:**
-- Hook definition format (shell commands, script paths, or both?)
-- Environment variables to expose (game name, platform, path, launcher type?)
-- Should hooks be per-launcher, per-game, or global (with override hierarchy)?
-- Timeout values (default 30s? configurable?)
+**Future enhancements (deferred):**
+- Per-game hooks via .desktop files (planned for desktop launcher support)
+- Global hooks with override hierarchy (user → launcher → game)
+- Dynamic stdout passthrough for real-time status updates
+- Configurable timeouts (currently manual abort only)
 
 ### Custom Lists
 User-defined game collections beyond automatic platform-based lists:
