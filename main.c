@@ -270,6 +270,7 @@ typedef struct Image {
 // SteamGridDB types
 #define MAX_SGDB_COVERS 50
 #define MAX_SGDB_GAMES 10
+#define MAX_ACHIEVEMENT_BADGES 100
 
 typedef struct SgdbCover {
 	uint32_t id;
@@ -451,6 +452,18 @@ typedef struct MainUi {
 
 	// Error/status messages
 	char coverBrowserError[256];
+
+	// Achievement Browser state (RA only)
+	int32_t showAchievementBrowser;
+	uint32_t achievementBrowserRaGameId;
+	json_object *achievementBrowserData;  // Fetched achievement details
+	uint32_t achievementCursor;
+	uint32_t achievementScrollOffset;
+	uint32_t achievementVisibleRows;
+	char achievementBrowserTitle[128];
+	Animation *achievementBrowserAnimation;
+	Image achievementBadges[MAX_ACHIEVEMENT_BADGES];
+	pthread_mutex_t achievementBadgesLock;
 
     GLuint imageVbo;
 
@@ -860,6 +873,12 @@ void coverBrowserSelectCover();
 void coverBrowserSetTitle();
 void coverBrowserQueueThumbnails();
 void *downloadCoverMain(void *arg);
+
+// Achievement Browser functions
+void doViewAchievements();
+void closeAchievementBrowser();
+void queueAchievementBadges();
+void *downloadBadgeMain(void *arg);
 
 WindowInfo getOffblastWindowInfo();
 uint32_t activeWindowIsOffblast();
@@ -1339,6 +1358,275 @@ void closeCoverBrowser() {
 	pthread_mutex_destroy(&ui->coverBrowserThumbsLock);
 
 	ui->showCoverBrowser = 0;
+}
+
+void closeAchievementBrowser() {
+	MainUi *ui = &offblast->mainUi;
+
+	// Free achievement data
+	if (ui->achievementBrowserData) {
+		json_object_put(ui->achievementBrowserData);
+		ui->achievementBrowserData = NULL;
+	}
+
+	// Clean up badge textures (from main thread - OpenGL safe)
+	pthread_mutex_lock(&ui->achievementBadgesLock);
+	for (int i = 0; i < MAX_ACHIEVEMENT_BADGES; i++) {
+		if (ui->achievementBadges[i].textureHandle) {
+			glDeleteTextures(1, &ui->achievementBadges[i].textureHandle);
+			ui->achievementBadges[i].textureHandle = 0;
+		}
+		if (ui->achievementBadges[i].atlas) {
+			free(ui->achievementBadges[i].atlas);
+			ui->achievementBadges[i].atlas = NULL;
+		}
+		ui->achievementBadges[i].state = IMAGE_STATE_COLD;
+	}
+	pthread_mutex_unlock(&ui->achievementBadgesLock);
+	pthread_mutex_destroy(&ui->achievementBadgesLock);
+
+	ui->showAchievementBrowser = 0;
+	ui->achievementCursor = 0;
+	ui->achievementScrollOffset = 0;
+}
+
+void *downloadBadgeMain(void *arg) {
+	Image *badge = (Image *)arg;
+
+	// Extract badge ID from URL (last component before .png)
+	// URL format: https://retroachievements.org/Badge/12345.png
+	const char *lastSlash = strrchr(badge->url, '/');
+	if (!lastSlash) {
+		badge->state = IMAGE_STATE_DEAD;
+		return NULL;
+	}
+
+	char badgeFilename[64];
+	strncpy(badgeFilename, lastSlash + 1, sizeof(badgeFilename) - 1);
+	badgeFilename[sizeof(badgeFilename) - 1] = '\0';
+
+	// Check if badge is already cached
+	char *homePath = getenv("HOME");
+	char cachePath[PATH_MAX];
+	snprintf(cachePath, PATH_MAX, "%s/.offblast/achievement_badges/%s", homePath, badgeFilename);
+
+	// Try loading from cache first
+	int width, height, channels;
+	stbi_set_flip_vertically_on_load(1);
+	unsigned char *pixels = stbi_load(cachePath, &width, &height, &channels, 4);
+
+	if (!pixels) {
+		// Not cached, download it
+		printf("[Badge] Downloading %s...\n", badgeFilename);
+
+		CurlFetch fetch = {0};
+		CURL *curl = curl_easy_init();
+		if (!curl) {
+			badge->state = IMAGE_STATE_DEAD;
+			return NULL;
+		}
+
+		curl_easy_setopt(curl, CURLOPT_URL, badge->url);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+		curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+		curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+		CURLcode res = curl_easy_perform(curl);
+		curl_easy_cleanup(curl);
+
+		if (res != CURLE_OK) {
+			printf("[Badge] Download failed: %s\n", curl_easy_strerror(res));
+			if (fetch.data) free(fetch.data);
+			badge->state = IMAGE_STATE_DEAD;
+			return NULL;
+		}
+
+		// Load image from memory
+		stbi_set_flip_vertically_on_load(1);
+		pixels = stbi_load_from_memory(fetch.data, fetch.size,
+													   &width, &height, &channels, 4);
+		free(fetch.data);
+
+		if (!pixels) {
+			printf("[Badge] Failed to decode image\n");
+			badge->state = IMAGE_STATE_DEAD;
+			return NULL;
+		}
+
+		// Save to cache for next time
+		stbi_flip_vertically_on_write(1);
+		stbi_write_png(cachePath, width, height, 4, pixels, width * 4);
+		printf("[Badge] Cached to %s\n", cachePath);
+	} else {
+		printf("[Badge] Loaded %s from cache\n", badgeFilename);
+	}
+
+	// Store the pixel data
+	badge->width = width;
+	badge->height = height;
+	badge->atlasSize = width * height * 4;
+	badge->atlas = pixels;
+	badge->state = IMAGE_STATE_READY;
+
+	return NULL;
+}
+
+void queueAchievementBadges() {
+	MainUi *ui = &offblast->mainUi;
+	if (!ui->achievementBrowserData) return;
+
+	json_object *achievements = NULL;
+	if (!json_object_object_get_ex(ui->achievementBrowserData, "Achievements", &achievements)) {
+		return;
+	}
+
+	// Queue badges for visible achievements
+	pthread_mutex_lock(&ui->achievementBadgesLock);
+
+	uint32_t itemIndex = 0;
+	json_object_iter iter;
+	json_object_object_foreachC(achievements, iter) {
+		json_object *achData = iter.val;
+
+		// Only queue visible badges
+		if (itemIndex >= ui->achievementScrollOffset &&
+			itemIndex < ui->achievementScrollOffset + ui->achievementVisibleRows &&
+			itemIndex < MAX_ACHIEVEMENT_BADGES) {
+
+			if (ui->achievementBadges[itemIndex].state == IMAGE_STATE_COLD) {
+				// Get badge name
+				json_object *badgeObj;
+				if (json_object_object_get_ex(achData, "BadgeName", &badgeObj)) {
+					const char *badgeName = json_object_get_string(badgeObj);
+
+					// Build badge URL
+					snprintf(ui->achievementBadges[itemIndex].url, PATH_MAX,
+							 "https://retroachievements.org/Badge/%s.png", badgeName);
+
+					ui->achievementBadges[itemIndex].state = IMAGE_STATE_DOWNLOADING;
+
+					// Spawn download thread
+					pthread_t downloadThread;
+					pthread_create(&downloadThread, NULL, downloadBadgeMain,
+								   &ui->achievementBadges[itemIndex]);
+					pthread_detach(downloadThread);
+				}
+			}
+		}
+		itemIndex++;
+	}
+
+	pthread_mutex_unlock(&ui->achievementBadgesLock);
+}
+
+
+void doViewAchievements() {
+	MainUi *ui = &offblast->mainUi;
+
+	// Get current game
+	LaunchTarget *target = ui->activeRowset->movingToTarget;
+	if (!target) {
+		printf("[Achievement Browser] No game selected\n");
+		return;
+	}
+
+	// Only works for non-Steam games with RA data
+	if (strcmp(target->platform, "steam") == 0) {
+		snprintf(offblast->statusMessage, 256, "Steam achievement browser not implemented yet");
+		offblast->statusMessageTick = SDL_GetTicks();
+		offblast->statusMessageDuration = 3000;
+		return;
+	}
+
+	// Check if we have RA data for this game in database
+	RAGameCache *raCache = NULL;
+	if (offblast->raGameCache) {
+		for (uint32_t i = 0; i < offblast->raGameCache->nEntries; i++) {
+			if (offblast->raGameCache->entries[i].targetSignature == target->targetSignature) {
+				raCache = &offblast->raGameCache->entries[i];
+				break;
+			}
+		}
+	}
+
+	if (!raCache || raCache->hash[0] == '\0' || raCache->maxPossible == 0) {
+		snprintf(offblast->statusMessage, 256, "No RetroAchievements data for this game");
+		offblast->statusMessageTick = SDL_GetTicks();
+		offblast->statusMessageDuration = 3000;
+		printf("[Achievement Browser] No verified RA data for %s\n", target->name);
+		return;
+	}
+
+	// We have RA data! Fetch detailed achievements
+	printf("[Achievement Browser] Fetching achievements for RA game %u...\n", raCache->raGameId);
+
+	// Build API URL
+	char url[1024];
+	snprintf(url, sizeof(url),
+		"https://retroachievements.org/API/API_GetGameInfoAndUserProgress.php?g=%u&u=%s&y=%s",
+		raCache->raGameId, offblast->retroAchievementsUsername, offblast->retroAchievementsApiKey);
+
+	// Fetch achievement details
+	CurlFetch fetch = {0};
+	CURL *curl = curl_easy_init();
+	if (!curl) {
+		printf("[Achievement Browser] CURL init failed\n");
+		return;
+	}
+
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
+
+	CURLcode res = curl_easy_perform(curl);
+	curl_easy_cleanup(curl);
+
+	if (res != CURLE_OK) {
+		printf("[Achievement Browser] API error: %s\n", curl_easy_strerror(res));
+		if (fetch.data) free(fetch.data);
+		snprintf(offblast->statusMessage, 256, "Failed to fetch achievements");
+		offblast->statusMessageTick = SDL_GetTicks();
+		offblast->statusMessageDuration = 3000;
+		return;
+	}
+
+	// Parse JSON
+	fetch.data = realloc(fetch.data, fetch.size + 1);
+	fetch.data[fetch.size] = '\0';
+
+	ui->achievementBrowserData = json_tokener_parse((char *)fetch.data);
+	free(fetch.data);
+
+	if (!ui->achievementBrowserData) {
+		printf("[Achievement Browser] Failed to parse JSON\n");
+		snprintf(offblast->statusMessage, 256, "Failed to parse achievement data");
+		offblast->statusMessageTick = SDL_GetTicks();
+		offblast->statusMessageDuration = 3000;
+		return;
+	}
+
+	// Success! Open the browser
+	ui->showAchievementBrowser = 1;
+	ui->achievementBrowserRaGameId = raCache->raGameId;
+	ui->achievementCursor = 0;
+	ui->achievementScrollOffset = 0;
+	snprintf(ui->achievementBrowserTitle, sizeof(ui->achievementBrowserTitle), "%s", target->name);
+
+	// Initialize badge images
+	pthread_mutex_init(&ui->achievementBadgesLock, NULL);
+	for (int i = 0; i < MAX_ACHIEVEMENT_BADGES; i++) {
+		ui->achievementBadges[i].state = IMAGE_STATE_COLD;
+		ui->achievementBadges[i].textureHandle = 0;
+		ui->achievementBadges[i].atlas = NULL;
+	}
+
+	// Queue badges for visible achievements
+	queueAchievementBadges();
+
+	printf("[Achievement Browser] Opened for %s (RA game %u)\n", target->name, raCache->raGameId);
 }
 
 void *downloadCoverMain(void *arg) {
@@ -2743,11 +3031,14 @@ void *initThreadFunc(void *arg) {
     mainUi->contextMenuAnimation = calloc(1, sizeof(Animation));
     mainUi->contextMenuNavigateAnimation = calloc(1, sizeof(Animation));
 	mainUi->coverBrowserAnimation = calloc(1, sizeof(Animation));
+	mainUi->achievementBrowserAnimation = calloc(1, sizeof(Animation));
 
     mainUi->showMenu = 0;
     mainUi->showContextMenu = 0;
     mainUi->showSearch = 0;
 	mainUi->showCoverBrowser = 0;
+	mainUi->showAchievementBrowser = 0;
+	mainUi->achievementBrowserData = NULL;
 
 	// Initialize cover browser grid dimensions
 	mainUi->coverBrowserCoversPerRow = 5;
@@ -2845,11 +3136,16 @@ int main(int argc, char** argv) {
     char *coverPath;
     asprintf(&coverPath, "%s/covers/", configPath);
 
+    char *badgePath;
+    asprintf(&badgePath, "%s/achievement_badges/", configPath);
+
     int madeConfigDir;
     madeConfigDir = mkdir(configPath, S_IRWXU);
     madeConfigDir = mkdir(coverPath, S_IRWXU);
+    madeConfigDir = mkdir(badgePath, S_IRWXU);
 
     free(coverPath);
+    free(badgePath);
     
     if (madeConfigDir == 0) {
         printf("Created offblast directory\n");
@@ -3384,8 +3680,10 @@ int main(int argc, char** argv) {
                         break;
                     case SDL_CONTROLLER_BUTTON_X:
                         if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
-                            printf("X button pressed - refresh current game metadata/covers\n");
-                            rescrapeCurrentLauncher(0); // Delete only current cover
+                            if (!offblast->mainUi.showSearch && !offblast->mainUi.showCoverBrowser && !offblast->mainUi.showMenu && !offblast->mainUi.showContextMenu) {
+                                printf("X button pressed - view achievements\n");
+                                doViewAchievements();
+                            }
                         }
                         break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
@@ -4174,6 +4472,176 @@ int main(int argc, char** argv) {
 				}
 			}
 
+			// § Render Achievement Browser
+			if (mainUi->showAchievementBrowser) {
+				// Dark background overlay
+				Color overlayColor = {0.0, 0.0, 0.0, 0.9};
+				renderGradient(0, 0, offblast->winWidth, offblast->winHeight, 0,
+							   overlayColor, overlayColor);
+
+				// Render title at top
+				float titleY = offblast->winHeight * 0.9;
+				uint32_t titleWidth = getTextLineWidth(mainUi->achievementBrowserTitle,
+														offblast->titleCharData,
+														offblast->titleCodepoints,
+														offblast->titleNumChars);
+				renderText(offblast,
+						   offblast->winWidth * 0.5 - titleWidth * 0.5,
+						   titleY,
+						   OFFBLAST_TEXT_TITLE, 1.0, 0,
+						   mainUi->achievementBrowserTitle);
+
+				// Get achievements object from JSON
+				json_object *achievements = NULL;
+				if (mainUi->achievementBrowserData &&
+					json_object_object_get_ex(mainUi->achievementBrowserData, "Achievements", &achievements)) {
+
+					// Get number of achievements
+					json_object_iter iter;
+					uint32_t numAchievements = 0;
+					json_object_object_foreachC(achievements, iter) {
+						numAchievements++;
+					}
+
+					// Render achievement list
+					float itemHeight = offblast->infoPointSize * 4.0;  // Space for title + description
+					float startY = offblast->winHeight * 0.75;
+					uint32_t itemIndex = 0;
+
+					// Calculate visible rows
+					mainUi->achievementVisibleRows = (uint32_t)(offblast->winHeight * 0.7 / itemHeight);
+
+					json_object_object_foreachC(achievements, iter) {
+						json_object *achData = iter.val;
+
+						// Only render visible items
+						if (itemIndex < mainUi->achievementScrollOffset ||
+							itemIndex >= mainUi->achievementScrollOffset + mainUi->achievementVisibleRows) {
+							itemIndex++;
+							continue;
+						}
+
+						// Extract achievement data
+						json_object *titleObj, *descObj, *pointsObj, *dateEarnedObj;
+						const char *title = "", *description = "", *dateEarned = NULL;
+						int points = 0;
+
+						if (json_object_object_get_ex(achData, "Title", &titleObj))
+							title = json_object_get_string(titleObj);
+						if (json_object_object_get_ex(achData, "Description", &descObj))
+							description = json_object_get_string(descObj);
+						if (json_object_object_get_ex(achData, "Points", &pointsObj))
+							points = json_object_get_int(pointsObj);
+						if (json_object_object_get_ex(achData, "DateEarned", &dateEarnedObj))
+							dateEarned = json_object_get_string(dateEarnedObj);
+
+						int unlocked = (dateEarned != NULL && strlen(dateEarned) > 0);
+
+						// Calculate position
+						uint32_t visualIndex = itemIndex - mainUi->achievementScrollOffset;
+						float y = startY - (visualIndex * itemHeight);
+						float x = offblast->winWidth * 0.2;
+
+						// Visual treatment for locked vs unlocked
+						float alpha = (itemIndex == mainUi->achievementCursor) ? 1.0 : 0.6;
+						float textAlpha = alpha;
+						float badgeDesaturation = 0.0;
+
+						if (!unlocked) {
+							// Locked achievements: desaturate badge, dim text
+							badgeDesaturation = 0.7;  // Heavy desaturation for locked
+							textAlpha = alpha * 0.4;  // Dim the text significantly
+						}
+
+						// Render background highlight for unlocked achievements
+						if (unlocked && itemIndex == mainUi->achievementCursor) {
+							Color highlightBg = {0.15, 0.3, 0.15, 0.3};  // Subtle green tint
+							float bgWidth = offblast->winWidth * 0.6;
+							renderGradient(x - 10, y - itemHeight + 10, bgWidth, itemHeight - 20, 0,
+										  highlightBg, highlightBg);
+						}
+
+						// Render badge icon (64x64)
+						float badgeSize = offblast->infoPointSize * 3.0;
+						pthread_mutex_lock(&mainUi->achievementBadgesLock);
+
+						if (itemIndex < MAX_ACHIEVEMENT_BADGES) {
+							Image *badge = &mainUi->achievementBadges[itemIndex];
+
+							// Load texture if pixels are ready
+							if (badge->state == IMAGE_STATE_READY && badge->atlas) {
+								glGenTextures(1, &badge->textureHandle);
+								glBindTexture(GL_TEXTURE_2D, badge->textureHandle);
+								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+								glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+											badge->width, badge->height,
+											0, GL_RGBA, GL_UNSIGNED_BYTE,
+											badge->atlas);
+
+								// Free pixel data, keep only texture
+								free(badge->atlas);
+								badge->atlas = NULL;
+								badge->state = IMAGE_STATE_COMPLETE;
+							}
+
+							// Render badge or placeholder
+							if (badge->state == IMAGE_STATE_COMPLETE) {
+								// Apply desaturation to locked badges
+								renderImage(x, y - badgeSize, badgeSize, badgeSize, badge, badgeDesaturation, alpha);
+							} else {
+								// Placeholder while loading
+								Color placeholderColor = {0.3, 0.3, 0.3, alpha * 0.5};
+								renderGradient(x, y - badgeSize, badgeSize, badgeSize, 0,
+											  placeholderColor, placeholderColor);
+							}
+						}
+
+						pthread_mutex_unlock(&mainUi->achievementBadgesLock);
+
+						// Render achievement title (with space for badge)
+						float textX = x + badgeSize + 20;
+						char titleText[256];
+						snprintf(titleText, sizeof(titleText), "%s %s",
+								 unlocked ? "✓" : "🔒", title);
+						renderText(offblast, textX, y, OFFBLAST_TEXT_INFO, textAlpha, 0, titleText);
+
+						// Render description (aligned with text, not badge)
+						renderText(offblast, textX, y - offblast->infoPointSize * 1.5,
+								   OFFBLAST_TEXT_INFO, textAlpha * 0.8, offblast->winWidth * 0.5, (char *)description);
+
+						// Render points and date
+						char metaText[128];
+						if (unlocked) {
+							snprintf(metaText, sizeof(metaText), "%d pts | %s", points, dateEarned);
+						} else {
+							snprintf(metaText, sizeof(metaText), "%d pts", points);
+						}
+						renderText(offblast, textX, y - offblast->infoPointSize * 2.5,
+								   OFFBLAST_TEXT_INFO, textAlpha * 0.7, 0, metaText);
+
+						itemIndex++;
+					}
+
+					// Show scroll indicators if needed
+					if (mainUi->achievementScrollOffset > 0 ||
+						itemIndex > mainUi->achievementScrollOffset + mainUi->achievementVisibleRows) {
+						char scrollText[64];
+						snprintf(scrollText, sizeof(scrollText), "%u/%u",
+								 mainUi->achievementCursor + 1, numAchievements);
+						uint32_t scrollWidth = getTextLineWidth(scrollText,
+																 offblast->infoCharData,
+																 offblast->infoCodepoints,
+																 offblast->infoNumChars);
+						renderText(offblast,
+								   offblast->winWidth * 0.5 - scrollWidth * 0.5,
+								   offblast->winHeight * 0.1,
+								   OFFBLAST_TEXT_INFO, 0.7, 0,
+								   scrollText);
+					}
+				}
+			}
+
             if (mainUi->showSearch) {
                 Color menuColor = {0.0, 0.0, 0.0, 0.8};
                 renderGradient(0, 0, 
@@ -4864,6 +5332,7 @@ void changeColumn(uint32_t direction)
         {
 
             if (ui->showSearch) return;
+			if (ui->showAchievementBrowser) return;  // No horizontal nav in achievement browser
 
 			if (ui->showCoverBrowser) {
 				if (ui->coverBrowserState == 1 && ui->coverBrowserCovers) {  // cover_grid
@@ -5019,6 +5488,43 @@ void changeRow(uint32_t direction)
     MainUi *ui = &offblast->mainUi;
 
     if (ui->showSearch) return;
+
+	if (ui->showAchievementBrowser) {
+		// Get total number of achievements
+		uint32_t numAchievements = 0;
+		if (ui->achievementBrowserData) {
+			json_object *achievements = NULL;
+			if (json_object_object_get_ex(ui->achievementBrowserData, "Achievements", &achievements)) {
+				json_object_iter iter;
+				json_object_object_foreachC(achievements, iter) {
+					numAchievements++;
+				}
+			}
+		}
+
+		// Navigate achievement list
+		uint32_t oldScrollOffset = ui->achievementScrollOffset;
+
+		if (direction == 0 && ui->achievementCursor < numAchievements - 1) {  // Down
+			ui->achievementCursor++;
+		} else if (direction == 1 && ui->achievementCursor > 0) {  // Up
+			ui->achievementCursor--;
+		}
+
+		// Update scroll offset to keep cursor visible
+		if (ui->achievementCursor < ui->achievementScrollOffset) {
+			ui->achievementScrollOffset = ui->achievementCursor;
+		} else if (ui->achievementCursor >= ui->achievementScrollOffset + ui->achievementVisibleRows) {
+			ui->achievementScrollOffset = ui->achievementCursor - ui->achievementVisibleRows + 1;
+		}
+
+		// Re-queue badges if scroll offset changed
+		if (oldScrollOffset != ui->achievementScrollOffset) {
+			queueAchievementBadges();
+		}
+
+		return;
+	}
 
 	if (ui->showCoverBrowser) {
 		if (ui->coverBrowserState == 0 && ui->coverBrowserGames) {  // game_select
@@ -6481,7 +6987,11 @@ void changeRowset(UiRowset *rowset) {
 
 void pressCancel() {
     if (offblast->mode == OFFBLAST_UI_MODE_MAIN) {
-		if (offblast->mainUi.showCoverBrowser) {
+		if (offblast->mainUi.showAchievementBrowser) {
+			closeAchievementBrowser();
+			return;
+		}
+		else if (offblast->mainUi.showCoverBrowser) {
 			MainUi *ui = &offblast->mainUi;
 
 			if (ui->coverBrowserState == 1 && ui->coverBrowserGames) {  // cover_grid with multiple games

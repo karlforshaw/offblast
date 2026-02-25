@@ -27,6 +27,16 @@
   - Comprehensive platform support: NES, SNES, Genesis, N64, GB, GBA, PSX, PS2, PSP, and 20+ more
   - Only shows for games with achievements (total > 0)
   - Rendered at 81% alpha to match Steam achievement styling
+- **RetroAchievements browser**
+  - Press X button to view detailed achievement list for current game
+  - Shows all achievements with title, description, points, and unlock date
+  - Badge icons download from RetroAchievements.org and cache locally in `~/.offblast/achievement_badges/`
+  - Visual distinction: unlocked achievements bright with colorful badges, locked achievements grayed out (70% desaturated, 40% alpha)
+  - Scrollable list with D-pad up/down navigation
+  - Only available for games with verified RetroAchievements data
+  - Background loading: badges download asynchronously while browsing
+  - Persistent badge cache: icons load instantly on subsequent views
+  - Cursor position indicator: "3/20" shows current position in list
 - **.desktop file launcher support**
   - Launch PC games, ports, and recompilations via freedesktop.org .desktop files
   - Scan directories for .desktop files with configurable scan_pattern

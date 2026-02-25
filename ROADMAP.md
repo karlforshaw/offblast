@@ -272,13 +272,28 @@ User-defined game collections beyond automatic platform-based lists:
 - Rendered at 81% alpha to visually de-emphasize from core metadata
 
 ### Achievements Browser
-Browse and view detailed achievement information for Steam games:
-- Dedicated view showing all achievements for a game
-- Display locked/unlocked status with unlock date
+**SOLVED (RA only):** Browse detailed achievement information for RetroAchievements games:
+- Press X button to open achievement browser (only for verified RA games)
+- Shows all achievements with title, description, points, unlock date
+- Badge icons download from RA and cache in `~/.offblast/achievement_badges/`
+- Visual distinction: unlocked (colorful badges, bright text) vs locked (grayed out, 70% desaturated, 40% alpha)
+- Scrollable list with D-pad up/down navigation
+- Background badge downloading (async, non-blocking)
+- Cursor indicator shows position: "3/20"
+
+**Visual Improvements Needed:**
+- Better layout/spacing (current implementation functional but basic)
+- Color scheme refinement
+- Typography improvements
+- Possibly add achievement rarity/difficulty indicators
+- Transition animations (fade in/out, slide effects)
+
+**Future Enhancements:**
+- Steam achievement browser (requires Steam Web API for details)
 - Show global unlock percentages
-- Achievement icons/artwork
-- Accessible from context menu or dedicated button
-- Read from same local Steam cache as achievement display
+- Achievement icons in a grid view option
+- Filter by locked/unlocked
+- Sort by date, points, rarity
 
 ### Import New Games from CSV
 **SOLVED:** Pull OpenGameDB CSV updates without destroying database:
