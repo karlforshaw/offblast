@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- **Steam achievement display**
+  - Shows achievement progress for Steam games in info panel
+  - Reads from local Steam cache file (no network calls, no API key needed)
+  - Format: " | 15/20 Achievements (75%)" displayed after playtime
+  - Works with private Steam profiles
+  - Only shows for games that have achievements (filters out games with total=0)
+  - Rendered at 81% alpha to de-emphasize from core metadata
+  - Cache file location: `~/.steam/steam/userdata/<userid>/config/librarycache/achievement_progress.json`
+  - Automatically updates when Steam updates the cache (playing games, launching Steam)
 - **.desktop file launcher support**
   - Launch PC games, ports, and recompilations via freedesktop.org .desktop files
   - Scan directories for .desktop files with configurable scan_pattern

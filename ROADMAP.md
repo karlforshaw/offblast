@@ -258,12 +258,23 @@ Integration with RetroAchievements.org for tracking achievements in retro games:
 - No database corruption from parallel writes to description blobs
 
 ### Steam Achievements Support
-Display Steam achievement progress alongside Retro Achievements:
-- Fetch achievement data via `ISteamUserStats/GetPlayerAchievements` API
-- Show achievement progress in game info panel for Steam games
-- Display unlock percentage and player's completion status
-- Use existing Steam API key and Steam ID from config
-- Cache achievement data to minimize API calls
+**SOLVED:** Display achievement progress for Steam games:
+- Reads achievement data from local Steam cache: `~/.steam/steam/userdata/<userid>/config/librarycache/achievement_progress.json`
+- Shows achievement progress in game info panel for Steam games
+- Format: `" | 15/20 Achievements (75%)"`
+- No network calls required - instant lookup from local file
+- Works with private Steam profiles (no API key needed)
+- Only displays for games that have achievements (total > 0)
+- Rendered at 81% alpha to visually de-emphasize from core metadata
+
+### Achievements Browser
+Browse and view detailed achievement information for Steam games:
+- Dedicated view showing all achievements for a game
+- Display locked/unlocked status with unlock date
+- Show global unlock percentages
+- Achievement icons/artwork
+- Accessible from context menu or dedicated button
+- Read from same local Steam cache as achievement display
 
 ### Import New Games from CSV
 **SOLVED:** Pull OpenGameDB CSV updates without destroying database:

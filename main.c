@@ -462,6 +462,7 @@ typedef struct MainUi {
     char *titleText;
     char *infoText;
     char *playtimeText;
+    char *achievementsText;
     char *descriptionText;
 
     char *rowNameText;
@@ -653,6 +654,9 @@ typedef struct OffblastUi {
 
 	// SteamGridDB API config
 	char steamGridDbApiKey[128];
+
+    // Steam achievement cache (parsed from local file)
+    json_object *steamAchievementCache;
 } OffblastUi;
 
 typedef struct CurlFetch {
@@ -744,6 +748,8 @@ void raiseWindowByUuid(const char *uuid);
 void importFromSteam(Launcher *theLauncher);
 void importFromCustom(Launcher *theLauncher);
 void importFromDesktop(Launcher *theLauncher);
+void loadSteamAchievementCache();
+void updateAchievementsText();
 
 // Context menu callbacks
 void doRescrapePlatform();
@@ -1805,6 +1811,9 @@ void *initThreadFunc(void *arg) {
             printf("Steam API configured for user %s\n", offblast->steamId);
         }
     }
+
+    // Load Steam achievement cache from local file
+    loadSteamAchievementCache();
 
 	// Parse SteamGridDB API key
 	json_object *sgdbApiKey;
@@ -3722,6 +3731,16 @@ int main(int argc, char** argv) {
                             OFFBLAST_TEXT_INFO, alpha * 0.81f, 0, mainUi->playtimeText);
                 }
 
+                // Render achievement text (if any) after playtime text with reduced alpha
+                if (mainUi->achievementsText != NULL) {
+                    uint32_t totalWidth = getTextLineWidth(mainUi->infoText, offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
+                    if (mainUi->playtimeText != NULL) {
+                        totalWidth += getTextLineWidth(mainUi->playtimeText, offblast->infoCharData, offblast->infoCodepoints, offblast->infoNumChars);
+                    }
+                    renderText(offblast, offblast->winMargin + totalWidth, pixelY,
+                            OFFBLAST_TEXT_INFO, alpha * 0.81f, 0, mainUi->achievementsText);
+                }
+
 
                 pixelY -= offblast->infoPointSize + mainUi->boxPad;
                 renderText(offblast, offblast->winMargin, pixelY, 
@@ -5129,11 +5148,12 @@ void verticalMoveDone() {
 }
 
 void updateGameInfo() {
-        offblast->mainUi.titleText = 
+        offblast->mainUi.titleText =
             offblast->mainUi.activeRowset->movingToTarget->name;
         updateInfoText();
+        updateAchievementsText();
         updateDescriptionText();
-        offblast->mainUi.rowNameText 
+        offblast->mainUi.rowNameText
             = offblast->mainUi.activeRowset->movingToRow->name;
 }
 
@@ -6415,6 +6435,63 @@ void updateInfoText() {
         }
 
         offblast->mainUi.playtimeText = timeStr;
+    }
+}
+
+void updateAchievementsText() {
+    // Free previous text
+    if (offblast->mainUi.achievementsText != NULL) {
+        free(offblast->mainUi.achievementsText);
+        offblast->mainUi.achievementsText = NULL;
+    }
+
+    LaunchTarget *target = offblast->mainUi.activeRowset->movingToTarget;
+    if (!target) return;
+
+    // Only for Steam games
+    if (strcmp(target->platform, "steam") != 0) return;
+
+    // Check if achievement cache is loaded
+    if (!offblast->steamAchievementCache) return;
+
+    // Get mapCache array from JSON
+    json_object *mapCache;
+    if (!json_object_object_get_ex(offblast->steamAchievementCache, "mapCache", &mapCache)) {
+        return;
+    }
+
+    // mapCache is an array of [appid, data] pairs
+    uint32_t appid = (uint32_t)atoi(target->id);
+    size_t numEntries = json_object_array_length(mapCache);
+
+    for (size_t i = 0; i < numEntries; i++) {
+        json_object *entry = json_object_array_get_idx(mapCache, i);
+        if (!entry || json_object_array_length(entry) < 2) continue;
+
+        json_object *appidObj = json_object_array_get_idx(entry, 0);
+        json_object *dataObj = json_object_array_get_idx(entry, 1);
+
+        if (json_object_get_int(appidObj) == (int)appid) {
+            // Found matching appid, extract achievement data
+            json_object *unlockedObj, *totalObj;
+            if (!json_object_object_get_ex(dataObj, "unlocked", &unlockedObj) ||
+                !json_object_object_get_ex(dataObj, "total", &totalObj)) {
+                return;
+            }
+
+            uint32_t unlocked = json_object_get_int(unlockedObj);
+            uint32_t total = json_object_get_int(totalObj);
+
+            // Only show if game has achievements
+            if (total > 0) {
+                uint32_t percentage = (unlocked * 100) / total;
+                char *achText;
+                asprintf(&achText, "  |  %u/%u Achievements (%u%%)",
+                         unlocked, total, percentage);
+                offblast->mainUi.achievementsText = achText;
+            }
+            return;
+        }
     }
 }
 
@@ -10041,6 +10118,68 @@ char* convertNumeralInGameName(const char *gameName) {
     }
 
     return NULL;  // No conversion possible
+}
+
+void loadSteamAchievementCache() {
+    // Find Steam userdata directory
+    char *home = getenv("HOME");
+    if (!home) return;
+
+    char userdataPath[PATH_MAX];
+    snprintf(userdataPath, PATH_MAX, "%s/.steam/steam/userdata", home);
+
+    // Find the first userid directory
+    DIR *dir = opendir(userdataPath);
+    if (!dir) {
+        printf("Steam userdata directory not found, achievement display disabled\n");
+        return;
+    }
+
+    struct dirent *entry;
+    char *userid = NULL;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type == DT_DIR && entry->d_name[0] != '.') {
+            userid = entry->d_name;
+            break;
+        }
+    }
+    closedir(dir);
+
+    if (!userid) {
+        printf("No Steam user found, achievement display disabled\n");
+        return;
+    }
+
+    // Load achievement_progress.json
+    char jsonPath[PATH_MAX];
+    snprintf(jsonPath, PATH_MAX, "%s/%s/config/librarycache/achievement_progress.json",
+             userdataPath, userid);
+
+    FILE *f = fopen(jsonPath, "r");
+    if (!f) {
+        printf("Steam achievement cache not found at %s\n", jsonPath);
+        return;
+    }
+
+    // Read entire file
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char *jsonData = malloc(fsize + 1);
+    fread(jsonData, 1, fsize, f);
+    jsonData[fsize] = '\0';
+    fclose(f);
+
+    // Parse JSON
+    offblast->steamAchievementCache = json_tokener_parse(jsonData);
+    free(jsonData);
+
+    if (offblast->steamAchievementCache) {
+        printf("Loaded Steam achievement cache from %s\n", jsonPath);
+    } else {
+        printf("Failed to parse Steam achievement cache JSON\n");
+    }
 }
 
 

@@ -378,6 +378,9 @@ Add the `steam` section to your config.json:
 - **Uninstalled games** appear dimmed
 - Launching an uninstalled game opens the Steam install dialog
 - Game names come directly from Steam (no fuzzy matching needed)
+- **Achievement progress** displayed in game info panel (e.g., "15/20 Achievements (75%)")
+  - Reads from local Steam cache (works even with private profiles)
+  - No additional configuration needed
 
 #### Without API Key
 If you don't configure an API key, OffBlast falls back to local-only detection using Steam's appmanifest files. This only shows installed games.
