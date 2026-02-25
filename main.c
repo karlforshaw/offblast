@@ -76,6 +76,9 @@
 
 #include "offblast.h"
 #include "offblastDbFile.h"
+#include "rc_hash.h"
+#include "rc_consoles.h"
+#include <minizip/unzip.h>
 
 
 typedef struct User {
@@ -463,6 +466,7 @@ typedef struct MainUi {
     char *infoText;
     char *playtimeText;
     char *achievementsText;
+    uint32_t raAchievementFetchTick;  // Timer for RA hash verification
     char *descriptionText;
 
     char *rowNameText;
@@ -657,6 +661,13 @@ typedef struct OffblastUi {
 
     // Steam achievement cache (parsed from local file)
     json_object *steamAchievementCache;
+
+    // RetroAchievements config and cache
+    char retroAchievementsUsername[64];
+    char retroAchievementsApiKey[64];
+    json_object *retroAchievementsCache;  // User's RA game list
+    OffblastDbFile raGameDb;              // Cached hash matches
+    RAGameCacheFile *raGameCache;
 } OffblastUi;
 
 typedef struct CurlFetch {
@@ -750,6 +761,18 @@ void importFromCustom(Launcher *theLauncher);
 void importFromDesktop(Launcher *theLauncher);
 void loadSteamAchievementCache();
 void updateAchievementsText();
+void loadRAGameCache();
+void loadRACredentialsFromUser();
+void loadRetroAchievementsCache();
+void syncRAGameCacheWithFreshData();
+void updateRetroAchievementsText();
+int platformToConsoleId(const char *platform);
+uint32_t fuzzyMatchRAGame(const char *gameName, const char *platform, int consoleId);
+int verifyRAGameHash(uint32_t raGameId, const char *hash);
+void updateRAGameCache(uint64_t targetSignature, uint32_t raGameId, const char *hash, uint32_t maxPossible, uint32_t numAwarded, uint32_t numAwardedHardcore);
+void rcheevos_verbose_callback(const char* message);
+void rcheevos_error_callback(const char* message);
+void *raHashVerifyMain(void *arg);
 
 // Context menu callbacks
 void doRescrapePlatform();
@@ -813,6 +836,15 @@ typedef struct SteamMetadataWorkerContext {
     SteamMetadataQueue *queue;
     uint32_t workerIndex;
 } SteamMetadataWorkerContext;
+
+typedef struct RAHashVerifyContext {
+    OffblastUi *offblast;
+    uint64_t targetSignature;
+    uint32_t raGameId;
+    int consoleId;
+    char romPath[PATH_MAX];
+    char gameName[256];
+} RAHashVerifyContext;
 
 SteamMetadata *fetchSteamGameMetadata(uint32_t appid);
 void freeSteamMetadata(SteamMetadata *meta);
@@ -2235,6 +2267,7 @@ void *initThreadFunc(void *arg) {
 
     SET_STATUS("Loading playtime data...");
     loadPlaytimeFile();
+    loadRAGameCache();
 
     offblast->platforms = calloc(MAX_PLATFORMS, 256 * sizeof(char));
 
@@ -2676,6 +2709,10 @@ void *initThreadFunc(void *arg) {
         offblast->imageStore[i].lastUsedTick = SDL_GetTicks();
     }
     assert(offblast->imageStore);
+
+    // Initialize rcheevos default file reader (enables .zip support)
+    rc_hash_init_custom_filereader(NULL);
+    printf("Initialized rcheevos file reader for .zip support\n");
 
     SET_STATUS("Starting worker threads...");
     // CREATE WORKER THREADS
@@ -3509,11 +3546,24 @@ int main(int argc, char** argv) {
 
                 offblast->player.user = theUser;
                 offblast->player.emailHash = emailSignature;
+
+                // Clear previous user's RA cache (shouldn't exist on auto-select, but be safe)
+                if (offblast->retroAchievementsCache) {
+                    json_object_put(offblast->retroAchievementsCache);
+                    offblast->retroAchievementsCache = NULL;
+                }
+
                 loadPlaytimeFile();
+                loadRAGameCache();
+                loadRACredentialsFromUser();
+                loadRetroAchievementsCache();
                 updateHomeLists();
 
                 printf("Auto-selected single user: %s\n", theUser->name);
                 offblast->mode = OFFBLAST_UI_MODE_MAIN;
+
+                // Initialize RA timer so first game can trigger hash verification
+                offblast->mainUi.raAchievementFetchTick = SDL_GetTicks();
             }
             else {
                 offblast->mode = OFFBLAST_UI_MODE_PLAYER_SELECT;
@@ -3711,8 +3761,81 @@ int main(int argc, char** argv) {
                     rowNameAlpha = change;
                 }
 
+                // Check if we should verify RA hash (after 1.6s of viewing a non-Steam game)
+                if (mainUi->activeRowset->movingToTarget) {
+                    LaunchTarget *target = mainUi->activeRowset->movingToTarget;
+                    uint32_t elapsed = SDL_GetTicks() - mainUi->raAchievementFetchTick;
+
+                    if (elapsed > 1600 && strcmp(target->platform, "steam") != 0) {
+                        // Reset timer FIRST to prevent continuous triggering
+                        mainUi->raAchievementFetchTick = SDL_GetTicks();
+
+                        // Check if we already have cached data (skip placeholder entries with empty hash)
+                        int alreadyCached = 0;
+                        if (offblast->raGameCache) {
+                            for (uint32_t i = 0; i < offblast->raGameCache->nEntries; i++) {
+                                if (offblast->raGameCache->entries[i].targetSignature == target->targetSignature) {
+                                    // Skip placeholder entries (empty hash)
+                                    if (offblast->raGameCache->entries[i].hash[0] != '\0') {
+                                        alreadyCached = 1;
+                                        printf("[RA] Game '%s' already verified in cache, skipping\n", target->name);
+                                    } else {
+                                        printf("[RA] Found placeholder entry for '%s', will re-verify\n", target->name);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!alreadyCached) {
+                            if (!offblast->retroAchievementsCache) {
+                                printf("[RA] No RA cache loaded for user\n");
+                            } else if (target->path[0] == '\0') {
+                                printf("[RA] Game '%s' has no ROM path\n", target->name);
+                            } else {
+                                printf("[RA] Checking '%s' (platform: %s)\n", target->name, target->platform);
+
+                                // Try fuzzy match against RA cache
+                                int consoleId = platformToConsoleId(target->platform);
+                                printf("[RA] Console ID: %d\n", consoleId);
+
+                                if (consoleId == RC_CONSOLE_UNKNOWN) {
+                                    printf("[RA] Platform '%s' not supported by RetroAchievements\n", target->platform);
+                                } else {
+                                    uint32_t raGameId = fuzzyMatchRAGame(target->name, target->platform, consoleId);
+                                    printf("[RA] Fuzzy match result: %u\n", raGameId);
+
+                                    if (raGameId > 0) {
+                                        printf("[RA] Fuzzy match found for '%s', spawning hash verification...\n", target->name);
+
+                                        // Show status message
+                                        snprintf(offblast->statusMessage, 256, "Verifying RetroAchievements...");
+                                        offblast->statusMessageTick = SDL_GetTicks();
+                                        offblast->statusMessageDuration = 5000;
+
+                                        // Spawn background thread to hash and verify
+                                        RAHashVerifyContext *ctx = malloc(sizeof(RAHashVerifyContext));
+                                        ctx->offblast = offblast;
+                                        ctx->targetSignature = target->targetSignature;
+                                        ctx->raGameId = raGameId;
+                                        ctx->consoleId = consoleId;
+                                        strncpy(ctx->romPath, target->path, PATH_MAX - 1);
+                                        ctx->romPath[PATH_MAX - 1] = '\0';
+                                        strncpy(ctx->gameName, target->name, 255);
+                                        ctx->gameName[255] = '\0';
+
+                                        pthread_t hashThread;
+                                        pthread_create(&hashThread, NULL, raHashVerifyMain, ctx);
+                                        pthread_detach(hashThread);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // TODO calculate elsewhere
-                float pixelY = 
+                float pixelY =
                     offblast->winHeight - goldenRatioLargef(offblast->winHeight, 5)
                     - offblast->titlePointSize;
 
@@ -5163,6 +5286,9 @@ void infoFaded() {
     if (ui->infoAnimation->direction == 0) {
         updateGameInfo();
 
+        // Reset RA achievement fetch timer when game changes
+        ui->raAchievementFetchTick = SDL_GetTicks();
+
         ui->infoAnimation->startTick = SDL_GetTicks();
         ui->infoAnimation->direction = 1;
         ui->infoAnimation->durationMs = NAVIGATION_MOVE_DURATION / 2;
@@ -6240,7 +6366,17 @@ void pressConfirm(int32_t joystickIndex) {
 
         offblast->player.user = theUser;
         offblast->player.emailHash = emailSignature;
+
+        // Clear previous user's RA cache
+        if (offblast->retroAchievementsCache) {
+            json_object_put(offblast->retroAchievementsCache);
+            offblast->retroAchievementsCache = NULL;
+        }
+
         loadPlaytimeFile();
+        loadRAGameCache();
+        loadRACredentialsFromUser();
+        loadRetroAchievementsCache();
         updateHomeLists();
 
         if (joystickIndex > -1) {
@@ -6250,6 +6386,9 @@ void pressConfirm(int32_t joystickIndex) {
         }
 
         offblast->mode = OFFBLAST_UI_MODE_MAIN;
+
+        // Initialize RA timer so first game can trigger hash verification
+        offblast->mainUi.raAchievementFetchTick = SDL_GetTicks();
     }
     else if (offblast->mainUi.showSearch) {
         // TODO not sure I like the way I'm using mode, I think maybe things
@@ -6448,8 +6587,8 @@ void updateAchievementsText() {
     LaunchTarget *target = offblast->mainUi.activeRowset->movingToTarget;
     if (!target) return;
 
-    // Only for Steam games
-    if (strcmp(target->platform, "steam") != 0) return;
+    // Try Steam achievements first
+    if (strcmp(target->platform, "steam") == 0) {
 
     // Check if achievement cache is loaded
     if (!offblast->steamAchievementCache) return;
@@ -6493,6 +6632,29 @@ void updateAchievementsText() {
             return;
         }
     }
+        return;  // Steam game but no achievements found
+    }
+
+    // Try RetroAchievements for non-Steam games
+    // Check if we have a cached RA match in database
+    RAGameCacheFile *raCache = offblast->raGameCache;
+    if (raCache) {
+        for (uint32_t i = 0; i < raCache->nEntries; i++) {
+            if (raCache->entries[i].targetSignature == target->targetSignature) {
+                RAGameCache *entry = &raCache->entries[i];
+                if (entry->maxPossible > 0) {
+                    uint32_t percentage = (entry->numAwarded * 100) / entry->maxPossible;
+                    char *achText;
+                    asprintf(&achText, "  |  %u/%u Achievements (%u%%)",
+                             entry->numAwarded, entry->maxPossible, percentage);
+                    offblast->mainUi.achievementsText = achText;
+                }
+                return;
+            }
+        }
+    }
+
+    // No cached data - display will be updated when hash verification completes
 }
 
 void updateDescriptionText() {
@@ -7643,10 +7805,72 @@ void loadPlaytimeFile() {
         printf("couldn't initialize the playTime file, exiting\n");
         exit(1);
     }
-    offblast->playTimeFile = 
+    offblast->playTimeFile =
         (PlayTimeFile*) playTimeDb.memory;
     offblast->playTimeDb = playTimeDb;
     free(playTimeDbPath);
+}
+
+void loadRACredentialsFromUser() {
+    // Get current user
+    User *currentUser = NULL;
+    Player *thePlayer = &offblast->player;
+    if (thePlayer->emailHash == 0) {
+        currentUser = &offblast->users[0];
+    } else {
+        currentUser = thePlayer->user;
+    }
+
+    if (!currentUser) return;
+
+    // Clear any previous RA credentials
+    offblast->retroAchievementsUsername[0] = '\0';
+    offblast->retroAchievementsApiKey[0] = '\0';
+
+    // Look up RA credentials from user's custom fields
+    const char *raUsername = getUserCustomField(currentUser, "retroachievements_username");
+    const char *raApiKey = getUserCustomField(currentUser, "retroachievements_api_key");
+
+    if (raUsername && strlen(raUsername) > 0) {
+        strncpy(offblast->retroAchievementsUsername, raUsername, 63);
+        offblast->retroAchievementsUsername[63] = '\0';
+    }
+
+    if (raApiKey && strlen(raApiKey) > 0) {
+        strncpy(offblast->retroAchievementsApiKey, raApiKey, 63);
+        offblast->retroAchievementsApiKey[63] = '\0';
+    }
+
+    if (offblast->retroAchievementsUsername[0] && offblast->retroAchievementsApiKey[0]) {
+        printf("RetroAchievements configured for user %s: %s\n",
+               currentUser->name, offblast->retroAchievementsUsername);
+    }
+}
+
+void loadRAGameCache() {
+    char *email;
+    Player *thePlayer = &offblast->player;
+    if (thePlayer->emailHash == 0) {
+        email = offblast->users[0].email;
+    }
+    else {
+        email = thePlayer->user->email;
+    }
+
+    assert(email);
+
+    char *raGameDbPath;
+    asprintf(&raGameDbPath, "%s/%s.ragames",
+            offblast->playtimePath, email);
+
+    OffblastDbFile raGameDb = {0};
+    if (!InitDbFile(raGameDbPath, &raGameDb, 1)) {
+        printf("couldn't initialize the RA game cache file, exiting\n");
+        exit(1);
+    }
+    offblast->raGameCache = (RAGameCacheFile*) raGameDb.memory;
+    offblast->raGameDb = raGameDb;
+    free(raGameDbPath);
 }
 
 void killRunningGame() {
@@ -7749,7 +7973,28 @@ void killRunningGame() {
     offblast->mode = OFFBLAST_UI_MODE_MAIN;
     offblast->mainUi.rowGeometryInvalid = 1;  // Force tile repositioning
 
+    // Reset RA timer so current game will re-check (important if we just played it and unlocked achievements)
+    offblast->mainUi.raAchievementFetchTick = SDL_GetTicks();
+
+    // Reload RetroAchievements cache to pick up any newly unlocked achievements
+    if (offblast->retroAchievementsCache) {
+        printf("[RA] Refreshing achievement cache after gameplay...\n");
+        json_object_put(offblast->retroAchievementsCache);
+        offblast->retroAchievementsCache = NULL;
+        loadRetroAchievementsCache();
+
+        // Sync database entries with fresh API data
+        syncRAGameCacheWithFreshData();
+    }
+
+    // Update home lists BEFORE updating game info, so playtime changes appear in Most Played
     updateHomeLists();
+
+    // After updateHomeLists, cursor might have moved - force game info refresh
+    // This ensures title/info/achievements/description all match the current cursor position
+    if (offblast->mainUi.activeRowset && offblast->mainUi.activeRowset->movingToTarget) {
+        updateGameInfo();
+    }
 }
 
 uint32_t activeWindowIsOffblast() {
@@ -10180,6 +10425,597 @@ void loadSteamAchievementCache() {
     } else {
         printf("Failed to parse Steam achievement cache JSON\n");
     }
+}
+
+// Fuzzy match against RetroAchievements cache
+// Returns RA game ID if good match found, or 0 if no match
+uint32_t fuzzyMatchRAGame(const char *gameName, const char *platform, int consoleId) {
+    if (!offblast->retroAchievementsCache) return 0;
+
+    json_object *results;
+    if (!json_object_object_get_ex(offblast->retroAchievementsCache, "Results", &results)) {
+        return 0;
+    }
+
+    size_t numGames = json_object_array_length(results);
+    if (numGames == 0) return 0;
+
+    uint32_t bestGameId = 0;
+    float bestScore = 0;
+
+    for (size_t i = 0; i < numGames; i++) {
+        json_object *game = json_object_array_get_idx(results, i);
+        if (!game) continue;
+
+        // Check console ID matches
+        json_object *consoleIdObj;
+        if (!json_object_object_get_ex(game, "ConsoleID", &consoleIdObj)) continue;
+        if (json_object_get_int(consoleIdObj) != consoleId) continue;
+
+        // Get game title
+        json_object *titleObj;
+        if (!json_object_object_get_ex(game, "Title", &titleObj)) continue;
+        const char *raTitle = json_object_get_string(titleObj);
+        if (!raTitle) continue;
+
+        // Fuzzy match using token-based scoring (same as OpenGameDB)
+        char *workingCopy = strdup(gameName);
+        uint32_t tokensMatched = 0;
+        uint32_t numTokens = 0;
+
+        char *token = strtok(workingCopy, " ");
+        while (token != NULL) {
+            numTokens++;
+            if (strcasestr(raTitle, token) != NULL) {
+                tokensMatched++;
+            }
+            token = strtok(NULL, " ");
+        }
+        free(workingCopy);
+
+        // Also match tokens from RA title against game name
+        workingCopy = strdup(raTitle);
+        token = strtok(workingCopy, " ");
+        while (token != NULL) {
+            numTokens++;
+            if (strcasestr(gameName, token) != NULL) {
+                tokensMatched++;
+            }
+            token = strtok(NULL, " ");
+        }
+        free(workingCopy);
+
+        if (tokensMatched >= 1 && numTokens > 0) {
+            float score = (float)tokensMatched / numTokens;
+
+            if (score > bestScore) {
+                bestScore = score;
+
+                json_object *gameIdObj;
+                if (json_object_object_get_ex(game, "GameID", &gameIdObj)) {
+                    bestGameId = json_object_get_int(gameIdObj);
+                }
+            }
+        }
+    }
+
+    // Only accept matches with score >= 0.5 (at least half tokens matched)
+    if (bestScore >= 0.5) {
+        printf("[RA] Fuzzy matched '%s' to RA game %u (score: %.2f)\n", gameName, bestGameId, bestScore);
+        return bestGameId;
+    }
+
+    return 0;
+}
+
+int platformToConsoleId(const char *platform) {
+    // Map OffBlast platform strings to RC_CONSOLE_* constants
+    // Handle multiple naming conventions from OpenGameDB
+
+    // Sega platforms
+    if (strcmp(platform, "mega_drive") == 0 || strcmp(platform, "genesis") == 0 ||
+        strcmp(platform, "sega_mega_drive") == 0) return RC_CONSOLE_MEGA_DRIVE;
+    if (strcmp(platform, "master_system") == 0 || strcmp(platform, "sega_master_system") == 0)
+        return RC_CONSOLE_MASTER_SYSTEM;
+    if (strcmp(platform, "sega_cd") == 0 || strcmp(platform, "mega_cd") == 0)
+        return RC_CONSOLE_SEGA_CD;
+    if (strcmp(platform, "sega_32x") == 0 || strcmp(platform, "32x") == 0)
+        return RC_CONSOLE_SEGA_32X;
+    if (strcmp(platform, "game_gear") == 0 || strcmp(platform, "sega_game_gear") == 0)
+        return RC_CONSOLE_GAME_GEAR;
+    if (strcmp(platform, "saturn") == 0 || strcmp(platform, "sega_saturn") == 0)
+        return RC_CONSOLE_SATURN;
+    if (strcmp(platform, "dreamcast") == 0 || strcmp(platform, "sega_dreamcast") == 0)
+        return RC_CONSOLE_DREAMCAST;
+
+    // Nintendo platforms
+    if (strcmp(platform, "nintendo") == 0 || strcmp(platform, "nes") == 0 ||
+        strcmp(platform, "nintendo_entertainment_system") == 0 || strcmp(platform, "famicom") == 0)
+        return RC_CONSOLE_NINTENDO;
+    if (strcmp(platform, "super_nintendo") == 0 || strcmp(platform, "snes") == 0 ||
+        strcmp(platform, "super_nintendo_entertainment_system") == 0 || strcmp(platform, "super_famicom") == 0)
+        return RC_CONSOLE_SUPER_NINTENDO;
+    if (strcmp(platform, "nintendo_64") == 0 || strcmp(platform, "n64") == 0)
+        return RC_CONSOLE_NINTENDO_64;
+    if (strcmp(platform, "gameboy") == 0 || strcmp(platform, "game_boy") == 0)
+        return RC_CONSOLE_GAMEBOY;
+    if (strcmp(platform, "gameboy_color") == 0 || strcmp(platform, "game_boy_color") == 0 || strcmp(platform, "gbc") == 0)
+        return RC_CONSOLE_GAMEBOY_COLOR;
+    if (strcmp(platform, "gameboy_advance") == 0 || strcmp(platform, "game_boy_advance") == 0 || strcmp(platform, "gba") == 0)
+        return RC_CONSOLE_GAMEBOY_ADVANCE;
+    if (strcmp(platform, "gamecube") == 0 || strcmp(platform, "game_cube") == 0 || strcmp(platform, "ngc") == 0)
+        return RC_CONSOLE_GAMECUBE;
+    if (strcmp(platform, "nintendo_ds") == 0 || strcmp(platform, "nds") == 0)
+        return RC_CONSOLE_NINTENDO_DS;
+    if (strcmp(platform, "wii") == 0 || strcmp(platform, "nintendo_wii") == 0)
+        return RC_CONSOLE_WII;
+    if (strcmp(platform, "wii_u") == 0 || strcmp(platform, "wiiu") == 0 || strcmp(platform, "nintendo_wii_u") == 0)
+        return RC_CONSOLE_WII_U;
+    if (strcmp(platform, "nintendo_3ds") == 0 || strcmp(platform, "3ds") == 0)
+        return RC_CONSOLE_NINTENDO_3DS;
+    if (strcmp(platform, "virtual_boy") == 0 || strcmp(platform, "virtualboy") == 0)
+        return RC_CONSOLE_VIRTUAL_BOY;
+
+    // PlayStation platforms
+    if (strcmp(platform, "playstation") == 0 || strcmp(platform, "psx") == 0 ||
+        strcmp(platform, "ps1") == 0 || strcmp(platform, "playstation_1") == 0)
+        return RC_CONSOLE_PLAYSTATION;
+    if (strcmp(platform, "playstation_2") == 0 || strcmp(platform, "ps2") == 0)
+        return RC_CONSOLE_PLAYSTATION_2;
+    if (strcmp(platform, "psp") == 0 || strcmp(platform, "playstation_portable") == 0)
+        return RC_CONSOLE_PSP;
+
+    // PC Engine
+    if (strcmp(platform, "pc_engine") == 0 || strcmp(platform, "turbografx_16") == 0 ||
+        strcmp(platform, "turbografx16") == 0 || strcmp(platform, "tg16") == 0)
+        return RC_CONSOLE_PC_ENGINE;
+    if (strcmp(platform, "pc_engine_cd") == 0 || strcmp(platform, "turbografx_cd") == 0)
+        return RC_CONSOLE_PC_ENGINE_CD;
+
+    // Other platforms
+    if (strcmp(platform, "atari_lynx") == 0 || strcmp(platform, "lynx") == 0)
+        return RC_CONSOLE_ATARI_LYNX;
+    if (strcmp(platform, "neogeo_pocket") == 0 || strcmp(platform, "neo_geo_pocket") == 0 ||
+        strcmp(platform, "ngp") == 0) return RC_CONSOLE_NEOGEO_POCKET;
+    if (strcmp(platform, "atari_jaguar") == 0 || strcmp(platform, "jaguar") == 0)
+        return RC_CONSOLE_ATARI_JAGUAR;
+    if (strcmp(platform, "atari_jaguar_cd") == 0 || strcmp(platform, "jaguar_cd") == 0)
+        return RC_CONSOLE_ATARI_JAGUAR_CD;
+    if (strcmp(platform, "xbox") == 0 || strcmp(platform, "microsoft_xbox") == 0)
+        return RC_CONSOLE_XBOX;
+    if (strcmp(platform, "atari_2600") == 0 || strcmp(platform, "2600") == 0)
+        return RC_CONSOLE_ATARI_2600;
+    if (strcmp(platform, "msx") == 0) return RC_CONSOLE_MSX;
+    if (strcmp(platform, "wonderswan") == 0 || strcmp(platform, "wonder_swan") == 0)
+        return RC_CONSOLE_WONDERSWAN;
+    if (strcmp(platform, "neo_geo_cd") == 0 || strcmp(platform, "neogeo_cd") == 0)
+        return RC_CONSOLE_NEO_GEO_CD;
+
+    return RC_CONSOLE_UNKNOWN;
+}
+
+void syncRAGameCacheWithFreshData() {
+    // Sync database entries with fresh RA cache data
+    // This updates achievement counts after the user plays a game
+    if (!offblast->retroAchievementsCache || !offblast->raGameCache) return;
+
+    json_object *results;
+    if (!json_object_object_get_ex(offblast->retroAchievementsCache, "Results", &results)) {
+        return;
+    }
+
+    printf("[RA] Syncing %u cached games with fresh API data...\n", offblast->raGameCache->nEntries);
+
+    // Loop through database entries
+    for (uint32_t i = 0; i < offblast->raGameCache->nEntries; i++) {
+        RAGameCache *cached = &offblast->raGameCache->entries[i];
+
+        // Skip entries without verified hashes
+        if (cached->hash[0] == '\0') continue;
+
+        // Look up this game in fresh RA data
+        size_t numGames = json_object_array_length(results);
+        for (size_t j = 0; j < numGames; j++) {
+            json_object *game = json_object_array_get_idx(results, j);
+            json_object *gameIdObj;
+
+            if (json_object_object_get_ex(game, "GameID", &gameIdObj) &&
+                json_object_get_int(gameIdObj) == (int)cached->raGameId) {
+
+                // Found matching game - update achievement counts
+                json_object *maxObj, *awardedObj, *hardcoreObj;
+                uint32_t oldAwarded = cached->numAwarded;
+
+                if (json_object_object_get_ex(game, "MaxPossible", &maxObj))
+                    cached->maxPossible = json_object_get_int(maxObj);
+                if (json_object_object_get_ex(game, "NumAwarded", &awardedObj))
+                    cached->numAwarded = json_object_get_int(awardedObj);
+                if (json_object_object_get_ex(game, "NumAwardedHardcore", &hardcoreObj))
+                    cached->numAwardedHardcore = json_object_get_int(hardcoreObj);
+
+                if (cached->numAwarded != oldAwarded) {
+                    printf("[RA] Updated RA game %u: %u -> %u achievements\n",
+                           cached->raGameId, oldAwarded, cached->numAwarded);
+                }
+
+                break;
+            }
+        }
+    }
+}
+
+void loadRetroAchievementsCache() {
+    // Check if RA is configured
+    if (!offblast->retroAchievementsUsername[0] || !offblast->retroAchievementsApiKey[0]) {
+        printf("RetroAchievements not configured, skipping cache load\n");
+        return;
+    }
+
+    // Build API URL for user completion progress
+    // API: https://retroachievements.org/API/API_GetUserCompletionProgress.php?u={username}&y={apikey}&c=500
+    char url[1024];
+    snprintf(url, sizeof(url),
+        "https://retroachievements.org/API/API_GetUserCompletionProgress.php?u=%s&y=%s&c=500",
+        offblast->retroAchievementsUsername, offblast->retroAchievementsApiKey);
+
+    printf("Fetching RetroAchievements data for %s...\n", offblast->retroAchievementsUsername);
+
+    // Perform CURL request
+    CurlFetch fetch = {0};
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        printf("CURL init failed for RetroAchievements\n");
+        return;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);  // Longer timeout for potentially large response
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        printf("RetroAchievements API error: %s\n", curl_easy_strerror(res));
+        if (fetch.data) free(fetch.data);
+        return;
+    }
+
+    // Null-terminate response
+    fetch.data = realloc(fetch.data, fetch.size + 1);
+    fetch.data[fetch.size] = '\0';
+
+    // Parse JSON
+    offblast->retroAchievementsCache = json_tokener_parse((char *)fetch.data);
+    free(fetch.data);
+
+    if (offblast->retroAchievementsCache) {
+        // Count how many games we got
+        json_object *results;
+        if (json_object_object_get_ex(offblast->retroAchievementsCache, "Results", &results)) {
+            size_t numGames = json_object_array_length(results);
+            printf("Loaded RetroAchievements cache: %zu games with progress\n", numGames);
+
+            // Log which games we have for debugging
+            printf("[RA] Games in cache:\n");
+            for (size_t i = 0; i < numGames && i < 10; i++) {
+                json_object *game = json_object_array_get_idx(results, i);
+                json_object *titleObj, *consoleObj, *gameIdObj;
+                if (json_object_object_get_ex(game, "Title", &titleObj) &&
+                    json_object_object_get_ex(game, "ConsoleName", &consoleObj) &&
+                    json_object_object_get_ex(game, "GameID", &gameIdObj)) {
+                    printf("[RA]   %d: %s (%s)\n",
+                           json_object_get_int(gameIdObj),
+                           json_object_get_string(titleObj),
+                           json_object_get_string(consoleObj));
+                }
+            }
+        } else {
+            printf("Loaded RetroAchievements cache (format unexpected)\n");
+        }
+    } else {
+        printf("Failed to parse RetroAchievements JSON\n");
+    }
+}
+
+int verifyRAGameHash(uint32_t raGameId, const char *hash) {
+    // API: https://retroachievements.org/API/API_GetGameHashes.php?i={gameid}&y={apikey}
+    if (!offblast->retroAchievementsApiKey[0]) return 0;
+
+    char url[512];
+    snprintf(url, sizeof(url),
+        "https://retroachievements.org/API/API_GetGameHashes.php?i=%u&y=%s",
+        raGameId, offblast->retroAchievementsApiKey);
+
+    CurlFetch fetch = {0};
+    CURL *curl = curl_easy_init();
+    if (!curl) return 0;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &fetch);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        if (fetch.data) free(fetch.data);
+        return 0;
+    }
+
+    // Null-terminate response
+    fetch.data = realloc(fetch.data, fetch.size + 1);
+    fetch.data[fetch.size] = '\0';
+
+    // Parse JSON response
+    json_object *root = json_tokener_parse((char *)fetch.data);
+
+    if (!root) {
+        printf("[RA] Failed to parse hash verification JSON response\n");
+        printf("[RA] Response was: %s\n", (char *)fetch.data);
+        free(fetch.data);
+        return 0;
+    }
+
+    free(fetch.data);
+
+    // Check if response is an array or object
+    json_type type = json_object_get_type(root);
+    int verified = 0;
+
+    if (type == json_type_array) {
+        // Response is an array like: [{"MD5": "abc123", "Name": "Game.rom"}, ...]
+        size_t numHashes = json_object_array_length(root);
+        printf("[RA] Hash API returned %zu supported hashes\n", numHashes);
+
+        for (size_t i = 0; i < numHashes; i++) {
+            json_object *hashObj = json_object_array_get_idx(root, i);
+            if (!hashObj) continue;
+
+            json_object *md5Obj;
+            if (json_object_object_get_ex(hashObj, "MD5", &md5Obj)) {
+                const char *supportedHash = json_object_get_string(md5Obj);
+                if (i < 5) {  // Log first 5 for debugging
+                    printf("[RA]   Hash %zu: %s\n", i, supportedHash ? supportedHash : "NULL");
+                }
+                if (supportedHash && strcasecmp(supportedHash, hash) == 0) {
+                    verified = 1;
+                    break;
+                }
+            }
+        }
+        printf("[RA] Our hash: %s - Match: %s\n", hash, verified ? "YES" : "NO");
+    } else if (type == json_type_object) {
+        // Response might be an object with "Results" array or similar
+        json_object *results;
+        if (json_object_object_get_ex(root, "Results", &results)) {
+            size_t numHashes = json_object_array_length(results);
+            printf("[RA] Hash API returned object with %zu results\n", numHashes);
+
+            for (size_t i = 0; i < numHashes; i++) {
+                json_object *hashObj = json_object_array_get_idx(results, i);
+                if (!hashObj) continue;
+
+                json_object *md5Obj;
+                if (json_object_object_get_ex(hashObj, "MD5", &md5Obj)) {
+                    const char *supportedHash = json_object_get_string(md5Obj);
+                    if (i < 5) {
+                        printf("[RA]   Hash %zu: %s\n", i, supportedHash ? supportedHash : "NULL");
+                    }
+                    if (supportedHash && strcasecmp(supportedHash, hash) == 0) {
+                        verified = 1;
+                        break;
+                    }
+                }
+            }
+            printf("[RA] Our hash: %s - Match: %s\n", hash, verified ? "YES" : "NO");
+        } else {
+            printf("[RA] Unexpected object response format\n");
+        }
+    } else {
+        printf("[RA] Unexpected response type: %d\n", type);
+    }
+
+    json_object_put(root);
+    return verified;
+}
+
+void updateRAGameCache(uint64_t targetSignature, uint32_t raGameId, const char *hash,
+                       uint32_t maxPossible, uint32_t numAwarded, uint32_t numAwardedHardcore) {
+    RAGameCacheFile *file = offblast->raGameCache;
+    if (!file) return;
+
+    // Try to find existing entry
+    for (uint32_t i = 0; i < file->nEntries; i++) {
+        if (file->entries[i].targetSignature == targetSignature) {
+            // Update existing entry
+            file->entries[i].raGameId = raGameId;
+            strncpy(file->entries[i].hash, hash, 32);
+            file->entries[i].hash[32] = '\0';
+            file->entries[i].maxPossible = maxPossible;
+            file->entries[i].numAwarded = numAwarded;
+            file->entries[i].numAwardedHardcore = numAwardedHardcore;
+            file->entries[i].lastFetched = (uint32_t)time(NULL);
+            return;
+        }
+    }
+
+    // Create new entry
+    file = growDbFileIfNecessary(&offblast->raGameDb,
+                                  sizeof(RAGameCache),
+                                  OFFBLAST_DB_TYPE_FIXED);
+    offblast->raGameCache = file;
+
+    uint32_t newIndex = file->nEntries;
+    file->entries[newIndex].targetSignature = targetSignature;
+    file->entries[newIndex].raGameId = raGameId;
+    strncpy(file->entries[newIndex].hash, hash, 32);
+    file->entries[newIndex].hash[32] = '\0';
+    file->entries[newIndex].maxPossible = maxPossible;
+    file->entries[newIndex].numAwarded = numAwarded;
+    file->entries[newIndex].numAwardedHardcore = numAwardedHardcore;
+    file->entries[newIndex].lastFetched = (uint32_t)time(NULL);
+    file->nEntries++;
+}
+
+void rcheevos_verbose_callback(const char* message) {
+    printf("[rcheevos] %s\n", message);
+}
+
+void rcheevos_error_callback(const char* message) {
+    printf("[rcheevos ERROR] %s\n", message);
+}
+
+// Extract first file from .zip into memory buffer
+// Returns allocated buffer (caller must free) and sets size
+// Returns NULL on error
+uint8_t* extractFirstFileFromZip(const char* zipPath, size_t* outSize, char* outFilename, size_t filenameSize) {
+    unzFile zipFile = unzOpen(zipPath);
+    if (!zipFile) {
+        printf("[RA] Failed to open .zip: %s\n", zipPath);
+        return NULL;
+    }
+
+    // Go to first file in archive
+    if (unzGoToFirstFile(zipFile) != UNZ_OK) {
+        printf("[RA] No files in .zip\n");
+        unzClose(zipFile);
+        return NULL;
+    }
+
+    // Get file info
+    unz_file_info fileInfo;
+    if (unzGetCurrentFileInfo(zipFile, &fileInfo, outFilename, filenameSize, NULL, 0, NULL, 0) != UNZ_OK) {
+        printf("[RA] Failed to get file info\n");
+        unzClose(zipFile);
+        return NULL;
+    }
+
+    printf("[RA] Extracting '%s' from .zip (%lu bytes)\n", outFilename, (unsigned long)fileInfo.uncompressed_size);
+
+    // Open the file for reading
+    if (unzOpenCurrentFile(zipFile) != UNZ_OK) {
+        printf("[RA] Failed to open file in .zip\n");
+        unzClose(zipFile);
+        return NULL;
+    }
+
+    // Allocate buffer and read file
+    uint8_t* buffer = malloc(fileInfo.uncompressed_size);
+    if (!buffer) {
+        unzCloseCurrentFile(zipFile);
+        unzClose(zipFile);
+        return NULL;
+    }
+
+    int bytesRead = unzReadCurrentFile(zipFile, buffer, fileInfo.uncompressed_size);
+    unzCloseCurrentFile(zipFile);
+    unzClose(zipFile);
+
+    if (bytesRead != (int)fileInfo.uncompressed_size) {
+        printf("[RA] Failed to read complete file from .zip\n");
+        free(buffer);
+        return NULL;
+    }
+
+    *outSize = fileInfo.uncompressed_size;
+    return buffer;
+}
+
+void *raHashVerifyMain(void *arg) {
+    RAHashVerifyContext *ctx = (RAHashVerifyContext *)arg;
+
+    printf("[RA] Verifying hash for %s (RA game %u)...\n", ctx->gameName, ctx->raGameId);
+    printf("[RA] ROM path: %s\n", ctx->romPath);
+    printf("[RA] Console ID: %d\n", ctx->consoleId);
+
+    // Enable verbose logging from rcheevos
+    rc_hash_init_verbose_message_callback(rcheevos_verbose_callback);
+    rc_hash_init_error_message_callback(rcheevos_error_callback);
+
+    // Check if file is .zip and extract if needed
+    const char* ext = strrchr(ctx->romPath, '.');
+    int result;
+    char hash[33];
+
+    if (ext && strcasecmp(ext, ".zip") == 0) {
+        // Extract first file from .zip
+        size_t romSize;
+        char extractedFilename[256];
+        uint8_t* romBuffer = extractFirstFileFromZip(ctx->romPath, &romSize, extractedFilename, sizeof(extractedFilename));
+
+        if (!romBuffer) {
+            printf("[RA] Failed to extract ROM from .zip\n");
+            free(ctx);
+            return NULL;
+        }
+
+        // Hash the extracted ROM buffer
+        result = rc_hash_generate_from_buffer(hash, ctx->consoleId, romBuffer, romSize);
+        free(romBuffer);
+    } else {
+        // Hash the file directly (not a .zip)
+        result = rc_hash_generate_from_file(hash, ctx->consoleId, ctx->romPath);
+    }
+
+    if (result == 0) {
+        printf("[RA] Hash generation failed for %s\n", ctx->romPath);
+        free(ctx);
+        return NULL;
+    }
+
+    printf("[RA] Generated hash: %s\n", hash);
+
+    // Verify hash matches this RA game
+    if (verifyRAGameHash(ctx->raGameId, hash)) {
+        printf("[RA] Hash verified! This ROM matches RA game %u\n", ctx->raGameId);
+
+        // Get achievement counts from the cached RA data
+        json_object *results;
+        if (json_object_object_get_ex(ctx->offblast->retroAchievementsCache, "Results", &results)) {
+            size_t numGames = json_object_array_length(results);
+            for (size_t i = 0; i < numGames; i++) {
+                json_object *game = json_object_array_get_idx(results, i);
+                json_object *gameIdObj;
+                if (json_object_object_get_ex(game, "GameID", &gameIdObj) &&
+                    json_object_get_int(gameIdObj) == (int)ctx->raGameId) {
+
+                    // Extract achievement counts
+                    json_object *maxObj, *awardedObj, *hardcoreObj;
+                    uint32_t maxPossible = 0, numAwarded = 0, numAwardedHardcore = 0;
+
+                    if (json_object_object_get_ex(game, "MaxPossible", &maxObj))
+                        maxPossible = json_object_get_int(maxObj);
+                    if (json_object_object_get_ex(game, "NumAwarded", &awardedObj))
+                        numAwarded = json_object_get_int(awardedObj);
+                    if (json_object_object_get_ex(game, "NumAwardedHardcore", &hardcoreObj))
+                        numAwardedHardcore = json_object_get_int(hardcoreObj);
+
+                    // Update cache in database
+                    updateRAGameCache(ctx->targetSignature, ctx->raGameId, hash,
+                                    maxPossible, numAwarded, numAwardedHardcore);
+
+                    printf("[RA] Cached: %u/%u achievements for %s\n",
+                           numAwarded, maxPossible, ctx->gameName);
+
+                    // Trigger UI update if still viewing this game
+                    updateAchievementsText();
+
+                    break;
+                }
+            }
+        }
+    } else {
+        printf("[RA] Hash verification failed - ROM doesn't match RA game %u\n", ctx->raGameId);
+        // Cache the failed attempt (with 0 achievements) to prevent re-trying
+        updateRAGameCache(ctx->targetSignature, ctx->raGameId, hash, 0, 0, 0);
+        printf("[RA] Cached failed verification to prevent retry\n");
+    }
+
+    free(ctx);
+    return NULL;
 }
 
 

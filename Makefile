@@ -1,16 +1,21 @@
 CFLAGS = -Wall
-CFLAGS += $(shell sdl2-config --cflags) 
+CFLAGS += $(shell sdl2-config --cflags)
 CFLAGS += $(shell pkg-config --cflags json-c libcurl gl glew xcb)
 CFLAGS += $(shell xml2-config --cflags)
+CFLAGS += -Ircheevos/include -Ircheevos/src
 
 CFLAGS += -pthread
 
-LIBS += $(shell sdl2-config --libs) 
-LIBS += $(shell pkg-config --libs json-c gl glew libmurmurhash libcurl x11 xcb) -pthread
+LIBS += $(shell sdl2-config --libs)
+LIBS += $(shell pkg-config --libs json-c gl glew libmurmurhash libcurl x11 xcb minizip) -pthread
 LIBS += $(shell xml2-config --libs)
 
 PROG = offblast
 OBJS = main.o offblastDbFile.o
+RCHEEVOS_OBJS = rcheevos/src/rhash/hash.o rcheevos/src/rhash/md5.o rcheevos/src/rhash/hash_rom.o \
+                rcheevos/src/rhash/hash_disc.o rcheevos/src/rhash/cdreader.o rcheevos/src/rhash/hash_encrypted.o \
+                rcheevos/src/rhash/aes.o rcheevos/src/rhash/hash_zip.o rcheevos/src/rcheevos/consoleinfo.o
+OBJS += $(RCHEEVOS_OBJS)
 
 #TODO Optimization on for production!
 
@@ -23,9 +28,13 @@ main.o: main.c offblast.h offblastDbFile.h shaders/*
 offblastDbFile.o: offblastDbFile.c offblast.h offblastDbFile.h
 	gcc -g -c  offblastDbFile.c
 
+$(RCHEEVOS_OBJS): %.o: %.c
+	gcc -g -c ${CFLAGS} $< -o $@
+
 clean:
 	rm -f ./*.o
 	rm -f ${PROG}
+	rm -f $(RCHEEVOS_OBJS)
 
 install:
 	mkdir -p ~/.offblast

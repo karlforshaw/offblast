@@ -12,6 +12,21 @@
   - Rendered at 81% alpha to de-emphasize from core metadata
   - Cache file location: `~/.steam/steam/userdata/<userid>/config/librarycache/achievement_progress.json`
   - Automatically updates when Steam updates the cache (playing games, launching Steam)
+- **RetroAchievements support**
+  - Shows achievement progress for retro games in info panel
+  - Per-user RA credentials via custom user fields: `retroachievements_username` and `retroachievements_api_key`
+  - Get API key at https://retroachievements.org (Settings → Keys)
+  - Smart lazy evaluation: only processes games you've started on RA (not entire library)
+  - On-demand hash verification after 1.6s linger: fuzzy match → extract .zip → hash ROM → verify
+  - Integrated rcheevos library for proper ROM hashing (handles console-specific rules)
+  - Supports both .zip archives and raw ROM files
+  - Status message: "Verifying RetroAchievements..." during hash calculation
+  - Persistent database caches verified matches: `~/.offblast/{email}.ragames`
+  - Automatic achievement refresh after gameplay: fetches fresh data from RA API
+  - Updates displayed counts immediately when returning from games
+  - Comprehensive platform support: NES, SNES, Genesis, N64, GB, GBA, PSX, PS2, PSP, and 20+ more
+  - Only shows for games with achievements (total > 0)
+  - Rendered at 81% alpha to match Steam achievement styling
 - **.desktop file launcher support**
   - Launch PC games, ports, and recompilations via freedesktop.org .desktop files
   - Scan directories for .desktop files with configurable scan_pattern

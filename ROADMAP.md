@@ -230,19 +230,23 @@ User-defined game collections beyond automatic platform-based lists:
 - List metadata (icons, colors, sorting order?)
 
 ### Retro Achievements Support
-Integration with RetroAchievements.org for tracking achievements in retro games:
-- Display achievement progress in game info panel
-- Show which games have achievement support
-- Achievement notifications when unlocked
-- Integration with RetroArch's achievement system
-- User login/authentication for RetroAchievements account
-- Achievement list browser per game
+**SOLVED:** Display achievement progress for retro games via RetroAchievements.org:
+- Shows achievement progress in game info panel: `" | 15/20 Achievements (75%)"`
+- Per-user RA credentials stored in user custom fields (no global config needed)
+- Smart lazy evaluation: only processes games user has started on RA (typically 10-100, not 1000+)
+- On-demand hash verification after 1.6s linger (fuzzy match → extract .zip → hash ROM → verify via API)
+- Integrated rcheevos library for proper ROM hashing (handles .zip extraction, console-specific rules)
+- Persistent database caches verified matches: `~/.offblast/{email}.ragames`
+- Automatic refresh after gameplay: re-fetches RA data and syncs achievement counts
+- Works with both .zip archives and raw ROM files
+- Comprehensive platform mapping (handles OpenGameDB naming variations)
+- Status message: "Verifying RetroAchievements..." during hash calculation
+- Failed verifications cached to prevent retry
+- Only shows for games with achievements (total > 0)
 
-**Questions to resolve:**
-- Authentication method (API key in config, OAuth?)
-- Which data to cache locally vs fetch on demand?
-- UI for browsing achievements (separate view or info panel extension?)
-- Notification system (on-screen overlay, system notifications?)
+**Future enhancements:**
+- Achievement list browser per game (detailed view with icons, descriptions, unlock dates)
+- Achievement notifications when unlocked during gameplay
 
 ### Multi-threaded Steam Metadata Fetching
 **SOLVED:** Parallel fetching dramatically improves cold start performance:

@@ -81,6 +81,11 @@
             "wine_prefix": "/home/karl/.wine-gaming",
             "rpcs3_account": "00000002",
             "yuzu_user_index": "1",
+
+            "retroachievements_username": "YOUR_RA_USERNAME",
+            "retroachievements_api_key": "YOUR_RA_API_KEY",
+            "comment_retroachievements": "Optional: Per-user RetroAchievements credentials. Get API key at retroachievements.org (Settings > Keys)",
+
             "my_custom_setting": "any_value_you_want",
             "literally_anything": "will_be_available_as_%LITERALLY_ANYTHING%"
         }, {

@@ -432,6 +432,53 @@ Add to your config.json:
 #### Without API Key
 The "Browse Covers" option will show an error message. Cover browsing is completely optional - games will still use OpenGameDB covers by default.
 
+### 8. RetroAchievements Integration (Optional)
+
+Display achievement progress for retro games from RetroAchievements.org. Achievements appear in the info panel just like Steam achievements.
+
+#### Getting Your RetroAchievements API Key
+1. Create a free account at https://retroachievements.org
+2. Go to **Settings → Keys**
+3. Copy your **Web API Key**
+
+#### Configuration (Per-User)
+RetroAchievements credentials are configured **per-user** using custom fields. Each family member can have their own RA account:
+
+```json
+"users": [{
+  "name": "Player 1",
+  "email": "player1@example.com",
+  "avatar": "/path/to/avatar.jpg",
+
+  // RetroAchievements credentials (per-user)
+  "retroachievements_username": "YourRAUsername",
+  "retroachievements_api_key": "YourWebAPIKey",
+
+  // Other custom fields
+  "save_path": "/saves/player1/",
+  "cemu_account": "80000001"
+}]
+```
+
+#### How It Works
+- **On startup**: Fetches your RA game list (only games you've started, typically 10-100)
+- **On browse**: After 1.6s on a game, fuzzy matches against your RA list
+- **On match**: Extracts .zip, hashes ROM, verifies with RA API
+- **On verify**: Caches achievement data permanently
+- **After gameplay**: Automatically refreshes to show newly unlocked achievements
+
+#### What This Enables
+- **Achievement progress** displayed in game info panel (e.g., "15/20 Achievements (75%)")
+- **Per-user tracking** - each family member sees their own progress
+- **Smart performance** - only hashes games you've actually played on RA
+- **Supports .zip files** - automatically extracts and hashes ROM inside
+- **Works with 30+ platforms**: NES, SNES, Genesis, N64, GB, GBA, PSX, PS2, PSP, and more
+- **Persistent caching** - verified games stored in `~/.offblast/{email}.ragames`
+- **Auto-refresh** - achievement counts update after playing games
+
+#### Without API Key
+RetroAchievements features are disabled. This is completely optional - all other functionality works normally.
+
 ### Complete Example Configuration
 ```json
 {

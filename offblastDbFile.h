@@ -91,6 +91,21 @@ typedef struct PlayTimeFile {
     PlayTime entries[];
 } PlayTimeFile;
 
+typedef struct RAGameCache {
+    uint64_t targetSignature;  // OffBlast's game ID
+    uint32_t raGameId;         // RetroAchievements game ID
+    char hash[33];             // Verified RA hash (MD5)
+    uint32_t maxPossible;      // Total achievements
+    uint32_t numAwarded;       // Unlocked count (standard mode)
+    uint32_t numAwardedHardcore; // Unlocked count (hardcore mode)
+    uint32_t lastFetched;      // Cache timestamp
+} RAGameCache;
+
+typedef struct RAGameCacheFile {
+    uint32_t nEntries;
+    RAGameCache entries[];
+} RAGameCacheFile;
+
 
 int InitDbFile(char *, OffblastDbFile *dbFileStruct, 
         size_t itemSize);
