@@ -10111,7 +10111,7 @@ void importFromCustom(Launcher *theLauncher) {
 
     RomFoundList *list = newRomList();
 
-    // Check if we should use pattern-based scanning
+    // Pattern-based scanning (if configured)
     if (strlen(theLauncher->scanPattern) > 0) {
         // Special case: DIRECTORY means scan for directories instead of files
         if (strcmp(theLauncher->scanPattern, "DIRECTORY") == 0) {
@@ -10240,8 +10240,12 @@ void importFromCustom(Launcher *theLauncher) {
             }
         }
     }
-    else {
-        // Standard directory scanning with extensions
+
+    // Extension-based scanning (if configured) - additive with pattern scanning
+    if (strlen(theLauncher->extension) > 0) {
+        // Rewind directory for extension scanning (might have been read by pattern scan)
+        rewinddir(dir);
+
         struct dirent *currentEntry;
         while ((currentEntry = readdir(dir)) != NULL) {
 
