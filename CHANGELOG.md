@@ -43,6 +43,10 @@
   - Graceful error handling - failed fetches marked with ranking=999
 
 ### Fixed
+- Steam metadata no longer re-fetches on every launch for games without release dates
+  - Changed condition from empty date check to ranking==0
+  - Steam API doesn't return dates for some games, causing infinite re-fetch loop
+  - Now uses ranking as fetch marker (always set to score or 999 after first fetch)
 - Desktop launcher rescan now clears stale assignments before re-matching
 - Rescan/import operations preserve current view (stay in platform list instead of home)
 - Desktop launcher rescan properly calls importFromDesktop() instead of importFromCustom()

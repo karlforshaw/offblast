@@ -9252,18 +9252,28 @@ void writeMetadataToDatabase(OffblastUi *offblast, uint64_t targetSignature,
     // Set release date
     if (meta->date[0] != '\0') {
         memcpy(target->date, meta->date, sizeof(target->date));
+        printf("  [Metadata] Date: %s\n", meta->date);
+    } else {
+        printf("  [Metadata] No date returned from Steam API\n");
     }
 
     // Set score
     if (meta->score > 0) {
         target->ranking = meta->score;
+        printf("  [Metadata] Score: %u\n", meta->score);
     } else {
         target->ranking = 999;
+        printf("  [Metadata] No score returned, using 999\n");
     }
 
     // Write description blob
     if (meta->description) {
         target->descriptionOffset = writeDescriptionBlob(target, meta->description);
+        if (target->descriptionOffset > 0) {
+            printf("  [Metadata] Stored description at offset %lu\n", target->descriptionOffset);
+        }
+    } else {
+        printf("  [Metadata] No description returned\n");
     }
 }
 
@@ -9787,8 +9797,8 @@ void importFromSteam(Launcher *theLauncher) {
                 }
             }
 
-            // Queue metadata fetch if needed
-            if (target->date[0] == '\0') {
+            // Queue metadata fetch if needed (use ranking as marker - it's set to score or 999)
+            if (target->ranking == 0) {
                 queueMetadataFetch(&queue, sg->appid, target->targetSignature, sg->name);
             }
         }
