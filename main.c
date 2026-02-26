@@ -731,7 +731,7 @@ void pressGuide();
 void rescrapeCurrentLauncher(int deleteAllCovers);
 void evictOldestTexture();
 void evictTexturesOlderThan(uint32_t ageMs);
-void updateResults();
+void updateResults(uint32_t *launcherSignature);
 void updateHomeLists();
 void updateInfoText();
 void updateDescriptionText();
@@ -921,6 +921,10 @@ void doSearch() {
     offblast->mainUi.rowGeometryInvalid = 1;
     offblast->mainUi.showSearch = 1;
     offblast->searchPrevChar = 0; // Reset previous char when entering search
+
+    // Enable text input for keyboard typing
+    SDL_StartTextInput();
+    printf("Search mode: keyboard input enabled\n");
 }
 void doHome() {
     changeRowset(offblast->mainUi.homeRowset);
@@ -3741,6 +3745,39 @@ int main(int argc, char** argv) {
                     printf("controller removed\n");
                 }
             }
+            else if (event.type == SDL_TEXTINPUT) {
+                // Handle text input for search (when search is active)
+                if (offblast->mainUi.showSearch && offblast->searchCursor < OFFBLAST_MAX_SEARCH - 1) {
+                    // SDL_TEXTINPUT gives us the actual character typed (handles shift, etc.)
+                    char inputChar = event.text.text[0];
+
+                    // Only accept alphanumeric and space
+                    if ((inputChar >= 'a' && inputChar <= 'z') ||
+                        (inputChar >= 'A' && inputChar <= 'Z') ||
+                        (inputChar >= '0' && inputChar <= '9') ||
+                        inputChar == ' ') {
+
+                        offblast->searchTerm[offblast->searchCursor] = inputChar;
+                        offblast->searchCursor++;
+                        offblast->searchTerm[offblast->searchCursor] = '\0';
+                        updateResults(NULL);  // NULL = search all games
+                        printf("Search: %s\n", offblast->searchTerm);
+                    }
+                }
+            }
+            else if (event.type == SDL_KEYDOWN) {
+                SDL_KeyboardEvent *keyEvent = (SDL_KeyboardEvent*) &event;
+
+                // Backspace in search mode
+                if (offblast->mainUi.showSearch && keyEvent->keysym.scancode == SDL_SCANCODE_BACKSPACE) {
+                    if (offblast->searchCursor > 0) {
+                        offblast->searchCursor--;
+                        offblast->searchTerm[offblast->searchCursor] = '\0';
+                        updateResults(NULL);  // NULL = search all games
+                        printf("Search: %s\n", offblast->searchTerm);
+                    }
+                }
+            }
             else if (event.type == SDL_KEYUP) {
                 SDL_KeyboardEvent *keyEvent = (SDL_KeyboardEvent*) &event;
                 if (keyEvent->keysym.scancode == SDL_SCANCODE_ESCAPE) {
@@ -3749,7 +3786,15 @@ int main(int argc, char** argv) {
                     break;
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_RETURN) {
-                    pressConfirm(-1);
+                    // Special handling for search mode: close search and stay on results
+                    if (offblast->mainUi.showSearch) {
+                        offblast->mainUi.showSearch = 0;
+                        SDL_StopTextInput();
+                        printf("Search confirmed: %s\n", offblast->searchTerm);
+                        // Stay in search results view
+                    } else {
+                        pressConfirm(-1);
+                    }
                     SDL_RaiseWindow(offblast->window);
                 }
                 else if (keyEvent->keysym.scancode == SDL_SCANCODE_F) {
@@ -4643,9 +4688,10 @@ int main(int argc, char** argv) {
 			}
 
             if (mainUi->showSearch) {
-                Color menuColor = {0.0, 0.0, 0.0, 0.8};
-                renderGradient(0, 0, 
-                        offblast->winWidth, offblast->winHeight, 
+                // Semi-transparent overlay so results are visible while typing
+                Color menuColor = {0.0, 0.0, 0.0, 0.6};
+                renderGradient(0, 0,
+                        offblast->winWidth, offblast->winHeight,
                         0,
                         menuColor, menuColor);
 
@@ -6912,12 +6958,12 @@ void pressConfirm(int32_t joystickIndex) {
                 }
             }
             else {
-                offblast->searchTerm[offblast->searchCursor] = 
+                offblast->searchTerm[offblast->searchCursor] =
                     offblast->searchCurChar;
                 offblast->searchCursor++;
             }
 
-            updateResults();
+            updateResults(NULL);  // NULL = search all games
         }
 
     }
@@ -7019,6 +7065,8 @@ void pressCancel() {
         }
         else if (offblast->mainUi.showSearch) {
             offblast->mainUi.showSearch = 0;
+            SDL_StopTextInput();
+            printf("Search closed: keyboard input disabled\n");
         }
         else if (offblast->mainUi.activeRowset == offblast->mainUi.searchRowset) {
             //offblast->mainUi.activeRowset = offblast->mainUi.homeRowset;

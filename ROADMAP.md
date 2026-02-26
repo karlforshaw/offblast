@@ -312,7 +312,16 @@ What happens when Steam is configured but there's no internet connection? Curren
 - Partial failures mid-fetch
 
 ### Search Keyboard Input
-Support keyboard input for search (currently controller-only).
+**SOLVED:** Keyboard typing support for search functionality:
+- Type directly on keyboard instead of using controller character wheel
+- Accepts alphanumeric characters and spaces
+- Backspace to delete characters
+- Enter to confirm and close search overlay
+- Dual input mode: keyboard and controller both work simultaneously
+- Semi-transparent overlay (60% opacity) shows results filtering in real-time
+- SDL_TEXTINPUT events for proper character handling (respects Shift, etc.)
+- Automatically enables/disables text input when entering/exiting search
+- No conflict with hjkl navigation (navigation disabled during search)
 
 ---
 

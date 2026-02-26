@@ -37,6 +37,16 @@
   - Background loading: badges download asynchronously while browsing
   - Persistent badge cache: icons load instantly on subsequent views
   - Cursor position indicator: "3/20" shows current position in list
+- **Search keyboard input support**
+  - Type search queries directly on keyboard instead of using controller character wheel
+  - Accepts a-z, A-Z, 0-9, and space characters
+  - Backspace to delete characters
+  - Enter key confirms search and closes overlay
+  - Dual input mode: keyboard and controller work simultaneously
+  - Semi-transparent overlay (60% opacity) shows game results filtering in real-time as you type
+  - SDL_TEXTINPUT events properly handle Shift key for uppercase
+  - Automatically enables text input when opening search (Y button), disables when closing (B/Enter)
+  - Search character wheel remains visible for controller users
 - **.desktop file launcher support**
   - Launch PC games, ports, and recompilations via freedesktop.org .desktop files
   - Scan directories for .desktop files with configurable scan_pattern
