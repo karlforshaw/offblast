@@ -214,20 +214,36 @@ echo "Ready to launch!"
 - Configurable timeouts (currently manual abort only)
 
 ### Custom Lists
-User-defined game collections beyond automatic platform-based lists:
-- Create custom categories: "Couch Co-op", "Unfinished", "Favorites", "Kids Games"
-- Manual curation (add/remove games from lists via UI or config)
-- Appear as rows in home screen alongside "Jump Back In", "Essential PSX", etc.
-- Persistent storage (separate file or embed in config.json?)
+**SOLVED:** File-based game collections that appear as rows on the home screen:
+- JSON files stored in `~/.offblast/lists/*.json`
+- Auto-discovery: loads all JSON files from lists directory on startup
+- Simple format: name, description, author, platform, array of game names
+- Fuzzy name matching finds games in your library (resilient to OpenGameDB changes)
+- Shows ALL games in list (owned + unowned) to create "collection completion" feeling
+- Unowned games grayed out (30% desaturated, 70% alpha, like uninstalled Steam games)
+- Portable and shareable: commit to GitHub, share with friends
+- Example included: "Metal Jesus Top 10 PS2" from YouTube video
+- Lists appear as rows alongside "Jump Back In", "Essential PSX", platform rows
+- Empty lists skipped (no games matched in OpenGameDB)
 
-**Related features (part of this):**
-- **List Caching**: Cache generated lists to files for faster loading
-- **Collections**: Curated game collections (e.g., YouTuber lists like Metal Jesus) - could be an OpenGameDB feature
+**File format example:**
+```json
+{
+  "name": "Metal Jesus Top 10 PS2",
+  "description": "Metal Jesus Rocks' favorite PlayStation 2 games",
+  "author": "MetalJesusRocks",
+  "url": "https://www.youtube.com/watch?v=QsZfEtaO_us",
+  "platform": "playstation_2",
+  "games": ["SSX 3", "Grand Theft Auto: Vice City", "Burnout 3: Takedown", ...]
+}
+```
 
-**Questions to resolve:**
-- UI for managing lists (add/remove games, create new lists, reorder?)
-- Storage format (JSON config, separate database file?)
-- List metadata (icons, colors, sorting order?)
+**Future enhancements:**
+- UI for managing lists (add/remove games, create new lists)
+- AppImage auto-install bundled lists (like OpenGameDB sync)
+- List metadata (icons, colors, custom sorting)
+- Recommendation engine based on list overlap
+- URL loading (fetch from GitHub, auto-update)
 
 ### Retro Achievements Support
 **SOLVED:** Display achievement progress for retro games via RetroAchievements.org:

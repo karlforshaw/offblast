@@ -353,6 +353,18 @@ typedef struct PlatformName {
 PlatformName platformNames[MAX_PLATFORM_NAMES];
 uint32_t numPlatformNames = 0;
 
+#define MAX_CUSTOM_LISTS 20
+#define MAX_LIST_GAMES 100
+
+typedef struct CustomList {
+    char name[256];
+    char description[512];
+    char author[128];
+    char platform[256];  // Filter platform, or empty for all platforms
+    char **gameNames;    // Array of game name strings to fuzzy match
+    uint32_t numGames;
+} CustomList;
+
 struct OffblastUi;
 typedef struct Animation {
     uint32_t animating;
@@ -627,6 +639,9 @@ typedef struct OffblastUi {
 
     LauncherContentsFile launcherContentsCache;
 
+    uint32_t nCustomLists;
+    CustomList customLists[MAX_CUSTOM_LISTS];
+
     SDL_Window *window;
     uint32_t windowManager;
     uint32_t sessionType;
@@ -733,6 +748,8 @@ void evictOldestTexture();
 void evictTexturesOlderThan(uint32_t ageMs);
 void updateResults(uint32_t *launcherSignature);
 void updateHomeLists();
+void loadCustomLists();
+void buildCustomListRows(MainUi *mainUi, LaunchTargetFile *targetFile);
 void updateInfoText();
 void updateDescriptionText();
 void updateGameInfo();
@@ -3614,12 +3631,16 @@ int main(int argc, char** argv) {
 
     // allocate home rowset
     mainUi->homeRowset = calloc(1, sizeof(UiRowset));
-    mainUi->homeRowset->rows = calloc(3 + offblast->nPlatforms, sizeof(UiRow));
+    // Allocate rows: Jump Back In + Essential rows + platform rows + custom lists
+    mainUi->homeRowset->rows = calloc(3 + offblast->nPlatforms + MAX_CUSTOM_LISTS, sizeof(UiRow));
     mainUi->homeRowset->numRows = 0;
     mainUi->homeRowset->rowCursor = mainUi->homeRowset->rows;
     mainUi->activeRowset = mainUi->homeRowset;
 
     mainUi->rowGeometryInvalid = 1;
+
+    // Load custom lists from ~/.offblast/lists/*.json
+    loadCustomLists();
 
     updateHomeLists();
 
@@ -8141,11 +8162,13 @@ void updateHomeLists(){
         }
     }
 
+    // Add custom list rows (builds rows directly into homeRowset)
+    buildCustomListRows(mainUi, launchTargetFile);
 
     UiRowset *homeRowset = mainUi->homeRowset;
     for (uint32_t i = 0; i < mainUi->homeRowset->numRows; ++i) {
         if (i == 0) {
-            homeRowset->rows[i].previousRow 
+            homeRowset->rows[i].previousRow
                 = &homeRowset->rows[homeRowset->numRows-1];
         }
         else {
@@ -8170,8 +8193,217 @@ void updateHomeLists(){
     offblast->mainUi.titleText = mainUi->homeRowset->movingToTarget->name;
     updateInfoText();
     updateDescriptionText();
-    offblast->mainUi.rowNameText 
+    offblast->mainUi.rowNameText
         = mainUi->homeRowset->movingToRow->name;
+}
+
+void loadCustomLists() {
+    char *homePath = getenv("HOME");
+    if (!homePath) return;
+
+    char listsPath[PATH_MAX];
+    snprintf(listsPath, PATH_MAX, "%s/.offblast/lists", homePath);
+
+    DIR *dir = opendir(listsPath);
+    if (!dir) {
+        printf("No custom lists directory found at %s\n", listsPath);
+        return;
+    }
+
+    offblast->nCustomLists = 0;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL && offblast->nCustomLists < MAX_CUSTOM_LISTS) {
+        // Only process .json files
+        const char *ext = strrchr(entry->d_name, '.');
+        if (!ext || strcmp(ext, ".json") != 0) continue;
+
+        char filePath[PATH_MAX];
+        snprintf(filePath, PATH_MAX, "%s/%s", listsPath, entry->d_name);
+
+        printf("[Custom Lists] Loading %s...\n", entry->d_name);
+
+        // Read JSON file
+        FILE *f = fopen(filePath, "r");
+        if (!f) {
+            printf("[Custom Lists] Failed to open %s\n", filePath);
+            continue;
+        }
+
+        fseek(f, 0, SEEK_END);
+        long fsize = ftell(f);
+        fseek(f, 0, SEEK_SET);
+
+        char *jsonData = malloc(fsize + 1);
+        fread(jsonData, 1, fsize, f);
+        jsonData[fsize] = '\0';
+        fclose(f);
+
+        // Parse JSON
+        json_object *root = json_tokener_parse(jsonData);
+        free(jsonData);
+
+        if (!root) {
+            printf("[Custom Lists] Failed to parse JSON in %s\n", entry->d_name);
+            continue;
+        }
+
+        CustomList *list = &offblast->customLists[offblast->nCustomLists];
+
+        // Extract list metadata
+        json_object *nameObj, *descObj, *authorObj, *platformObj, *gamesObj;
+
+        if (json_object_object_get_ex(root, "name", &nameObj)) {
+            strncpy(list->name, json_object_get_string(nameObj), 255);
+            list->name[255] = '\0';
+        } else {
+            strcpy(list->name, "Unnamed List");
+        }
+
+        if (json_object_object_get_ex(root, "description", &descObj)) {
+            strncpy(list->description, json_object_get_string(descObj), 511);
+            list->description[511] = '\0';
+        } else {
+            list->description[0] = '\0';
+        }
+
+        if (json_object_object_get_ex(root, "author", &authorObj)) {
+            strncpy(list->author, json_object_get_string(authorObj), 127);
+            list->author[127] = '\0';
+        } else {
+            list->author[0] = '\0';
+        }
+
+        if (json_object_object_get_ex(root, "platform", &platformObj)) {
+            strncpy(list->platform, json_object_get_string(platformObj), 255);
+            list->platform[255] = '\0';
+        } else {
+            list->platform[0] = '\0';  // Empty = all platforms
+        }
+
+        // Extract game names array
+        if (json_object_object_get_ex(root, "games", &gamesObj)) {
+            size_t numGames = json_object_array_length(gamesObj);
+            if (numGames > MAX_LIST_GAMES) numGames = MAX_LIST_GAMES;
+
+            list->gameNames = calloc(numGames, sizeof(char *));
+            list->numGames = 0;
+
+            for (size_t i = 0; i < numGames; i++) {
+                json_object *gameObj = json_object_array_get_idx(gamesObj, i);
+                const char *gameName = json_object_get_string(gameObj);
+                if (gameName && strlen(gameName) > 0) {
+                    list->gameNames[list->numGames] = strdup(gameName);
+                    list->numGames++;
+                }
+            }
+
+            printf("[Custom Lists] Loaded '%s': %u games\n", list->name, list->numGames);
+        }
+
+        json_object_put(root);
+        offblast->nCustomLists++;
+    }
+
+    closedir(dir);
+    printf("[Custom Lists] Loaded %u lists\n", offblast->nCustomLists);
+}
+
+void buildCustomListRows(MainUi *mainUi, LaunchTargetFile *targetFile) {
+    if (offblast->nCustomLists == 0) return;
+
+    printf("[Custom Lists] Building rows for %u lists...\n", offblast->nCustomLists);
+
+    for (uint32_t listIdx = 0; listIdx < offblast->nCustomLists; listIdx++) {
+        CustomList *list = &offblast->customLists[listIdx];
+
+        // Allocate tiles for this list (will be managed by updateHomeLists)
+        UiTile *tiles = calloc(MAX_LIST_GAMES, sizeof(UiTile));
+        if (!tiles) continue;
+
+        uint32_t tileCount = 0;
+
+        // Fuzzy match each game in the list against user's library
+        for (uint32_t gameIdx = 0; gameIdx < list->numGames; gameIdx++) {
+            const char *gameName = list->gameNames[gameIdx];
+
+            // Use fuzzy matching (same as import logic)
+            float matchScore = 0;
+            const char *platform = list->platform[0] ? list->platform : NULL;
+
+            int32_t targetIdx = -1;
+
+            // Search through all targets
+            if (platform) {
+                // Platform-specific search
+                targetIdx = launchTargetIndexByNameMatch(targetFile, (char *)gameName, (char *)platform, &matchScore);
+            } else {
+                // Search all platforms for best match
+                float bestScore = 0;
+                int32_t bestIdx = -1;
+
+                for (uint32_t i = 0; i < targetFile->nEntries; i++) {
+                    float score = 0;
+                    int32_t idx = launchTargetIndexByNameMatch(targetFile, (char *)gameName,
+                                                               targetFile->entries[i].platform, &score);
+                    if (idx >= 0 && score > bestScore) {
+                        bestScore = score;
+                        bestIdx = idx;
+                    }
+                }
+                targetIdx = bestIdx;
+                matchScore = bestScore;
+            }
+
+            // Add to list if we found any match (even poor matches show what's missing from library)
+            // Games without paths will render grayed out (like uninstalled Steam games)
+            if (targetIdx >= 0 && matchScore >= 0.3) {
+                tiles[tileCount].target = &targetFile->entries[targetIdx];
+                printf("[Custom Lists]   Matched '%s' (score: %.2f, owned: %s)\n",
+                       gameName, matchScore,
+                       targetFile->entries[targetIdx].path[0] ? "yes" : "no");
+                tileCount++;
+            } else {
+                printf("[Custom Lists]   No match for '%s' in OpenGameDB\n", gameName);
+            }
+        }
+
+        if (tileCount == 0) {
+            printf("[Custom Lists] '%s' has no matching games in library, skipping\n", list->name);
+            free(tiles);
+            continue;
+        }
+
+        // Link tiles
+        for (uint32_t i = 0; i < tileCount; i++) {
+            if (i > 0) tiles[i].previous = &tiles[i - 1];
+            if (i < tileCount - 1) tiles[i].next = &tiles[i + 1];
+        }
+        tiles[0].previous = NULL;
+        tiles[tileCount - 1].next = NULL;
+
+        // Add to homeRowset directly
+        if (mainUi->homeRowset->numRows < 3 + offblast->nPlatforms + MAX_CUSTOM_LISTS) {
+            UiRow *row = &mainUi->homeRowset->rows[mainUi->homeRowset->numRows];
+
+            // Free existing tiles if any
+            if (row->tiles != NULL) {
+                free(row->tiles);
+            }
+
+            row->tiles = tiles;
+            row->tileCursor = &tiles[0];
+            row->length = tileCount;
+            strncpy(row->name, list->name, 255);
+            row->name[255] = '\0';
+
+            mainUi->homeRowset->numRows++;
+
+            printf("[Custom Lists] Created row '%s' with %u matched games\n", list->name, tileCount);
+        } else {
+            free(tiles);
+        }
+    }
 }
 
 void updateResults(uint32_t *launcherSignature) {

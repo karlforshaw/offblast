@@ -47,6 +47,17 @@
   - SDL_TEXTINPUT events properly handle Shift key for uppercase
   - Automatically enables text input when opening search (Y button), disables when closing (B/Enter)
   - Search character wheel remains visible for controller users
+- **Custom game lists**
+  - Create curated game collections as JSON files in `~/.offblast/lists/`
+  - Lists appear as rows on home screen (alongside Jump Back In, Essential lists, etc.)
+  - File-based format: portable and shareable (commit to GitHub, share with friends)
+  - Simple JSON structure: name, description, author, platform, array of game names
+  - Fuzzy name matching finds games in your library (resilient to database changes)
+  - Shows ALL games in list, grays out unowned games (creates "collection completion" feeling)
+  - Unowned games rendered like uninstalled Steam games (30% desat, 70% alpha)
+  - Automatic discovery: loads all `.json` files from lists directory on startup
+  - Includes example: "Metal Jesus Top 10 PS2" in `lists/metal-jesus-top-10-ps2.json`
+  - Future: AppImage will auto-install bundled lists (like OpenGameDB)
 - **.desktop file launcher support**
   - Launch PC games, ports, and recompilations via freedesktop.org .desktop files
   - Scan directories for .desktop files with configurable scan_pattern

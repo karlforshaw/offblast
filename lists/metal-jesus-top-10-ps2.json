@@ -1,0 +1,19 @@
+{
+  "name": "Metal Jesus Top 10 PS2",
+  "description": "Metal Jesus Rocks' favorite PlayStation 2 games",
+  "author": "MetalJesusRocks",
+  "url": "https://www.youtube.com/watch?v=QsZfEtaO_us&t=764s",
+  "platform": "playstation_2",
+  "games": [
+    "SSX 3",
+    "Grand Theft Auto: Vice City",
+    "Burnout 3: Takedown",
+    "Ratchet & Clank: Going Commando",
+    "Katamari Damacy",
+    "Resident Evil 4",
+    "TimeSplitters 2",
+    "Final Fantasy X",
+    "Need for Speed: Hot Pursuit 2",
+    "SOCOM II: U.S. Navy SEALs"
+  ]
+}
