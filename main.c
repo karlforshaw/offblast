@@ -1397,10 +1397,13 @@ void closeAchievementBrowser() {
 void *downloadBadgeMain(void *arg) {
 	Image *badge = (Image *)arg;
 
+	printf("[Badge Download] Thread started for URL: %s\n", badge->url);
+
 	// Extract badge ID from URL (last component before .png)
 	// URL format: https://retroachievements.org/Badge/12345.png
 	const char *lastSlash = strrchr(badge->url, '/');
 	if (!lastSlash) {
+		printf("[Badge Download] Invalid URL format\n");
 		badge->state = IMAGE_STATE_DEAD;
 		return NULL;
 	}
@@ -1408,6 +1411,8 @@ void *downloadBadgeMain(void *arg) {
 	char badgeFilename[64];
 	strncpy(badgeFilename, lastSlash + 1, sizeof(badgeFilename) - 1);
 	badgeFilename[sizeof(badgeFilename) - 1] = '\0';
+
+	printf("[Badge Download] Badge filename: %s\n", badgeFilename);
 
 	// Check if badge is already cached
 	char *homePath = getenv("HOME");
@@ -1486,6 +1491,10 @@ void queueAchievementBadges() {
 		return;
 	}
 
+	printf("[Badge Queue] Visible range: %u to %u\n",
+		   ui->achievementScrollOffset,
+		   ui->achievementScrollOffset + ui->achievementVisibleRows);
+
 	// Queue badges for visible achievements
 	pthread_mutex_lock(&ui->achievementBadgesLock);
 
@@ -1499,6 +1508,8 @@ void queueAchievementBadges() {
 			itemIndex < ui->achievementScrollOffset + ui->achievementVisibleRows &&
 			itemIndex < MAX_ACHIEVEMENT_BADGES) {
 
+			printf("[Badge Queue] Checking badge %u, state=%u\n", itemIndex, ui->achievementBadges[itemIndex].state);
+
 			if (ui->achievementBadges[itemIndex].state == IMAGE_STATE_COLD) {
 				// Get badge name
 				json_object *badgeObj;
@@ -1510,6 +1521,8 @@ void queueAchievementBadges() {
 							 "https://retroachievements.org/Badge/%s.png", badgeName);
 
 					ui->achievementBadges[itemIndex].state = IMAGE_STATE_DOWNLOADING;
+
+					printf("[Badge Queue] Queuing badge %u: %s\n", itemIndex, badgeName);
 
 					// Spawn download thread
 					pthread_t downloadThread;
@@ -1626,6 +1639,11 @@ void doViewAchievements() {
 		ui->achievementBadges[i].textureHandle = 0;
 		ui->achievementBadges[i].atlas = NULL;
 	}
+
+	// Calculate visible rows (same calculation as rendering code)
+	float itemHeight = offblast->infoPointSize * 4.0;
+	ui->achievementVisibleRows = (uint32_t)(offblast->winHeight * 0.7 / itemHeight);
+	printf("[Achievement Browser] Calculated %u visible rows\n", ui->achievementVisibleRows);
 
 	// Queue badges for visible achievements
 	queueAchievementBadges();
