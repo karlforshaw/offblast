@@ -587,6 +587,7 @@ typedef struct OffblastUi {
 
     LoadingState loadingState;
     uint32_t loadingMode;         // 1 = showing loading screen
+    uint32_t userLoadingMode;     // 1 = showing user-specific loading (Steam import)
     uint32_t exitAnimating;       // 1 = exit animation in progress
     uint32_t exitAnimationStartTick;  // When exit animation started
 
@@ -696,6 +697,9 @@ typedef struct OffblastUi {
     json_object *retroAchievementsCache;  // User's RA game list
     OffblastDbFile raGameDb;              // Cached hash matches
     RAGameCacheFile *raGameCache;
+
+    // Steam account management
+    int steamLibraryImported;  // 0 = not imported yet, 1 = imported for current user
 } OffblastUi;
 
 typedef struct CurlFetch {
@@ -794,6 +798,11 @@ void updateAchievementsText();
 void loadRAGameCache();
 void loadRACredentialsFromUser();
 void loadRetroAchievementsCache();
+char* getCurrentSteamAccount();
+int switchSteamAccount(const char *accountName);
+void ensureCorrectSteamAccount();
+void renderStatusFrame(const char *message);
+void* steamImportThreadMain(void *arg);
 void syncRAGameCacheWithFreshData();
 void updateRetroAchievementsText();
 int platformToConsoleId(const char *platform);
@@ -2916,8 +2925,8 @@ void *initThreadFunc(void *arg) {
 
         // Import games based on launcher type
         if (strcmp(theLauncher->type, "steam") == 0) {
-            SET_STATUS("Fetching Steam library...");
-            importFromSteam(theLauncher);
+            // DEFER: Steam import happens after player selection (need to know which Steam account)
+            printf("Steam launcher configured - import deferred until player selection\n");
         }
         else if (strcmp(theLauncher->type, "desktop") == 0) {
             char statusMsg[256];
@@ -3099,8 +3108,24 @@ void *initThreadFunc(void *arg) {
     mainUi->numMenuItems++;
 
     for (uint32_t i = 0; i < offblast->nLaunchers; ++i) {
+        // Skip Steam launcher if no users have steam_account_name configured
+        if (strcmp(offblast->launchers[i].type, "steam") == 0) {
+            int anyUserHasSteam = 0;
+            for (size_t u = 0; u < offblast->nUsers; u++) {
+                const char *steamAccount = getUserCustomField(&offblast->users[u], "steam_account_name");
+                if (steamAccount && steamAccount[0]) {
+                    anyUserHasSteam = 1;
+                    break;
+                }
+            }
+            if (!anyUserHasSteam) {
+                printf("[Steam] No users have steam_account_name, skipping Steam from menu\n");
+                continue;
+            }
+        }
+
         if (strlen(offblast->launchers[i].name)) {
-            mainUi->menuItems[iItem].label = 
+            mainUi->menuItems[iItem].label =
                 (char *) offblast->launchers[i].name;
         }
         else {
@@ -3108,7 +3133,7 @@ void *initThreadFunc(void *arg) {
                     offblast->launchers[i].platform);
         }
 
-        mainUi->menuItems[iItem].callbackArgs 
+        mainUi->menuItems[iItem].callbackArgs
             = &offblast->launchers[i].signature;
 
         mainUi->menuItems[iItem++].callback = updateResults;
@@ -3940,6 +3965,9 @@ int main(int argc, char** argv) {
                 loadRACredentialsFromUser();
                 loadRetroAchievementsCache();
                 updateHomeLists();
+
+                // Switch Steam account if user has one configured
+                ensureCorrectSteamAccount();
 
                 printf("Auto-selected single user: %s\n", theUser->name);
                 offblast->mode = OFFBLAST_UI_MODE_MAIN;
@@ -6648,6 +6676,11 @@ void launch() {
     LaunchTarget *target =
         offblast->mainUi.activeRowset->rowCursor->tileCursor->target;
 
+    // Check if we need to switch Steam accounts before launching
+    if (strcmp(target->platform, "steam") == 0) {
+        ensureCorrectSteamAccount();
+    }
+
     // Check if this is an uninstalled Steam game
     if (target->launcherSignature == 0 && strcmp(target->platform, "steam") == 0) {
         printf("Opening Steam install dialog for %s (id: %s)\n", target->name, target->id);
@@ -6964,6 +6997,9 @@ void pressConfirm(int32_t joystickIndex) {
             offblast->retroAchievementsCache = NULL;
         }
 
+        // Reset Steam import flag so new user's library gets imported
+        offblast->steamLibraryImported = 0;
+
         loadPlaytimeFile();
         loadRAGameCache();
         loadRACredentialsFromUser();
@@ -6975,6 +7011,9 @@ void pressConfirm(int32_t joystickIndex) {
             printf("Controller: %s\nAdded to Player\n",
                     SDL_GameControllerNameForIndex(joystickIndex));
         }
+
+        // Import Steam library with visual feedback
+        ensureCorrectSteamAccount();
 
         offblast->mode = OFFBLAST_UI_MODE_MAIN;
 
@@ -7880,6 +7919,17 @@ void updateHomeLists(){
 
             LaunchTarget *target = &launchTargetFile->entries[targetIndex];
 
+            // Filter Steam games by owner tag
+            if (strcmp(target->platform, "steam") == 0 && target->ownerTag[0] != '\0') {
+                User *currentUser = offblast->player.user;
+                if (currentUser) {
+                    const char *userSteamAccount = getUserCustomField(currentUser, "steam_account_name");
+                    if (!userSteamAccount || strcmp(target->ownerTag, userSteamAccount) != 0) {
+                        continue;  // Not owned by current user
+                    }
+                }
+            }
+
             // Skip uninstalled games if filter is enabled
             if (offblast->showInstalledOnly && strlen(target->path) == 0) {
                 continue;
@@ -7943,6 +7993,17 @@ void updateHomeLists(){
             }
 
             LaunchTarget *target = &launchTargetFile->entries[targetIndex];
+
+            // Filter Steam games by owner tag
+            if (strcmp(target->platform, "steam") == 0 && target->ownerTag[0] != '\0') {
+                User *currentUser = offblast->player.user;
+                if (currentUser) {
+                    const char *userSteamAccount = getUserCustomField(currentUser, "steam_account_name");
+                    if (!userSteamAccount || strcmp(target->ownerTag, userSteamAccount) != 0) {
+                        continue;  // Not owned by current user
+                    }
+                }
+            }
 
             // Skip uninstalled games if filter is enabled
             if (offblast->showInstalledOnly && strlen(target->path) == 0) {
@@ -8050,6 +8111,18 @@ void updateHomeLists(){
     // __ROWS__ Essentials per platform
     for (uint32_t iPlatform = 0; iPlatform < offblast->nPlatforms; iPlatform++) {
 
+        // Skip Steam if user doesn't have steam_account_name configured
+        if (strcmp(offblast->platforms[iPlatform], "steam") == 0) {
+            User *currentUser = offblast->player.user;
+            if (currentUser) {
+                const char *steamAccount = getUserCustomField(currentUser, "steam_account_name");
+                if (!steamAccount || !steamAccount[0]) {
+                    printf("[Steam] Skipping Steam platform row (user has no steam_account_name)\n");
+                    continue;  // Skip this platform
+                }
+            }
+        }
+
         // Step 1: Collect ALL games for this platform into temporary array
         uint32_t maxPlatformGames = 2000;
         LaunchTarget **platformGames = calloc(maxPlatformGames, sizeof(LaunchTarget*));
@@ -8059,6 +8132,19 @@ void updateHomeLists(){
             LaunchTarget *target = &launchTargetFile->entries[i];
 
             if (strcmp(target->platform, offblast->platforms[iPlatform]) == 0) {
+                // Filter Steam games by owner tag
+                if (strcmp(target->platform, "steam") == 0 && target->ownerTag[0] != '\0') {
+                    // This is a Steam game with an owner - check if it belongs to current user
+                    User *currentUser = offblast->player.user;
+                    if (currentUser) {
+                        const char *userSteamAccount = getUserCustomField(currentUser, "steam_account_name");
+                        if (!userSteamAccount || strcmp(target->ownerTag, userSteamAccount) != 0) {
+                            // Not owned by current user, skip
+                            continue;
+                        }
+                    }
+                }
+
                 // Skip uninstalled games if filter is enabled
                 if (offblast->showInstalledOnly && strlen(target->path) == 0) {
                     continue;
@@ -8449,6 +8535,17 @@ void updateResults(uint32_t *launcherSignature) {
         }
 
         if (isMatch) {
+            // Filter Steam games by owner tag
+            if (strcmp(targetFile->entries[i].platform, "steam") == 0 && targetFile->entries[i].ownerTag[0] != '\0') {
+                User *currentUser = offblast->player.user;
+                if (currentUser) {
+                    const char *userSteamAccount = getUserCustomField(currentUser, "steam_account_name");
+                    if (!userSteamAccount || strcmp(targetFile->entries[i].ownerTag, userSteamAccount) != 0) {
+                        continue;  // Not owned by current user
+                    }
+                }
+            }
+
             // Skip uninstalled games if filter is enabled
             if (offblast->showInstalledOnly && strlen(targetFile->entries[i].path) == 0) {
                 continue;
@@ -10800,6 +10897,439 @@ void importFromDesktop(Launcher *theLauncher) {
 // End .desktop File Launcher Support
 // ============================================================================
 
+// ============================================================================
+// Steam Account Switching
+// ============================================================================
+
+void* steamImportThreadMain(void *arg) {
+    const char *targetAccount = (const char *)arg;
+
+    pthread_mutex_lock(&offblast->loadingState.mutex);
+    snprintf(offblast->loadingState.status, 256, "Importing Steam library...");
+    pthread_mutex_unlock(&offblast->loadingState.mutex);
+
+    // Find Steam launcher and import
+    for (uint32_t i = 0; i < offblast->nLaunchers; i++) {
+        if (strcmp(offblast->launchers[i].type, "steam") == 0) {
+            printf("[Steam Thread] Importing Steam library for %s\n", targetAccount);
+            importFromSteam(&offblast->launchers[i]);
+            break;
+        }
+    }
+
+    pthread_mutex_lock(&offblast->loadingState.mutex);
+    snprintf(offblast->loadingState.status, 256, "Steam library loaded");
+    offblast->loadingState.complete = 1;
+    pthread_mutex_unlock(&offblast->loadingState.mutex);
+
+    return NULL;
+}
+
+void renderStatusFrame(const char *message) {
+    // Clear screen
+    glClearColor(0.0, 0.0, 0.0, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Show user avatar if available
+    User *currentUser = offblast->player.user;
+    if (currentUser && offblast->playerSelectUi.images) {
+        // Find user index
+        for (size_t i = 0; i < offblast->nUsers; i++) {
+            if (&offblast->users[i] == currentUser) {
+                Image *avatar = &offblast->playerSelectUi.images[i];
+                float avatarSize = offblast->winHeight * 0.3;
+                float avatarX = offblast->winWidth / 2 - avatarSize / 2;
+                float avatarY = offblast->winHeight * 0.6;
+                renderImage(avatarX, avatarY, avatarSize, avatarSize, avatar, 0.0, 1.0);
+                break;
+            }
+        }
+    }
+
+    // Show status message
+    if (message) {
+        uint32_t messageWidth = getTextLineWidth((char *)message,
+                                                  offblast->infoCharData,
+                                                  offblast->infoCodepoints,
+                                                  offblast->infoNumChars);
+        renderText(offblast,
+                   offblast->winWidth / 2 - messageWidth / 2,
+                   offblast->winHeight * 0.3,
+                   OFFBLAST_TEXT_INFO, 1.0, 0,
+                   (char *)message);
+    }
+
+    SDL_GL_SwapWindow(offblast->window);
+}
+
+char* getCurrentSteamAccount() {
+    char *homePath = getenv("HOME");
+    if (!homePath) return NULL;
+
+    char vdfPath[PATH_MAX];
+    snprintf(vdfPath, PATH_MAX, "%s/.steam/steam/config/loginusers.vdf", homePath);
+
+    FILE *f = fopen(vdfPath, "r");
+    if (!f) {
+        printf("[Steam Account] Could not open loginusers.vdf\n");
+        return NULL;
+    }
+
+    char line[1024];
+    static char currentAccount[256] = {0};
+    char *foundAccount = NULL;
+    int inUserBlock = 0;
+    char blockAccountName[256] = {0};
+
+    while (fgets(line, sizeof(line), f)) {
+        // Look for AccountName in each user block
+        if (strstr(line, "\"AccountName\"")) {
+            // Parse value: "AccountName"		"karl_forshaw"
+            // Find the third quote (opening quote of value)
+            char *firstQuote = strchr(line, '"');  // "AccountName"
+            if (firstQuote) {
+                printf("[Steam Account] Parse line: %s", line);
+                char *secondQuote = strchr(firstQuote + 1, '"');  // closing quote of key
+                printf("[Steam Account] First quote at: %ld, second at: %ld\n",
+                       (long)(firstQuote - line), secondQuote ? (long)(secondQuote - line) : -1);
+                if (secondQuote) {
+                    char *thirdQuote = strchr(secondQuote + 1, '"');  // opening quote of value
+                    printf("[Steam Account] Third quote at: %ld\n", thirdQuote ? (long)(thirdQuote - line) : -1);
+                    if (thirdQuote) {
+                        char *valueStart = thirdQuote + 1;
+                        char *valueEnd = strchr(valueStart, '"');
+                        printf("[Steam Account] Value between pos %ld and %ld\n",
+                               (long)(valueStart - line), valueEnd ? (long)(valueEnd - line) : -1);
+                        if (valueEnd) {
+                            size_t len = valueEnd - valueStart;
+                            if (len > 255) len = 255;
+                            strncpy(blockAccountName, valueStart, len);
+                            blockAccountName[len] = '\0';
+                            inUserBlock = 1;
+                            printf("[Steam Account] Extracted AccountName: '%s'\n", blockAccountName);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Look for MostRecent in the same block
+        if (inUserBlock && strstr(line, "\"MostRecent\"")) {
+            // Parse value: "MostRecent"		"1"
+            // Find the second opening quote (start of value)
+            char *firstQuote = strchr(line, '"');  // "MostRecent"
+            if (firstQuote) {
+                char *secondQuote = strchr(firstQuote + 1, '"');  // closing quote of key
+                if (secondQuote) {
+                    char *thirdQuote = strchr(secondQuote + 1, '"');  // opening quote of value
+                    if (thirdQuote) {
+                        char *valueStart = thirdQuote + 1;
+                        if (*valueStart == '1') {
+                            // This is the current account
+                            strncpy(currentAccount, blockAccountName, 255);
+                            currentAccount[255] = '\0';
+                            foundAccount = currentAccount;
+                            printf("[Steam Account] Found MostRecent=1 for %s\n", blockAccountName);
+                            break;
+                        }
+                    }
+                }
+            }
+            inUserBlock = 0;
+            blockAccountName[0] = '\0';
+        }
+    }
+
+    fclose(f);
+
+    if (foundAccount) {
+        printf("[Steam Account] Current account: %s\n", foundAccount);
+    } else {
+        printf("[Steam Account] No MostRecent account found\n");
+    }
+
+    return foundAccount;
+}
+
+int switchSteamAccount(const char *targetAccount) {
+    if (!targetAccount || !targetAccount[0]) {
+        printf("[Steam Account] No target account specified\n");
+        return 0;
+    }
+
+    char *homePath = getenv("HOME");
+    if (!homePath) return 0;
+
+    char vdfPath[PATH_MAX];
+    snprintf(vdfPath, PATH_MAX, "%s/.steam/steam/config/loginusers.vdf", homePath);
+
+    // Read entire file
+    FILE *f = fopen(vdfPath, "r");
+    if (!f) {
+        printf("[Steam Account] Could not open loginusers.vdf for reading\n");
+        return 0;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char *content = malloc(fsize + 1);
+    fread(content, 1, fsize, f);
+    content[fsize] = '\0';
+    fclose(f);
+
+    // Build modified content
+    char *modified = malloc(fsize + 10000);  // Extra space for modifications
+    char *writePtr = modified;
+    char *readPtr = content;
+    int inTargetBlock = 0;
+    int inOtherBlock = 0;
+    int foundTarget = 0;
+
+    while (*readPtr) {
+        char *lineStart = readPtr;
+        char *lineEnd = strchr(readPtr, '\n');
+        if (!lineEnd) lineEnd = readPtr + strlen(readPtr);
+
+        size_t lineLen = lineEnd - lineStart;
+        if (lineEnd > lineStart && *(lineEnd - 1) == '\r') lineLen--;
+
+        // Check if this is an AccountName line
+        if (strstr(lineStart, "\"AccountName\"")) {
+            // Extract account name
+            char *nameStart = strchr(lineStart, '"');
+            if (nameStart) {
+                nameStart = strchr(nameStart + 1, '"');
+                if (nameStart) {
+                    nameStart++;
+                    char *nameEnd = strchr(nameStart, '"');
+                    if (nameEnd) {
+                        size_t nameLen = nameEnd - nameStart;
+                        char accountName[256];
+                        if (nameLen > 255) nameLen = 255;
+                        strncpy(accountName, nameStart, nameLen);
+                        accountName[nameLen] = '\0';
+
+                        if (strcmp(accountName, targetAccount) == 0) {
+                            inTargetBlock = 1;
+                            foundTarget = 1;
+                            printf("[Steam Account] Found target account block: %s\n", targetAccount);
+                        } else {
+                            inOtherBlock = 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Modify MostRecent lines
+        if ((inTargetBlock || inOtherBlock) && strstr(lineStart, "\"MostRecent\"")) {
+            // Replace with correct value
+            char *tabStart = lineStart;
+            while (*tabStart == '\t') {
+                *writePtr++ = *tabStart++;
+            }
+
+            if (inTargetBlock) {
+                writePtr += sprintf(writePtr, "\"MostRecent\"\t\t\"1\"\n");
+                printf("[Steam Account] Set MostRecent=1 for %s\n", targetAccount);
+            } else {
+                writePtr += sprintf(writePtr, "\"MostRecent\"\t\t\"0\"\n");
+            }
+
+            inTargetBlock = 0;
+            inOtherBlock = 0;
+        } else {
+            // Copy line as-is
+            memcpy(writePtr, lineStart, lineLen);
+            writePtr += lineLen;
+            if (*lineEnd == '\r') *writePtr++ = '\r';
+            if (*lineEnd == '\n') *writePtr++ = '\n';
+        }
+
+        readPtr = lineEnd;
+        if (*readPtr) readPtr++;  // Skip newline
+    }
+    *writePtr = '\0';
+
+    free(content);
+
+    if (!foundTarget) {
+        printf("[Steam Account] Account '%s' not found in loginusers.vdf\n", targetAccount);
+        free(modified);
+        return 0;
+    }
+
+    // Write modified content back
+    f = fopen(vdfPath, "w");
+    if (!f) {
+        printf("[Steam Account] Could not open loginusers.vdf for writing\n");
+        free(modified);
+        return 0;
+    }
+
+    fwrite(modified, 1, strlen(modified), f);
+    fclose(f);
+    free(modified);
+
+    printf("[Steam Account] Modified loginusers.vdf successfully\n");
+
+    // Kill Steam
+    printf("[Steam Account] Killing Steam processes...\n");
+    renderStatusFrame("Closing Steam...");
+    system("killall steam 2>/dev/null");
+    system("pkill -f 'steamwebhelper' 2>/dev/null");
+
+    // Wait for processes to die (render frames during wait)
+    for (int i = 0; i < 20; i++) {
+        renderStatusFrame("Waiting for Steam to close...");
+        SDL_Delay(100);
+    }
+
+    // Relaunch Steam
+    printf("[Steam Account] Relaunching Steam as %s...\n", targetAccount);
+    renderStatusFrame("Starting Steam...");
+    system("steam -silent &");
+
+    // Wait for Steam to initialize (render frames during wait)
+    printf("[Steam Account] Waiting for Steam to initialize...\n");
+    for (int i = 0; i < 150; i++) {  // 15 seconds in 100ms chunks
+        char statusMsg[256];
+        snprintf(statusMsg, sizeof(statusMsg), "Waiting for Steam to start... (%d%%)", (i * 100) / 150);
+        renderStatusFrame(statusMsg);
+        SDL_Delay(100);
+
+        if (i % 10 == 0 && system("pgrep steam >/dev/null 2>&1") == 0) {
+            // Steam is running, give it a bit more time to fully initialize
+            for (int j = 0; j < 30; j++) {
+                renderStatusFrame("Steam starting...");
+                SDL_Delay(100);
+            }
+            printf("[Steam Account] Steam initialized\n");
+            return 1;
+        }
+    }
+
+    printf("[Steam Account] Steam failed to start after 15 seconds\n");
+    return 0;
+}
+
+void ensureCorrectSteamAccount() {
+    // Check if Steam library already imported for current user
+    if (offblast->steamLibraryImported) {
+        // Already imported, just verify account is still correct before game launch
+        User *currentUser = offblast->player.user;
+        if (!currentUser) return;
+
+        const char *targetSteamAccount = getUserCustomField(currentUser, "steam_account_name");
+        if (!targetSteamAccount || !targetSteamAccount[0]) return;
+
+        char *currentSteamAccount = getCurrentSteamAccount();
+        if (!currentSteamAccount) return;
+
+        // If account changed since import (user manually switched Steam), warn but don't re-import
+        if (strcmp(currentSteamAccount, targetSteamAccount) != 0) {
+            printf("[Steam Account] WARNING: Steam account changed to '%s' but library is for '%s'\n",
+                   currentSteamAccount, targetSteamAccount);
+        }
+        return;
+    }
+
+    // First time importing for this user
+    User *currentUser = offblast->player.user;
+    if (!currentUser) return;
+
+    const char *targetSteamAccount = getUserCustomField(currentUser, "steam_account_name");
+    if (!targetSteamAccount || !targetSteamAccount[0]) {
+        // User has no Steam account configured, skip
+        printf("[Steam Account] User has no steam_account_name configured, skipping Steam\n");
+        offblast->steamLibraryImported = 1;  // Mark as "done" to prevent repeated checks
+        return;
+    }
+
+    char *currentSteamAccount = getCurrentSteamAccount();
+    if (!currentSteamAccount) {
+        printf("[Steam Account] Could not determine current Steam account\n");
+        return;
+    }
+
+    int needsSwitch = (strcmp(currentSteamAccount, targetSteamAccount) != 0);
+
+    if (needsSwitch) {
+        // Need to switch accounts
+        printf("[Steam Account] Need to switch from '%s' to '%s'\n", currentSteamAccount, targetSteamAccount);
+    } else {
+        printf("[Steam Account] Already logged into correct account: %s\n", currentSteamAccount);
+    }
+
+    // Switch if needed
+    if (needsSwitch) {
+        snprintf(offblast->statusMessage, 256, "Switching to %s's Steam account...", currentUser->name);
+        offblast->statusMessageTick = SDL_GetTicks();
+        offblast->statusMessageDuration = 15000;
+
+        if (!switchSteamAccount(targetSteamAccount)) {
+            snprintf(offblast->statusMessage, 256, "Failed to switch Steam account");
+            offblast->statusMessageTick = SDL_GetTicks();
+            offblast->statusMessageDuration = 5000;
+            return;
+        }
+    }
+
+    // Import Steam games for this user's account with loading screen
+    // Setup loading state for threaded import
+    pthread_mutex_init(&offblast->loadingState.mutex, NULL);
+    offblast->loadingState.complete = 0;
+    offblast->loadingState.error = 0;
+    offblast->loadingState.progress = 0;
+    offblast->loadingState.progressTotal = 0;
+    snprintf(offblast->loadingState.status, 256, "Preparing to load Steam library...");
+
+    // Create thread to do the import
+    pthread_t steamImportThread;
+    pthread_create(&steamImportThread, NULL, steamImportThreadMain, (void*)targetSteamAccount);
+
+    // Show loading screen while import happens
+    printf("[Steam Account] Entering loading screen for Steam import...\n");
+    offblast->loadingMode = 1;
+    offblast->exitAnimating = 0;
+
+    while (offblast->loadingMode && offblast->running) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) {
+                offblast->running = 0;
+                offblast->loadingMode = 0;
+            }
+        }
+
+        renderLoadingScreen(offblast);
+
+        // Check if import complete
+        pthread_mutex_lock(&offblast->loadingState.mutex);
+        if (offblast->loadingState.complete) {
+            printf("[Steam Account] Steam import complete, exiting loading screen\n");
+            offblast->loadingMode = 0;
+        }
+        pthread_mutex_unlock(&offblast->loadingState.mutex);
+
+        SDL_Delay(16);  // ~60 FPS
+    }
+
+    printf("[Steam Account] Exited loading screen\n");
+
+    pthread_join(steamImportThread, NULL);
+    pthread_mutex_destroy(&offblast->loadingState.mutex);
+
+    updateHomeLists();
+    offblast->steamLibraryImported = 1;
+}
+
+// ============================================================================
+// End Steam Account Switching
+// ============================================================================
+
 void importFromSteam(Launcher *theLauncher) {
     // Check if Steam API is configured
     if (offblast->steamApiKey[0] && offblast->steamId[0]) {
@@ -10875,6 +11405,15 @@ void importFromSteam(Launcher *theLauncher) {
             // Update name from API (always fresh)
             strncpy(target->name, sg->name, OFFBLAST_NAME_MAX - 1);
             target->name[OFFBLAST_NAME_MAX - 1] = '\0';
+
+            // Tag with Steam account owner
+            char *currentSteamAccount = getCurrentSteamAccount();
+            if (currentSteamAccount) {
+                strncpy(target->ownerTag, currentSteamAccount, 63);
+                target->ownerTag[63] = '\0';
+            } else {
+                target->ownerTag[0] = '\0';
+            }
 
             // Set cover URL
             char coverUrl[PATH_MAX];

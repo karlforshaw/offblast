@@ -62,6 +62,8 @@ typedef struct LaunchTarget {
 
     char coverUrl[PATH_MAX];
     off_t descriptionOffset;
+
+    char ownerTag[64];  // Steam account owner, or empty for shared games (ROMs)
 } LaunchTarget;
 
 typedef struct LaunchTargetFile {

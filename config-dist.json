@@ -86,6 +86,9 @@
             "retroachievements_api_key": "YOUR_RA_API_KEY",
             "comment_retroachievements": "Optional: Per-user RetroAchievements credentials. Get API key at retroachievements.org (Settings > Keys)",
 
+            "steam_account_name": "karl_forshaw",
+            "comment_steam_account": "Optional: Steam account name (from loginusers.vdf). OffBlast will automatically switch to this Steam account when launching games.",
+
             "my_custom_setting": "any_value_you_want",
             "literally_anything": "will_be_available_as_%LITERALLY_ANYTHING%"
         }, {
@@ -95,7 +98,8 @@
             "cemu_account": "80000002",
             "retroarch_config": "/home/karl/.offblast/cloud_ra.cfg",
             "save_path": "/home/karl/SeraphStore/Games/Super Console/saves/cloud/",
-            "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/cloud/dolphin/USA.raw"
+            "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/cloud/dolphin/USA.raw",
+            "steam_account_name": "cloud_steam"
         }, {
             "name": "Pai",
             "email": "my@email.com",
@@ -103,7 +107,8 @@
             "cemu_account": "80000003",
             "retroarch_config": "/home/karl/.offblast/pai_ra.cfg",
             "save_path": "/home/karl/SeraphStore/Games/Super Console/saves/pai/",
-            "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/pai/dolphin/USA.raw"
+            "dolphin_card": "/home/karl/SeraphStore/Games/Super Console/saves/pai/dolphin/USA.raw",
+            "steam_account_name": "pai_steam"
         }
     ],
     "opengamedb": "/home/karl/.offblast/opengamedb",
