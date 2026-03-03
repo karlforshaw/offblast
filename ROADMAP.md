@@ -321,11 +321,39 @@ echo "Ready to launch!"
 - Shows count of newly imported games in status message
 - Works for all platforms (pc, playstation, nintendo_64, etc.)
 
+### Multi-User Steam Support
+**SOLVED:** Each family member can have their own Steam account:
+- Per-user Steam credentials: `steam_account_name` custom field (matches AccountName in loginusers.vdf)
+- Automatic account switching via loginusers.vdf manipulation (sets MostRecent field)
+- One-time setup: family members log into Steam with "Remember Password" once
+- No password re-entry: uses Steam's cached credentials
+- Seamless switching: kills Steam, modifies VDF, relaunches (10-15 seconds)
+- Owner tagging: LaunchTarget.ownerTag field tracks Steam game ownership
+- Visibility filtering: users only see their own Steam games
+- Shared ROMs: empty ownerTag means visible to all users (family library)
+- Deferred import: Steam games loaded after player selection (not at startup)
+- Loading screen: shows user avatar with live import progress
+- Multi-threaded metadata: reuses existing 3-worker system with progress counter
+- Database efficiency: all users' games stored once, filtered on display
+- Perfect for couch gaming: kids select profile → auto-switch Steam → their library appears
+
+**Future enhancements:**
+- Detect Steam account from file system before switching (avoid unnecessary restarts)
+- Cache which user owns which games to skip reimport on subsequent logins
+- Support for Steam Family Sharing (detect shared games vs owned)
+
 ### Steam Offline Handling
-What happens when Steam is configured but there's no internet connection? Currently the API call will fail and fall back to local appmanifest scanning, but need to verify this gracefully handles:
-- No network at all
-- Timeout scenarios
-- Partial failures mid-fetch
+**PARTIALLY SOLVED:** Graceful fallback to local detection:
+- API timeout set to 30 seconds (could be reduced)
+- Falls back to appmanifest scanning on API failure
+- Shows only installed games in offline mode
+- Multi-user switching still works offline (only affects uninstalled game visibility)
+
+**Future improvements:**
+- Reduce API timeout (30s → 5s)
+- Quick online check before API call
+- Better user feedback during timeout
+- Skip metadata workers if library fetch fails
 
 ### Search Keyboard Input
 **SOLVED:** Keyboard typing support for search functionality:
@@ -342,6 +370,55 @@ What happens when Steam is configured but there's no internet connection? Curren
 ---
 
 ## Future Features (0.9.0+)
+
+### Personal Game Data & AI-Generated Challenges
+Track personal game metadata and use AI to generate curated playlists:
+
+**Personal Game Data:**
+- Per-user database: `~/.offblast/{email}.personal_data`
+- Fields to track:
+  - Personal rating (1-5 stars or 0-100 scale)
+  - Lifetime hours estimate (total ever played, not just current platform)
+  - Worth it? (yes/no/mixed feelings)
+  - Completion status (not started, in progress, completed, 100%)
+  - Free-form notes (thoughts, memories, quotes)
+  - Tags (completed, favorite, backlog, multiplayer, etc.)
+  - Recommend to others (0-10 scale)
+- UI: Context menu → "Add Personal Notes"
+- Simple overlay with fields (controller/keyboard input)
+- Visible in game info panel or dedicated view
+
+**AI Challenge Lists:**
+- Export personal data to JSON for AI consumption
+- User runs script or in-app AI integration
+- AI analyzes: ratings, playtime, completion, tags, notes
+- AI generates seasonal challenge list: "Summer 2026 Challenge"
+- Curated 5-10 game playlist based on:
+  - Games you haven't played yet
+  - Similar to games you rated highly
+  - Platform/genre variety
+  - Estimated completion time fits season (summer = longer games)
+- Challenge appears as custom list in OffBlast
+- Updates weekly or monthly with new suggestions
+
+**Benefits:**
+- Less scrolling paralysis, more playing
+- Discover games you own but forgot about
+- Personalized curation (better than generic "top 10" lists)
+- Seasonal variety keeps gaming fresh
+- Builds on existing custom lists infrastructure
+
+**AI Integration Options:**
+- External script using free AI APIs (Claude, ChatGPT, Ollama)
+- In-app integration with local LLM (privacy-focused)
+- Cloud service (optional, user-controlled)
+- Community-shared prompts/templates
+
+**Future Extensions:**
+- Compare with friends' ratings (social recommendations)
+- "Similar to X game" suggestions
+- Backlog management: "You have 47 unplayed games, here are the top 5 to try"
+- Genre/mood-based generation: "Rainy day cozy games"
 
 ### Cover Browser UI Enhancements
 - Replace scroll indicator dots with proper arrow textures
