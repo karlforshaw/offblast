@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Added
+- **Multi-user Steam account switching**
+  - Each OffBlast user can have their own Steam account
+  - Per-user Steam credentials via `steam_account_name` custom field (matches AccountName in Steam's loginusers.vdf)
+  - Automatic account switching: OffBlast switches to correct Steam account when user logs in
+  - One-time setup: each family member logs into Steam once with "Remember Password" enabled
+  - Seamless switching: OffBlast kills Steam, modifies loginusers.vdf MostRecent field, relaunches Steam
+  - No password re-entry needed: Steam uses cached credentials
+  - Owner tagging: Steam games tagged with ownerTag field (e.g., "karl_forshaw")
+  - Visibility filtering: users only see their own Steam games, not other family members'
+  - Shared ROMs: retro games have no ownerTag, visible to all users (family library)
+  - Deferred import: Steam games imported after player selection (not at startup)
+  - Loading screen with progress: shows user's avatar and live import progress
+  - Multi-threaded metadata fetching: 3 worker threads show "Fetching Steam metadata... 57/300"
+  - Database efficiency: all users' Steam games stored once, filtered by ownerTag
+  - Perfect for couch gaming: kids select profile, automatically see their Steam library
 - **Steam achievement display**
   - Shows achievement progress for Steam games in info panel
   - Reads from local Steam cache file (no network calls, no API key needed)

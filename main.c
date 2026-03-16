@@ -10902,7 +10902,7 @@ void importFromDesktop(Launcher *theLauncher) {
 // ============================================================================
 
 void* steamImportThreadMain(void *arg) {
-    const char *targetAccount = (const char *)arg;
+    char *targetAccount = (char *)arg;
 
     pthread_mutex_lock(&offblast->loadingState.mutex);
     snprintf(offblast->loadingState.status, 256, "Importing Steam library...");
@@ -10922,6 +10922,7 @@ void* steamImportThreadMain(void *arg) {
     offblast->loadingState.complete = 1;
     pthread_mutex_unlock(&offblast->loadingState.mutex);
 
+    free(targetAccount);
     return NULL;
 }
 
@@ -11349,6 +11350,10 @@ void importFromSteam(Launcher *theLauncher) {
         SteamMetadataQueue queue = {0};
         initMetadataQueue(&queue, steamGames->count);
 
+        // Get current Steam account ONCE for tagging (avoid 300 VDF parses)
+        char *cachedSteamAccount = getCurrentSteamAccount();
+        printf("[Steam Import] Caching Steam account for tagging: %s\n", cachedSteamAccount ? cachedSteamAccount : "NULL");
+
         // PASS 1: Create/update targets, sync playtime, queue metadata work
         for (uint32_t i = 0; i < steamGames->count; i++) {
             SteamGame *sg = &steamGames->games[i];
@@ -11406,10 +11411,9 @@ void importFromSteam(Launcher *theLauncher) {
             strncpy(target->name, sg->name, OFFBLAST_NAME_MAX - 1);
             target->name[OFFBLAST_NAME_MAX - 1] = '\0';
 
-            // Tag with Steam account owner
-            char *currentSteamAccount = getCurrentSteamAccount();
-            if (currentSteamAccount) {
-                strncpy(target->ownerTag, currentSteamAccount, 63);
+            // Tag with Steam account owner (use cached value)
+            if (cachedSteamAccount) {
+                strncpy(target->ownerTag, cachedSteamAccount, 63);
                 target->ownerTag[63] = '\0';
             } else {
                 target->ownerTag[0] = '\0';
