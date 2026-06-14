@@ -5071,7 +5071,11 @@ int main(int argc, char** argv) {
             Animation *anim = allAnimations[i];
             if (anim->animating && SDL_GetTicks() > anim->startTick + anim->durationMs) {
                 anim->animating = 0;
-                anim->callback(anim->callbackArgs);
+                // Not every animation has a completion callback (e.g. the cover
+                // browser open/close animation) - calling NULL here segfaults.
+                if (anim->callback != NULL) {
+                    anim->callback(anim->callbackArgs);
+                }
                 if (anim->callbackArgs != NULL) {
                     free(anim->callbackArgs);
                     anim->callbackArgs = NULL;

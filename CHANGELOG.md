@@ -128,6 +128,11 @@
   - The Steam owner-tag visibility filter then mismatched every game and hid the
     entire library (manifested on machines with few/no installed Steam games)
   - Fixed by passing the import thread a `strdup()` copy of the account name
+- SteamGridDB cover browser no longer crashes shortly after opening
+  - The animation tick loop called `anim->callback(...)` without a NULL check
+  - The cover browser's open/close animation has no completion callback, so when
+    it finished (~75ms after opening) it called a NULL pointer → SIGSEGV
+  - Fixed by guarding the callback invocation with a NULL check
 
 ## [0.8.0] - 2026-02-23
 
