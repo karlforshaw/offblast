@@ -1239,9 +1239,11 @@ void doRescanLauncher() {
     offblast->statusMessageTick = SDL_GetTicks();
     offblast->statusMessageDuration = 5000;
 
-    // For desktop launchers, clear existing assignments first to prevent stale fuzzy matches
-    if (strcmp(targetLauncher->type, "desktop") == 0) {
-        printf("Clearing existing .desktop assignments before rescan...\n");
+    // Clear existing assignments first (all non-Steam launchers) to prevent stale
+    // fuzzy matches and orphaned targets that still point at renamed/removed ROMs.
+    // (Steam manages its own targets, so it's excluded.)
+    if (strcmp(targetLauncher->type, "steam") != 0) {
+        printf("Clearing existing assignments for launcher before rescan...\n");
         for (uint32_t i = 0; i < offblast->launchTargetFile->nEntries; i++) {
             LaunchTarget *target = &offblast->launchTargetFile->entries[i];
             if (target->launcherSignature == targetLauncher->signature) {

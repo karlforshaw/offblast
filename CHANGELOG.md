@@ -133,6 +133,12 @@
   - The cover browser's open/close animation has no completion callback, so when
     it finished (~75ms after opening) it called a NULL pointer → SIGSEGV
   - Fixed by guarding the callback invocation with a NULL check
+- Rescanning a ROM launcher now clears stale matches (orphaned/duplicate targets)
+  - Only desktop launchers cleared existing assignments before a rescan; ROM
+    ("standard") launchers did not, so a target whose ROM was renamed or removed
+    kept its old path and a re-matched game produced a duplicate
+  - Result: launching the orphaned target failed with a missing-file error
+  - Now all non-Steam launchers clear their assignments before re-matching
 
 ## [0.8.0] - 2026-02-23
 
