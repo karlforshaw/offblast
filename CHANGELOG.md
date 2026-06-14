@@ -120,6 +120,14 @@
 - Desktop launcher rescan now clears stale assignments before re-matching
 - Rescan/import operations preserve current view (stay in platform list instead of home)
 - Desktop launcher rescan properly calls importFromDesktop() instead of importFromCustom()
+- Steam library no longer shows "no games found" after import (dangling-pointer bug)
+  - `steamImportThreadMain` freed its thread argument, but the caller passed the
+    user's persistent `steam_account_name` custom-field pointer
+  - This freed the user's custom-field string, leaving a dangling pointer that
+    returned reused-heap garbage on later reads
+  - The Steam owner-tag visibility filter then mismatched every game and hid the
+    entire library (manifested on machines with few/no installed Steam games)
+  - Fixed by passing the import thread a `strdup()` copy of the account name
 
 ## [0.8.0] - 2026-02-23
 

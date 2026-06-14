@@ -11287,9 +11287,12 @@ void ensureCorrectSteamAccount() {
     offblast->loadingState.progressTotal = 0;
     snprintf(offblast->loadingState.status, 256, "Preparing to load Steam library...");
 
-    // Create thread to do the import
+    // Create thread to do the import.
+    // Pass a heap COPY: the thread frees its arg, and targetSteamAccount points
+    // into the user's persistent custom-field storage (must not be freed here).
     pthread_t steamImportThread;
-    pthread_create(&steamImportThread, NULL, steamImportThreadMain, (void*)targetSteamAccount);
+    pthread_create(&steamImportThread, NULL, steamImportThreadMain,
+            (void*)strdup(targetSteamAccount));
 
     // Show loading screen while import happens
     printf("[Steam Account] Entering loading screen for Steam import...\n");
